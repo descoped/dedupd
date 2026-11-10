@@ -9,9 +9,6 @@ use std::time::Duration;
 
 uniffi::setup_scaffolding!();
 
-/// Where the daemon listens unless configured otherwise.
-pub const DEFAULT_ADDRESS: &str = "127.0.0.1:8642";
-
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ClientError {
     /// Nothing answered at the address: the daemon is not running.
@@ -25,20 +22,22 @@ pub enum ClientError {
     Protocol { message: String },
 }
 
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, Deserialize, uniffi::Record)]
 pub struct AppUsage {
     pub app: String,
     pub files: u64,
     pub bytes: u64,
 }
 
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, Deserialize, uniffi::Record)]
 pub struct Repository {
     pub provider: String,
     pub name: String,
     pub commit: Option<String>,
     /// Files of the archived revisions that are in the store.
+    #[serde(default)]
     pub stored_files: u64,
+    #[serde(default)]
     pub stored_bytes: u64,
     /// App files that hold this repository's content.
     pub files: u64,
@@ -88,7 +87,7 @@ pub struct PullResult {
     pub notes: Vec<String>,
 }
 
-#[derive(Debug, Clone, uniffi::Record)]
+#[derive(Debug, Clone, Deserialize, uniffi::Record)]
 pub struct ScanResult {
     pub forgotten: u64,
     pub adopted: u64,
@@ -99,7 +98,8 @@ pub struct ScanResult {
     pub errors: Vec<String>,
 }
 
-// The wire shapes, as the daemon's control API sends them.
+// The wire shapes, as the daemon's control API sends them, where they differ
+// from the records above.
 
 #[derive(Deserialize)]
 struct WireArchive {
@@ -114,36 +114,12 @@ struct WireProgress {
 }
 
 #[derive(Deserialize)]
-struct WireApp {
-    app: String,
-    files: u64,
-    bytes: u64,
-}
-
-#[derive(Deserialize)]
-struct WireRepo {
-    provider: String,
-    name: String,
-    commit: Option<String>,
-    #[serde(default)]
-    stored_files: u64,
-    #[serde(default)]
-    stored_bytes: u64,
-    files: u64,
-    bytes: u64,
-    verified: u64,
-    mismatch: u64,
-    not_upstream: u64,
-    unchecked: u64,
-}
-
-#[derive(Deserialize)]
 struct WireStore {
     store_files: u64,
     store_bytes: u64,
     shared_bytes: u64,
-    apps: Vec<WireApp>,
-    repos: Vec<WireRepo>,
+    apps: Vec<AppUsage>,
+    repos: Vec<Repository>,
 }
 
 #[derive(Deserialize)]
@@ -175,15 +151,36 @@ struct WirePull {
     notes: Vec<String>,
 }
 
-#[derive(Deserialize)]
-struct WireScan {
-    forgotten: u64,
-    adopted: u64,
-    adopted_bytes: u64,
-    reclaimed: u64,
-    reclaimed_bytes: u64,
-    archived: u64,
-    errors: Vec<String>,
+impl From<WirePull> for PullResult {
+    fn from(w: WirePull) -> Self {
+        Self {
+            repo: w.repo,
+            commit: w.commit,
+            from_archive: w.from_archive,
+            files: w.files,
+            bytes: w.bytes,
+            downloaded: w.downloaded,
+            placed: w
+                .placed
+                .into_iter()
+                .map(|(app, p)| PlacedApp {
+                    app,
+                    cloned: p.cloned,
+                    present: p.present,
+                    conflicts: p.conflicts,
+                })
+                .collect(),
+            notes: w.notes,
+        }
+    }
+}
+
+impl PullResult {
+    /// Read the outcome of a pull as the daemon sends it, which is also how
+    /// the core library's own outcome serialises.
+    pub fn from_json(text: &str) -> Result<Self, ClientError> {
+        parse::<WirePull>(text).map(Self::from)
+    }
 }
 
 #[derive(Deserialize)]
@@ -225,7 +222,11 @@ fn finish<T: serde::de::DeserializeOwned>(
             .unwrap_or(text);
         return Err(ClientError::Failed { message });
     }
-    serde_json::from_str(&text).map_err(|e| ClientError::Protocol {
+    parse(&text)
+}
+
+fn parse<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, ClientError> {
+    serde_json::from_str(text).map_err(|e| ClientError::Protocol {
         message: e.to_string(),
     })
 }
@@ -253,34 +254,8 @@ pub fn status(address: String) -> Result<DaemonStatus, ClientError> {
         shared_bytes: w.status.shared_bytes,
         downloading_total: w.downloading.total,
         downloading_done: w.downloading.done,
-        apps: w
-            .status
-            .apps
-            .into_iter()
-            .map(|a| AppUsage {
-                app: a.app,
-                files: a.files,
-                bytes: a.bytes,
-            })
-            .collect(),
-        repositories: w
-            .status
-            .repos
-            .into_iter()
-            .map(|r| Repository {
-                provider: r.provider,
-                name: r.name,
-                commit: r.commit,
-                stored_files: r.stored_files,
-                stored_bytes: r.stored_bytes,
-                files: r.files,
-                bytes: r.bytes,
-                verified: r.verified,
-                mismatch: r.mismatch,
-                not_upstream: r.not_upstream,
-                unchecked: r.unchecked,
-            })
-            .collect(),
+        apps: w.status.apps,
+        repositories: w.status.repos,
     })
 }
 
@@ -300,26 +275,7 @@ pub fn pull(
         "model": model, "apps": apps, "include": include, "offline": offline,
     });
     let sent = agent(None).post(url(&address, "pull")).send_json(&body);
-    let w: WirePull = finish(&address, sent)?;
-    Ok(PullResult {
-        repo: w.repo,
-        commit: w.commit,
-        from_archive: w.from_archive,
-        files: w.files,
-        bytes: w.bytes,
-        downloaded: w.downloaded,
-        placed: w
-            .placed
-            .into_iter()
-            .map(|(app, p)| PlacedApp {
-                app,
-                cloned: p.cloned,
-                present: p.present,
-                conflicts: p.conflicts,
-            })
-            .collect(),
-        notes: w.notes,
-    })
+    finish::<WirePull>(&address, sent).map(PullResult::from)
 }
 
 /// Have the daemon look at the app folders now instead of waiting for its
@@ -327,14 +283,5 @@ pub fn pull(
 #[uniffi::export]
 pub fn scan(address: String) -> Result<ScanResult, ClientError> {
     let sent = agent(None).post(url(&address, "scan")).send_empty();
-    let w: WireScan = finish(&address, sent)?;
-    Ok(ScanResult {
-        forgotten: w.forgotten,
-        adopted: w.adopted,
-        adopted_bytes: w.adopted_bytes,
-        reclaimed: w.reclaimed,
-        reclaimed_bytes: w.reclaimed_bytes,
-        archived: w.archived,
-        errors: w.errors,
-    })
+    finish(&address, sent)
 }

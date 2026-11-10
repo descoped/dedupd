@@ -134,12 +134,8 @@ pub(crate) fn relay_head(
 /// Relay upstream's answer unchanged, streaming the body.
 pub(crate) fn relay(server: &Server, call: &Call, resp: reqwest::Response) -> Response {
     let head = relay_head(server, call, &resp, true);
-    let body = if call.is_head() {
-        Body::empty()
-    } else {
-        Body::from_stream(resp.bytes_stream())
-    };
-    head.body(body).expect("valid response")
+    head.body(call.body_unless_head(Body::from_stream(resp.bytes_stream())))
+        .expect("valid response")
 }
 
 pub(crate) fn unreachable(e: impl std::fmt::Display) -> Response {
@@ -151,22 +147,49 @@ pub(crate) fn unreachable(e: impl std::fmt::Display) -> Response {
     )
 }
 
+/// Upstream's answer relayed, or the reason there is none.
+pub(crate) fn relay_or_unreachable(
+    server: &Server,
+    call: &Call,
+    answer: Result<reqwest::Response, reqwest::Error>,
+) -> Response {
+    match answer {
+        Ok(resp) => relay(server, call, resp),
+        Err(e) => unreachable(e),
+    }
+}
+
+/// True when upstream's status means "ask the archive instead".
+fn failed(status: u16) -> bool {
+    matches!(status, 401 | 404 | 408 | 410 | 429) || status >= 500
+}
+
+/// True when upstream did not answer, or answered that it cannot.
+pub(crate) fn is_down(answer: &Result<reqwest::Response, reqwest::Error>) -> bool {
+    match answer {
+        Ok(resp) => failed(resp.status().as_u16()),
+        Err(_) => true,
+    }
+}
+
+/// The address upstream has for what the client asked us.
+pub(crate) fn mirror_url(server: &Server, call: &Call) -> String {
+    format!(
+        "{}{}",
+        server.engine.fetcher.endpoint(),
+        call.path_and_query()
+    )
+}
+
 /// Anything dedupd has no special handling for.
 ///
 /// Redirects are relayed, not followed: the client reads the commit, the
 /// linked ETag and the size from the redirect itself, and the place it points
 /// to (a CDN) has none of them.
 pub(crate) async fn pass_through(server: &Server, call: &Call) -> Response {
-    let url = format!(
-        "{}{}",
-        server.engine.fetcher.endpoint(),
-        call.path_and_query()
-    );
+    let url = mirror_url(server, call);
     let http = server.engine.fetcher.http_no_redirect();
-    match send(http, server, call, &url, false).await {
-        Ok(resp) => relay(server, call, resp),
-        Err(e) => unreachable(e),
-    }
+    relay_or_unreachable(server, call, send(http, server, call, &url, false).await)
 }
 
 #[cfg(test)]

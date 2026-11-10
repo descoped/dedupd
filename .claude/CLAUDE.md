@@ -39,10 +39,11 @@ A Cargo workspace (Rust 2024):
   - `store` (content-addressed folder, clone-in, restore from the archive disk), `db` (SQLite schema and queries), `hash`, `clone`, `paths`, `config` (`<home>/config.toml`).
   - `hub` (read-only Hub API client), `fetch` (resumable verified downloads), `select` (which files of a repository: a quantization, patterns, or everything), `ollama` (manifest format).
   - `sources/` (what each app already holds: `bionic`, `hf_cache`, `ollama`), `adopt` (hash, verify against the Hub listing, clone into the store).
+  - All SQL lives in `db` (except the read-only queries in `status`); the one clone-then-rename is `clone::clone_into_place`; shared test support is `tests/common`, also used by the server tests.
   - `place` (the three placers), `pull` (resolve, fetch, place; also the `Engine` every caller shares), `archive` (second copy on another disk), `maintain` (reclaim, verify, gc, forget), `status`.
 - `crates/dedupd-server` — the daemon's HTTP side. `hubapi` (Hub API), `registry` (Ollama registry), `files` (Range serving, and assembling large files from what clients download through the daemon), `proxy` (pass-through and header cleaning), `control` (`/dedupd/v1`), `daemon` (the background pass, the folder watcher and the scheduled store check).
 - `crates/dedupd-client` — a small blocking client for the control API, exported through UniFFI (`status`, `pull`, `scan`). It does not depend on the core.
-- `crates/dedupd` — the `dedupd` binary: `main.rs` (pull, place, adopt, status, backup) and `more.rs` (serve, reclaim, verify, gc, forget, install, uninstall, env).
+- `crates/dedupd` — the `dedupd` binary: `main.rs` (the command list; pull, place, adopt, status, backup), `serve.rs` (serve, env), `maintenance.rs` (reclaim, verify, gc, forget) and `launchd.rs` (install, uninstall).
 
 The command line works on the store and database directly, also while the daemon runs; SQLite in WAL mode and atomic renames make that safe. `pull` and `place` are the exception: when a daemon with the same home answers on the configured address they are sent to it through `dedupd-client`, so one process does the downloading. The daemon's control API (`GET /dedupd/v1/status`, `POST /dedupd/v1/pull`, `POST /dedupd/v1/scan`) is what the future Swift app talks to, through `dedupd-client`. The app must not embed the core, because the daemon has to keep serving when the app is closed.
 

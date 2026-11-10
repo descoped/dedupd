@@ -89,6 +89,26 @@ pub(crate) async fn serve_file(
     out.body(Body::from_stream(stream)).expect("valid response")
 }
 
+/// Answer with the stored file of this sha256, copying it back from the
+/// archive disk first when it is only there. `None` when dedupd does not
+/// hold it. Without `size`, the file's own length is used.
+pub(crate) async fn serve_stored(
+    server: &Server,
+    call: &Call,
+    sha256: &str,
+    size: Option<u64>,
+    extra: &[(&str, String)],
+) -> Option<Response> {
+    let (engine, sha) = (server.engine.clone(), sha256.to_string());
+    let local = tokio::task::spawn_blocking(move || engine.store.ensure_local(&sha)).await;
+    if !matches!(local, Ok(Ok(true))) {
+        return None;
+    }
+    let file = server.engine.store.blob_path(sha256);
+    let size = size.unwrap_or_else(|| std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0));
+    Some(serve_file(call, &file, size, extra).await)
+}
+
 /// A large file being put together from the ranges clients download. When
 /// every byte has passed through, it is hashed and moved into the store.
 pub(crate) struct Assembly {
@@ -186,7 +206,7 @@ impl Drop for Part {
 
 /// Relay an upstream download of the file with this sha256 to the client,
 /// writing the same bytes into the file's assembly on the way.
-pub(crate) fn tee(server: &Arc<Server>, resp: reqwest::Response, sha256: &str) -> Body {
+fn tee(server: &Arc<Server>, resp: reqwest::Response, sha256: &str) -> Body {
     let status = resp.status().as_u16();
     let header = |name: header::HeaderName| {
         resp.headers()
@@ -244,6 +264,31 @@ pub(crate) fn tee(server: &Arc<Server>, resp: reqwest::Response, sha256: &str) -
         },
     );
     Body::from_stream(stream)
+}
+
+/// Relay an upstream 200 or 206 for the file with this sha256, keeping a
+/// copy of the bytes (see `tee`). `extra` headers are added to the answer.
+pub(crate) fn tee_response(
+    server: &Arc<Server>,
+    resp: reqwest::Response,
+    sha256: &str,
+    content_type: Option<&str>,
+    extra: &[(&str, String)],
+) -> Response {
+    let mut out = Response::builder().status(resp.status().as_u16());
+    for name in [header::CONTENT_LENGTH, header::CONTENT_RANGE] {
+        if let Some(v) = resp.headers().get(&name) {
+            out = out.header(name, v);
+        }
+    }
+    out = out.header(header::ACCEPT_RANGES, "bytes");
+    if let Some(content_type) = content_type {
+        out = out.header(header::CONTENT_TYPE, content_type);
+    }
+    for (k, v) in extra {
+        out = out.header(*k, v);
+    }
+    out.body(tee(server, resp, sha256)).expect("valid response")
 }
 
 #[cfg(test)]

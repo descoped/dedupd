@@ -5,8 +5,12 @@
 use crate::Server;
 use dedupd_core::adopt::{self, Action, Options};
 use dedupd_core::place::App;
+use dedupd_core::sources::LocalRepo;
+use dedupd_core::store::Fingerprint;
 use dedupd_core::{archive, maintain};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 /// A file must have been left alone this long before it is hashed, so a
@@ -28,12 +32,27 @@ pub struct PassReport {
     pub errors: Vec<String>,
 }
 
-fn settled(path: &std::path::Path, settle: Duration) -> bool {
-    std::fs::metadata(path)
-        .and_then(|m| m.modified())
-        .ok()
-        .and_then(|t| SystemTime::now().duration_since(t).ok())
-        .is_some_and(|age| age >= settle)
+/// What the background pass keeps between rounds.
+#[derive(Default)]
+pub(crate) struct PassState {
+    /// App files whose adoption failed, as they looked then. They are not
+    /// hashed again until they change.
+    failed_adoptions: Mutex<Seen>,
+    /// Serialises the background pass and requests to run one now.
+    lock: tokio::sync::Mutex<()>,
+}
+
+/// App files by path, as they looked when they were scanned.
+type Seen = HashMap<String, Fingerprint>;
+
+/// How long ago the file was last written. `None` when it cannot be read.
+fn file_age(path: &Path) -> Option<Duration> {
+    let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
+    SystemTime::now().duration_since(modified).ok()
+}
+
+fn settled(path: &Path, settle: Duration) -> bool {
+    file_age(path).is_some_and(|age| age >= settle)
 }
 
 /// One round of background work.
@@ -47,96 +66,132 @@ pub async fn pass_with(
     settle: Duration,
     reclaim_age: Duration,
 ) -> anyhow::Result<PassReport> {
-    let _guard = server.pass_lock.lock().await;
-    let engine = &server.engine;
-    let mut report = PassReport {
-        forgotten: maintain::prune_placements(&engine.db)?,
-        ..Default::default()
+    let _guard = server.passes.lock.lock().await;
+    let mut report = PassReport::default();
+    let (repos, scanned) = {
+        let server = server.clone();
+        tokio::task::spawn_blocking(move || new_files(&server, settle)).await??
     };
+    report.forgotten = scanned.forgotten;
+    adopt_new(server, repos, &scanned.files, &mut report).await?;
+    if server.config.reclaim != Some(false) {
+        reclaim_duplicates(server, reclaim_age, &mut report).await?;
+    }
+    update_archive(server, &mut report).await?;
+    Ok(report)
+}
 
-    // Only repositories with a new or changed file are worth asking
-    // Hugging Face about.
+/// What a look at the app folders found.
+struct Scanned {
+    /// Recorded app files that are gone and were dropped from the records.
+    forgotten: usize,
+    /// Every app file there is now.
+    files: Seen,
+}
+
+/// The app files worth hashing: new or changed, not known to fail, and left
+/// alone for `settle`. Only their repositories are worth asking Hugging Face
+/// about.
+fn new_files(server: &Server, settle: Duration) -> anyhow::Result<(Vec<LocalRepo>, Scanned)> {
+    let engine = &server.engine;
+    let forgotten = maintain::prune_placements(&engine.db)?;
     let mut repos = adopt::scan_apps(&engine.db, &engine.dirs, &App::ALL)?;
+    let files: Seen = repos
+        .iter()
+        .flat_map(|r| &r.files)
+        .map(|f| (f.abs_path.to_string_lossy().into_owned(), f.fingerprint))
+        .collect();
     {
         let db = engine.db();
-        let mut failed = server.failed_adoptions.lock().expect("lock");
+        let mut failed = server.passes.failed_adoptions.lock().expect("lock");
         // A file that failed and has changed since gets another try.
-        let scanned: std::collections::HashMap<_, _> = repos
-            .iter()
-            .flat_map(|r| &r.files)
-            .map(|f| (f.abs_path.to_string_lossy().into_owned(), f.fingerprint))
-            .collect();
-        failed.retain(|path, seen| scanned.get(path) == Some(seen));
+        failed.retain(|path, seen| files.get(path) == Some(seen));
         for repo in &mut repos {
             repo.files.retain(|f| {
+                let path = f.abs_path.to_string_lossy();
                 let known = db
-                    .placement(&f.abs_path.to_string_lossy())
+                    .placement(&path)
                     .ok()
                     .flatten()
                     .is_some_and(|p| f.fingerprint == p.fingerprint());
-                !known
-                    && !failed.contains_key(f.abs_path.to_string_lossy().as_ref())
-                    && settled(&f.abs_path, settle)
+                !known && !failed.contains_key(path.as_ref())
             });
         }
     }
+    // The database is free again while the files are looked at.
+    for repo in &mut repos {
+        repo.files.retain(|f| settled(&f.abs_path, settle));
+    }
     repos.retain(|r| !r.files.is_empty());
-    if !repos.is_empty() {
-        let fingerprints: std::collections::HashMap<_, _> = repos
-            .iter()
-            .flat_map(|r| &r.files)
-            .map(|f| (f.abs_path.to_string_lossy().into_owned(), f.fingerprint))
-            .collect();
-        let opts = Options {
-            jobs: 2,
-            ..Options::default()
-        };
-        let outcomes = adopt::adopt(
-            &engine.db,
-            &engine.store,
-            Some(&engine.hub),
-            repos,
-            &opts,
-            &mut |_| {},
-        )
-        .await?;
-        for outcome in outcomes {
-            for f in &outcome.files {
-                if f.action != Action::Unchanged {
-                    report.adopted += 1;
-                    report.adopted_bytes += f.size;
-                }
-            }
-            for (path, reason) in outcome.errors {
-                if let Some(seen) = fingerprints.get(&path) {
-                    server
-                        .failed_adoptions
-                        .lock()
-                        .expect("lock")
-                        .insert(path.clone(), *seen);
-                }
-                report.errors.push(format!("{path}: {reason}"));
+    Ok((repos, Scanned { forgotten, files }))
+}
+
+/// Bring the new files into the store, and remember the ones that failed as
+/// they looked in `scanned`.
+async fn adopt_new(
+    server: &Server,
+    repos: Vec<LocalRepo>,
+    scanned: &Seen,
+    report: &mut PassReport,
+) -> anyhow::Result<()> {
+    if repos.is_empty() {
+        return Ok(());
+    }
+    let engine = &server.engine;
+    let opts = Options {
+        jobs: 2,
+        ..Options::default()
+    };
+    let outcomes = adopt::adopt(
+        &engine.db,
+        &engine.store,
+        Some(&engine.hub),
+        repos,
+        &opts,
+        &mut |_| {},
+    )
+    .await?;
+    for outcome in outcomes {
+        for f in &outcome.files {
+            if f.action != Action::Unchanged {
+                report.adopted += 1;
+                report.adopted_bytes += f.size;
             }
         }
+        for (path, reason) in outcome.errors {
+            if let Some(seen) = scanned.get(&path) {
+                let mut failed = server.passes.failed_adoptions.lock().expect("lock");
+                failed.insert(path.clone(), *seen);
+            }
+            report.errors.push(format!("{path}: {reason}"));
+        }
     }
+    Ok(())
+}
 
-    if server.config.reclaim != Some(false) {
-        let engine = engine.clone();
-        let done = tokio::task::spawn_blocking(move || {
-            maintain::reclaim(&engine.db, &engine.store, reclaim_age, false)
-        })
-        .await??;
-        report.reclaimed = done.swapped;
-        report.reclaimed_bytes = done.bytes;
-    }
+/// Swap app files that duplicate stored content for clones.
+async fn reclaim_duplicates(
+    server: &Server,
+    reclaim_age: Duration,
+    report: &mut PassReport,
+) -> anyhow::Result<()> {
+    let engine = server.engine.clone();
+    let done = tokio::task::spawn_blocking(move || {
+        maintain::reclaim(&engine.db, &engine.store, reclaim_age, false)
+    })
+    .await??;
+    report.reclaimed = done.swapped;
+    report.reclaimed_bytes = done.bytes;
+    Ok(())
+}
 
-    let synced = {
-        let engine = engine.clone();
-        tokio::task::spawn_blocking(move || {
-            archive::sync_if_attached(&engine.db, &engine.store, &mut |_, _| {})
-        })
-        .await?
-    };
+/// Copy what the archive disk lacks, when it is attached.
+async fn update_archive(server: &Server, report: &mut PassReport) -> anyhow::Result<()> {
+    let engine = server.engine.clone();
+    let synced = tokio::task::spawn_blocking(move || {
+        archive::sync_if_attached(&engine.db, &engine.store, &mut |_, _| {})
+    })
+    .await?;
     match synced {
         Some(Ok(r)) => {
             report.archived = r.copied;
@@ -147,7 +202,7 @@ pub async fn pass_with(
         Some(Err(e)) => report.errors.push(format!("archive: {e:#}")),
         None => {}
     }
-    Ok(report)
+    Ok(())
 }
 
 /// Watch the app folders. Any change sends a unit on the returned channel.
@@ -179,15 +234,11 @@ fn watch(
 
 /// Hash the whole store once the last check is older than the configured
 /// number of days, and write the result where the owner can read it.
-async fn scheduled_verify(server: &Arc<Server>) {
+async fn scheduled_verify(server: Arc<Server>) {
     let days = server.config.verify_days.unwrap_or(7);
     let marker = server.home.root().join("last-verify.txt");
-    let due = days > 0
-        && std::fs::metadata(&marker)
-            .and_then(|m| m.modified())
-            .ok()
-            .and_then(|t| SystemTime::now().duration_since(t).ok())
-            .is_none_or(|age| age >= Duration::from_secs(days * 86_400));
+    let due =
+        days > 0 && file_age(&marker).is_none_or(|age| age >= Duration::from_secs(days * 86_400));
     if !due {
         return;
     }
@@ -220,6 +271,9 @@ async fn scheduled_verify(server: &Arc<Server>) {
 pub async fn run(server: Arc<Server>) {
     let every = Duration::from_secs(server.config.scan_interval.unwrap_or(300).max(5));
     let mut watched = watch(&server);
+    // The store check takes hours on a large store; the passes go on
+    // meanwhile, and a second check never starts before the first has ended.
+    let mut check: Option<tokio::task::JoinHandle<()>> = None;
     loop {
         match pass(&server).await {
             Ok(r) => {
@@ -235,7 +289,9 @@ pub async fn run(server: Arc<Server>) {
             }
             Err(e) => eprintln!("dedupd: background pass failed: {e:#}"),
         }
-        scheduled_verify(&server).await;
+        if check.as_ref().is_none_or(|c| c.is_finished()) {
+            check = Some(tokio::spawn(scheduled_verify(server.clone())));
+        }
 
         if watched.is_none() {
             watched = watch(&server);

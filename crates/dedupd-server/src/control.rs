@@ -77,16 +77,10 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 Ok(req) => req,
                 Err(e) => return error(StatusCode::BAD_REQUEST, e),
             };
-            *server.pulls.lock().expect("lock") += 1;
-            let pulled = pull::pull(&server.engine, &req, &server.progress).await;
-            {
-                let mut pulls = server.pulls.lock().expect("lock");
-                *pulls -= 1;
-                if *pulls == 0 {
-                    server.progress.total.store(0, Ordering::Relaxed);
-                    server.progress.done.store(0, Ordering::Relaxed);
-                }
-            }
+            let pulled = {
+                let _running = server.begin_pull();
+                pull::pull(&server.engine, &req, &server.progress).await
+            };
             match pulled {
                 Ok(out) => {
                     // The daemon keeps the archive disk current after its

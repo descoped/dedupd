@@ -1,14 +1,17 @@
 //! The Hugging Face Hub API, as `huggingface_hub`, MLX tools and llama.cpp
 //! use it.
 
-use crate::proxy::{pass_through, relay, relay_head, unreachable, upstream};
+use crate::proxy::{
+    is_down, mirror_url, pass_through, relay, relay_head, relay_or_unreachable, unreachable,
+    upstream,
+};
 use crate::{Call, Server, files, json, plain};
 use axum::body::Body;
 use axum::http::{StatusCode, header};
 use axum::response::Response;
 use dedupd_core::adopt::PROVIDER_HF;
 use dedupd_core::db::is_commit;
-use dedupd_core::hub::{HubError, Snapshot};
+use dedupd_core::hub::{HubError, Snapshot, TreeEntry};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -54,32 +57,29 @@ impl Server {
     }
 
     /// Find out what `repo@rev` contains: from upstream when it answers, from
-    /// the archive when it cannot or when the repository is gone. `Err` means
+    /// the archive when it cannot or when the repository is gone. `None` means
     /// dedupd has nothing to say and the request should be passed through.
-    pub(crate) async fn revision(
-        &self,
-        repo: &str,
-        rev: &str,
-        auth: Option<&str>,
-    ) -> Result<Rev, ()> {
+    pub(crate) async fn revision(&self, repo: &str, rev: &str, auth: Option<&str>) -> Option<Rev> {
         let archived = self.archived(repo, rev);
         let open = archived.as_ref().is_some_and(|s| !restricted(&s.info_json));
-        if open {
-            // A commit never changes; a branch is trusted for a short while.
-            let fresh = is_commit(rev)
+        // A commit never changes; a branch is trusted for a short while.
+        let fresh = open
+            && (is_commit(rev)
                 || self
                     .commits
                     .lock()
                     .expect("lock")
                     .get(&(repo.to_string(), rev.to_string()))
-                    .is_some_and(|(_, at)| at.elapsed() < REF_TTL);
-            if fresh && let Some(snap) = archived.clone() {
-                return Ok(Rev {
+                    .is_some_and(|(_, at)| at.elapsed() < REF_TTL));
+        let archived = match archived {
+            Some(snap) if fresh => {
+                return Some(Rev {
                     snap,
                     from_archive: false,
                 });
             }
-        }
+            other => other,
+        };
 
         match self.engine.hub.snapshot_as(repo, rev, auth).await {
             Ok(snap) => {
@@ -94,7 +94,7 @@ impl Server {
                     (repo.to_string(), rev.to_string()),
                     (snap.commit.clone(), Instant::now()),
                 );
-                Ok(Rev {
+                Some(Rev {
                     snap,
                     from_archive: false,
                 })
@@ -106,23 +106,21 @@ impl Server {
                     eprintln!(
                         "dedupd: {repo}@{rev}: Hugging Face answered {status}; using the archived copy"
                     );
-                    Ok(Rev {
+                    Some(Rev {
                         snap,
                         from_archive: true,
                     })
                 }
-                _ => Err(()),
+                _ => None,
             },
             // Upstream is down or unreachable: the archive answers.
-            Err(e) => archived
-                .map(|snap| {
-                    eprintln!("dedupd: {repo}@{rev}: {e}; using the archived copy");
-                    Rev {
-                        snap,
-                        from_archive: true,
-                    }
-                })
-                .ok_or(()),
+            Err(e) => archived.map(|snap| {
+                eprintln!("dedupd: {repo}@{rev}: {e}; using the archived copy");
+                Rev {
+                    snap,
+                    from_archive: true,
+                }
+            }),
         }
     }
 }
@@ -154,25 +152,11 @@ pub(crate) async fn api(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Res
     }
 }
 
-/// True when upstream's answer means "ask the archive instead".
-fn failed(status: u16) -> bool {
-    matches!(status, 401 | 404 | 408 | 410 | 429) || status >= 500
-}
-
 /// Branch and tag names, which llama.cpp asks for first. Upstream's answer is
 /// relayed; when it cannot answer, the names archived for the repository are.
 async fn refs(server: &Arc<Server>, call: &Call, repo: &str) -> Response {
-    let url = format!(
-        "{}{}",
-        server.engine.fetcher.endpoint(),
-        call.path_and_query()
-    );
-    let answer = upstream(server, call, &url, false).await;
-    let down = match &answer {
-        Ok(resp) => failed(resp.status().as_u16()),
-        Err(_) => true,
-    };
-    if down {
+    let answer = upstream(server, call, &mirror_url(server, call), false).await;
+    if is_down(&answer) {
         let archived = {
             let db = server.engine.db();
             db.repo_id(PROVIDER_HF, repo)
@@ -203,27 +187,15 @@ async fn refs(server: &Arc<Server>, call: &Call, repo: &str) -> Response {
             );
         }
     }
-    match answer {
-        Ok(resp) => relay(server, call, resp),
-        Err(e) => unreachable(e),
-    }
+    relay_or_unreachable(server, call, answer)
 }
 
 /// Model info. Upstream's answer is relayed as it is; the archive answers
 /// when upstream cannot.
 async fn info(server: &Arc<Server>, call: &Call, repo: &str, rev: &str) -> Response {
-    let url = format!(
-        "{}{}",
-        server.engine.fetcher.endpoint(),
-        call.path_and_query()
-    );
-    let answer = upstream(server, call, &url, false).await;
-    let down = match &answer {
-        Ok(resp) => failed(resp.status().as_u16()),
-        Err(_) => true,
-    };
-    if down
-        && let Ok(found) = server
+    let answer = upstream(server, call, &mirror_url(server, call), false).await;
+    if is_down(&answer)
+        && let Some(found) = server
             .revision(repo, rev, call.header(header::AUTHORIZATION))
             .await
     {
@@ -231,11 +203,7 @@ async fn info(server: &Arc<Server>, call: &Call, repo: &str, rev: &str) -> Respo
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, "application/json; charset=utf-8")
             .header("x-repo-commit", &found.snap.commit)
-            .body(if call.is_head() {
-                Body::empty()
-            } else {
-                Body::from(found.snap.info_json)
-            })
+            .body(call.body_unless_head(found.snap.info_json))
             .expect("valid response");
     }
     match answer {
@@ -272,19 +240,22 @@ fn requested_paths(call: &Call) -> Vec<String> {
     }
     body.split('&')
         .filter_map(|pair| pair.strip_prefix("paths="))
-        .map(|v| percent_decode(v, true))
+        .map(form_decode)
         .collect()
 }
 
-/// Decode `%XX`. With `form`, `+` is a space, as in a form body; in a URL
-/// path it is a plain `+`.
-fn percent_decode(s: &str, form: bool) -> String {
+/// Decode a form value, where `+` is a space and `%2B` a plus sign.
+fn form_decode(value: &str) -> String {
+    percent_decode(&value.replace('+', " "))
+}
+
+/// Decode `%XX`. A `+` stays a plus sign, as in a URL path.
+fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'+' if form => out.push(b' '),
             b'%' if s.is_char_boundary(i + 1) && s.get(i + 1..i + 3).is_some() => {
                 match u8::from_str_radix(&s[i + 1..i + 3], 16) {
                     Ok(b) => {
@@ -310,12 +281,7 @@ async fn listing(
     rev: &str,
     tree_path: Option<&str>,
 ) -> Response {
-    let url = format!(
-        "{}{}",
-        server.engine.fetcher.endpoint(),
-        call.path_and_query()
-    );
-    let answer = upstream(server, call, &url, true).await;
+    let answer = upstream(server, call, &mirror_url(server, call), true).await;
     match answer {
         Ok(resp) if resp.status().is_success() => {
             let head = relay_head(server, call, &resp, false);
@@ -330,30 +296,19 @@ async fn listing(
                 Err(_) => text,
             };
             head.header(header::CONTENT_LENGTH, body.len())
-                .body(if call.is_head() {
-                    Body::empty()
-                } else {
-                    Body::from(body)
-                })
+                .body(call.body_unless_head(body))
                 .expect("valid response")
         }
         other => {
-            let down = match &other {
-                Ok(resp) => failed(resp.status().as_u16()),
-                Err(_) => true,
-            };
-            if down
-                && let Ok(found) = server
+            if is_down(&other)
+                && let Some(found) = server
                     .revision(repo, rev, call.header(header::AUTHORIZATION))
                     .await
                 && let Some(listed) = archived_listing(call, &found.snap, tree_path)
             {
                 return listed;
             }
-            match other {
-                Ok(resp) => relay(server, call, resp),
-                Err(e) => unreachable(e),
-            }
+            relay_or_unreachable(server, call, other)
         }
     }
 }
@@ -381,10 +336,9 @@ fn archived_listing(call: &Call, snap: &Snapshot, tree_path: Option<&str>) -> Op
                 .collect()
         }
         Some(prefix) => {
-            let recursive = call.query.as_deref().is_some_and(|q| {
-                q.split('&')
-                    .any(|p| matches!(p, "recursive=true" | "recursive=1" | "recursive=True"))
-            });
+            let recursive = call
+                .query_params("recursive")
+                .any(|v| matches!(v, "true" | "1" | "True"));
             let prefix = prefix.trim_matches('/');
             entries
                 .into_iter()
@@ -421,6 +375,44 @@ fn entry_not_found(repo: &str, rev: &Rev, path: &str) -> Response {
         .expect("valid response")
 }
 
+/// The answer to a `HEAD`: what the file is, without its bytes.
+fn head_response(entry: &TreeEntry, extra: &[(&str, String)]) -> Response {
+    let mut out = Response::builder()
+        .status(StatusCode::OK)
+        .header(header::ACCEPT_RANGES, "bytes")
+        .header(header::CONTENT_LENGTH, entry.size)
+        .header(header::CONTENT_TYPE, "application/octet-stream");
+    for (k, v) in extra {
+        out = out.header(*k, v);
+    }
+    out.body(Body::empty()).expect("valid response")
+}
+
+/// A small file: fetch it whole, check it, then serve it.
+async fn fetch_small(
+    server: &Server,
+    call: &Call,
+    entry: &TreeEntry,
+    url: &str,
+    extra: &[(&str, String)],
+) -> Response {
+    let engine = &server.engine;
+    let fetched = engine
+        .fetcher
+        .fetch(&engine.store, url, Some(entry.size), &entry.expect(), None)
+        .await;
+    match fetched {
+        Ok(got) => {
+            let _ = engine
+                .db()
+                .upsert_blob(&got.sha256, got.size, got.git_oid.as_deref());
+            let file = engine.store.blob_path(&got.sha256);
+            files::serve_file(call, &file, got.size, extra).await
+        }
+        Err(_) => pass_through(server, call).await,
+    }
+}
+
 /// `HEAD` and `GET /{repo}/resolve/{rev}/{path}`: metadata and file bytes.
 ///
 /// Answered directly, never with a redirect: the CDN upstream would redirect
@@ -433,9 +425,9 @@ pub(crate) async fn resolve(
     rev: &str,
     path: &str,
 ) -> Response {
-    let path = percent_decode(path, false);
+    let path = percent_decode(path);
     let auth = call.header(header::AUTHORIZATION);
-    let Ok(found) = server.revision(repo, rev, auth).await else {
+    let Some(found) = server.revision(repo, rev, auth).await else {
         // Not something dedupd knows: relay upstream's own answer, error
         // headers included.
         return pass_through(server, call).await;
@@ -450,28 +442,17 @@ pub(crate) async fn resolve(
         ("x-repo-commit", found.snap.commit.clone()),
         ("etag", format!("\"{}\"", entry.etag())),
     ];
-
     if call.is_head() {
-        return Response::builder()
-            .status(StatusCode::OK)
-            .header(header::ACCEPT_RANGES, "bytes")
-            .header(header::CONTENT_LENGTH, entry.size)
-            .header(header::CONTENT_TYPE, "application/octet-stream")
-            .header(extra[0].0, &extra[0].1)
-            .header(extra[1].0, &extra[1].1)
-            .body(Body::empty())
-            .expect("valid response");
+        return head_response(entry, &extra);
     }
 
     // In the store, or on the archive disk?
     let known = server.engine.db().blob_for_entry(entry).ok().flatten();
-    if let Some(blob) = known {
-        let (engine, sha) = (server.engine.clone(), blob.sha256.clone());
-        let local = tokio::task::spawn_blocking(move || engine.store.ensure_local(&sha)).await;
-        if matches!(local, Ok(Ok(true))) {
-            let file = server.engine.store.blob_path(&blob.sha256);
-            return files::serve_file(call, &file, blob.size, &extra).await;
-        }
+    if let Some(blob) = known
+        && let Some(served) =
+            files::serve_stored(server, call, &blob.sha256, Some(blob.size), &extra).await
+    {
+        return served;
     }
     if found.from_archive {
         return plain(
@@ -484,52 +465,15 @@ pub(crate) async fn resolve(
         .engine
         .fetcher
         .resolve_url(repo, &found.snap.commit, &path);
-    match &entry.lfs_sha256 {
-        // A small file: fetch it whole, check it, then serve it.
-        None => {
-            let fetched = server
-                .engine
-                .fetcher
-                .fetch(
-                    &server.engine.store,
-                    &url,
-                    Some(entry.size),
-                    &entry.expect(),
-                    None,
-                )
-                .await;
-            match fetched {
-                Ok(got) => {
-                    let _ = server.engine.db().upsert_blob(
-                        &got.sha256,
-                        got.size,
-                        got.git_oid.as_deref(),
-                    );
-                    let file = server.engine.store.blob_path(&got.sha256);
-                    files::serve_file(call, &file, got.size, &extra).await
-                }
-                Err(_) => pass_through(server, call).await,
-            }
+    let Some(sha) = &entry.lfs_sha256 else {
+        return fetch_small(server, call, entry, &url, &extra).await;
+    };
+    // A large file: stream it to the client and keep the bytes.
+    match upstream(server, call, &url, true).await {
+        Ok(resp) if matches!(resp.status().as_u16(), 200 | 206) => {
+            files::tee_response(server, resp, sha, Some("application/octet-stream"), &extra)
         }
-        // A large file: stream it to the client and keep the bytes.
-        Some(sha) => match upstream(server, call, &url, true).await {
-            Ok(resp) if matches!(resp.status().as_u16(), 200 | 206) => {
-                let mut out = Response::builder().status(resp.status().as_u16());
-                for name in [header::CONTENT_LENGTH, header::CONTENT_RANGE] {
-                    if let Some(v) = resp.headers().get(&name) {
-                        out = out.header(name, v);
-                    }
-                }
-                out.header(header::ACCEPT_RANGES, "bytes")
-                    .header(header::CONTENT_TYPE, "application/octet-stream")
-                    .header(extra[0].0, &extra[0].1)
-                    .header(extra[1].0, &extra[1].1)
-                    .body(files::tee(server, resp, sha))
-                    .expect("valid response")
-            }
-            Ok(resp) => relay(server, call, resp),
-            Err(e) => unreachable(e),
-        },
+        other => relay_or_unreachable(server, call, other),
     }
 }
 
@@ -555,9 +499,9 @@ mod tests {
 
     #[test]
     fn decodes_form_values() {
-        assert_eq!(percent_decode("a%2Fb+c.gguf", true), "a/b c.gguf");
-        assert_eq!(percent_decode("100%", true), "100%");
+        assert_eq!(form_decode("a%2Fb+c.gguf"), "a/b c.gguf");
+        assert_eq!(form_decode("100%"), "100%");
         // In a URL path a plus sign is part of the file name.
-        assert_eq!(percent_decode("a%20b+c.gguf", false), "a b+c.gguf");
+        assert_eq!(percent_decode("a%20b+c.gguf"), "a b+c.gguf");
     }
 }

@@ -13,8 +13,12 @@ use std::sync::Arc;
 /// Relay a registry answer. The token challenge is removed: it names
 /// Hugging Face as the place to get a token, and Ollama refuses a challenge
 /// whose host is not the registry it is talking to.
-fn relay(server: &Server, call: &Call, resp: reqwest::Response) -> Response {
-    let mut out = crate::proxy::relay(server, call, resp);
+fn relay_or_unreachable(
+    server: &Server,
+    call: &Call,
+    answer: Result<reqwest::Response, reqwest::Error>,
+) -> Response {
+    let mut out = crate::proxy::relay_or_unreachable(server, call, answer);
     out.headers_mut().remove(header::WWW_AUTHENTICATE);
     out
 }
@@ -39,11 +43,7 @@ fn manifest_response(call: &Call, media_type: &str, body: String) -> Response {
         .header(header::CONTENT_TYPE, media_type)
         .header(header::CONTENT_LENGTH, body.len())
         .header("docker-content-digest", digest)
-        .body(if call.is_head() {
-            Body::empty()
-        } else {
-            Body::from(body)
-        })
+        .body(call.body_unless_head(body))
         .expect("valid response")
 }
 
@@ -58,11 +58,8 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
     // Always a GET upstream, so a HEAD also archives the manifest.
     let get = Call {
         method: axum::http::Method::GET,
-        path: call.path.clone(),
-        query: call.query.clone(),
-        headers: call.headers.clone(),
         body: Default::default(),
-        origin: call.origin.clone(),
+        ..call.clone()
     };
     let answer = upstream(server, &get, &url, true).await;
     if let Ok(resp) = &answer
@@ -94,10 +91,9 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
             .flatten()
             .and_then(|id| db.manifest(id, tag, Some(&user_agent)).ok().flatten())
     };
-    match (archived, answer) {
-        (Some((media_type, body)), _) => manifest_response(call, &media_type, body),
-        (None, Ok(resp)) => relay(server, call, resp),
-        (None, Err(e)) => unreachable(e),
+    match archived {
+        Some((media_type, body)) => manifest_response(call, &media_type, body),
+        None => relay_or_unreachable(server, call, answer),
     }
 }
 
@@ -119,10 +115,7 @@ async fn blob(server: &Arc<Server>, call: &Call, name: &str, digest: &str) -> Re
                 .expect("valid response"),
             None => {
                 let url = server.engine.fetcher.registry_blob_url(name, sha);
-                match upstream(server, call, &url, true).await {
-                    Ok(resp) => relay(server, call, resp),
-                    Err(e) => unreachable(e),
-                }
+                relay_or_unreachable(server, call, upstream(server, call, &url, true).await)
             }
         };
     }
@@ -168,22 +161,14 @@ pub(crate) async fn blob_direct(server: &Arc<Server>, call: &Call, digest: &str)
     let Some(sha) = dedupd_core::ollama::digest_hex(digest) else {
         return plain(StatusCode::BAD_REQUEST, "only sha256 digests are served");
     };
-    let name = call
-        .query
-        .as_deref()
-        .and_then(|q| q.split('&').find_map(|p| p.strip_prefix("repo=")))
-        .unwrap_or("");
+    let name = call.query_params("repo").next().unwrap_or("");
     send_blob(server, call, name, sha).await
 }
 
 async fn send_blob(server: &Arc<Server>, call: &Call, name: &str, sha: &str) -> Response {
     let extra = [("docker-content-digest", format!("sha256:{sha}"))];
-    let (engine, owned) = (server.engine.clone(), sha.to_string());
-    let local = tokio::task::spawn_blocking(move || engine.store.ensure_local(&owned)).await;
-    if matches!(local, Ok(Ok(true))) {
-        let file = server.engine.store.blob_path(sha);
-        let size = std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0);
-        return files::serve_file(call, &file, size, &extra).await;
+    if let Some(served) = files::serve_stored(server, call, sha, None, &extra).await {
+        return served;
     }
     if name.is_empty() {
         return plain(StatusCode::NOT_FOUND, "that layer is not in the store");
@@ -191,19 +176,9 @@ async fn send_blob(server: &Arc<Server>, call: &Call, name: &str, sha: &str) -> 
     let url = server.engine.fetcher.registry_blob_url(name, sha);
     match upstream(server, call, &url, true).await {
         Ok(resp) if matches!(resp.status().as_u16(), 200 | 206) => {
-            let mut out = Response::builder().status(resp.status().as_u16());
-            for h in [header::CONTENT_LENGTH, header::CONTENT_RANGE] {
-                if let Some(v) = resp.headers().get(&h) {
-                    out = out.header(h, v);
-                }
-            }
-            out.header(header::ACCEPT_RANGES, "bytes")
-                .header(extra[0].0, &extra[0].1)
-                .body(files::tee(server, resp, sha))
-                .expect("valid response")
+            files::tee_response(server, resp, sha, None, &extra)
         }
-        Ok(resp) => relay(server, call, resp),
-        Err(e) => unreachable(e),
+        other => relay_or_unreachable(server, call, other),
     }
 }
 

@@ -19,6 +19,7 @@ use dedupd_core::config::Config;
 use dedupd_core::fetch::Progress;
 use dedupd_core::pull::Engine;
 use std::collections::HashMap;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -32,14 +33,25 @@ pub struct Server {
     /// Large files being put together from what clients download through us.
     assemblies: Mutex<HashMap<String, Arc<files::Assembly>>>,
     pub progress: Arc<Progress>,
-    /// Pulls running through the control API. `progress` starts again from
-    /// zero when the last one ends, so a failed pull leaves nothing behind.
-    pub(crate) pulls: Mutex<usize>,
-    /// App files whose adoption failed, as they looked then. They are not
-    /// hashed again until they change.
-    pub(crate) failed_adoptions: Mutex<HashMap<String, dedupd_core::store::Fingerprint>>,
-    /// Serialises the background pass and requests to run one now.
-    pub(crate) pass_lock: tokio::sync::Mutex<()>,
+    /// Pulls running through the control API; see `begin_pull`.
+    pulls: Mutex<usize>,
+    /// What the background pass remembers between rounds.
+    pub(crate) passes: daemon::PassState,
+}
+
+/// One pull running through the control API. `progress` starts again from
+/// zero when the last one ends, so a failed pull leaves nothing behind.
+pub(crate) struct PullGuard<'a>(&'a Server);
+
+impl Drop for PullGuard<'_> {
+    fn drop(&mut self) {
+        let mut pulls = self.0.pulls.lock().expect("lock");
+        *pulls -= 1;
+        if *pulls == 0 {
+            self.0.progress.total.store(0, Ordering::Relaxed);
+            self.0.progress.done.store(0, Ordering::Relaxed);
+        }
+    }
 }
 
 impl Server {
@@ -61,13 +73,16 @@ impl Server {
             assemblies: Mutex::new(HashMap::new()),
             progress: Arc::new(Progress::default()),
             pulls: Mutex::new(0),
-            failed_adoptions: Mutex::new(HashMap::new()),
-            pass_lock: tokio::sync::Mutex::new(()),
+            passes: daemon::PassState::default(),
         })
     }
-}
 
-impl Server {
+    /// Count a pull as running until the returned guard is dropped.
+    pub(crate) fn begin_pull(&self) -> PullGuard<'_> {
+        *self.pulls.lock().expect("lock") += 1;
+        PullGuard(self)
+    }
+
     /// Forget which commits branch names were last seen at, so the next
     /// request asks upstream again.
     pub fn forget_refs(&self) {
@@ -92,6 +107,7 @@ pub async fn serve(
 }
 
 /// One request as the handlers see it.
+#[derive(Clone)]
 pub(crate) struct Call {
     pub method: Method,
     pub path: String,
@@ -115,6 +131,21 @@ impl Call {
         match &self.query {
             Some(q) => format!("{}?{q}", self.path),
             None => self.path.clone(),
+        }
+    }
+
+    /// The values given for `name` in the query string, undecoded.
+    pub fn query_params<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
+        let pairs = self.query.as_deref().unwrap_or("").split('&');
+        pairs.filter_map(move |p| p.strip_prefix(name)?.strip_prefix('='))
+    }
+
+    /// `body`, or nothing when the client only asked for the headers.
+    pub fn body_unless_head(&self, body: impl Into<Body>) -> Body {
+        if self.is_head() {
+            Body::empty()
+        } else {
+            body.into()
         }
     }
 }
