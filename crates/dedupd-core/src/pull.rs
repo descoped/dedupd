@@ -376,7 +376,9 @@ pub async fn pull(
                 // Without a named quantization the tag is Hugging Face's
                 // choice, which need not be the file the patterns selected.
                 let wanted = weights[0].lfs_sha256.as_deref();
-                if !manifest.all().any(|l| l.sha256().ok() == wanted) {
+                let names_it = ollama::Manifest::parse(&manifest)
+                    .is_ok_and(|m| m.all().any(|l| l.sha256().ok() == wanted));
+                if !names_it {
                     notes.push(format!(
                         "not placed into Ollama: its tag {tag} is a different file than {}; \
                          name the quantization, as in {}:Q8_0",
