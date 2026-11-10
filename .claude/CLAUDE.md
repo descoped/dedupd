@@ -4,15 +4,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-No product code exists yet. The repository holds three Python spike scripts in `spikes/` and this file. The full research and plan is the Claude Docs artifact "dedupd: research and implementation plan" (https://claude.ai/artifact/CYuT3GEgaBf9EgKLaMPoxd); read it with the Artifact/Claude Docs tools before making design changes, and update it when a decision changes.
+Phase 1 of the build order is implemented: the store, the database, `dedupd adopt` and `dedupd status`. Phases 2 onward (fetcher, placers, HTTP front ends, daemon, Swift app) are not started. `spikes/` holds three standalone Python scripts (standard library only, run with `python3`) that proved the protocol behaviour.
 
-The implementation language is Rust, with a Swift macOS app on top (decided by the owner). Planned shape, not yet scaffolded:
+The full research and plan is the Claude Docs artifact "dedupd: research and implementation plan" (https://claude.ai/artifact/CYuT3GEgaBf9EgKLaMPoxd); read it with the Artifact/Claude Docs tools before making design changes, and update it when a decision changes.
 
-- A Cargo workspace: a core library (store, fetcher, placers, front ends), a daemon binary run by launchd, a CLI binary, and a thin client crate exposed to Swift through UniFFI.
-- The daemon owns all state and runs without the app. The Swift app and the CLI are clients of the daemon's local control API; the app must not embed the core, because the daemon has to keep serving when the app is closed.
-- UniFFI bindings cover the client crate only (typed models, commands, progress events), not the core.
+## Commands
 
-Once a build exists, record the build, lint and test commands here.
+```sh
+cargo build --release                      # binary at target/release/dedupd
+cargo test --workspace                     # all tests
+cargo test -p dedupd-core --test adopt     # end-to-end adoption tests (fake Hub, fake models folder)
+cargo test -p dedupd-core hub::tests::parses_link_header   # a single test
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --all
+```
+
+Tests need macOS on APFS, because they create real clones in a temp directory. They never touch the real app folders or `~/.dedupd`.
+
+To try the CLI without touching the real store, point it at scratch folders: `dedupd --home <dir> adopt --models-dir <dir>` (or `DEDUPD_HOME`). `DEDUPD_HF_ENDPOINT` redirects Hub calls, which the tests use with a mock server.
+
+## Code layout
+
+A Cargo workspace (Rust 2024):
+
+- `crates/dedupd-core` — library. `store` (content-addressed folder, clone-in), `db` (SQLite schema and queries), `hub` (read-only Hugging Face API client), `sources/` (one module per app layout; only `bionic` so far), `adopt` (hash, verify against the Hub listing, clone, record), `status`, `hash`, `clone`.
+- `crates/dedupd` — the `dedupd` binary. For now it calls the core directly.
+
+Planned, not yet built: the binary gains a `serve` mode run by launchd and the other commands become clients of its local control API; a thin client crate is exposed to Swift through UniFFI for the macOS app. The app must not embed the core, because the daemon has to keep serving when the app is closed.
 
 ## What this project is
 
@@ -26,7 +44,7 @@ A network proxy alone saves no disk, because every app writes its own copy of wh
 
 Four parts, one process:
 
-1. **Store** — content-addressed folder on the same APFS volume as the apps. Large files keyed by sha256 (the Hub's `lfs.oid`); small non-LFS files keyed by git sha1. A database maps `repo@commit/path` to a store id and records every placement and pin.
+1. **Store** — content-addressed folder (`~/.dedupd/store/sha256/ab/<hex>`) on the same APFS volume as the apps. Every file is keyed by its sha256, which for LFS files is the Hub's `lfs.oid`. The git blob id of small non-LFS files is kept as an attribute in the database, because the Hub identifies those files by it. The database (`~/.dedupd/dedupd.sqlite`) archives each revision's Hub answers verbatim, maps `repo@commit/path` to content, and records every app file it knows about.
 2. **Fetcher** — downloads from huggingface.co with `Range` resume, verifies sha256, pins branch names to commits.
 3. **Front ends** — the Hub API and the Ollama registry API on one localhost port, reading from the store and falling through to the fetcher.
 4. **Placers** — one per app; each knows the app's layout and which files it needs, and creates APFS clones (`clonefile(2)`), never copies:
