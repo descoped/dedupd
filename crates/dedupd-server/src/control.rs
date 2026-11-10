@@ -83,7 +83,17 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 offline: body.offline,
                 jobs: body.jobs.unwrap_or(4),
             };
-            match pull::pull(&server.engine, &req, &server.progress).await {
+            *server.pulls.lock().expect("lock") += 1;
+            let pulled = pull::pull(&server.engine, &req, &server.progress).await;
+            {
+                let mut pulls = server.pulls.lock().expect("lock");
+                *pulls -= 1;
+                if *pulls == 0 {
+                    server.progress.total.store(0, Ordering::Relaxed);
+                    server.progress.done.store(0, Ordering::Relaxed);
+                }
+            }
+            match pulled {
                 Ok(out) => {
                     // The daemon keeps the archive disk current after its
                     // own pulls, as the command line does after its.

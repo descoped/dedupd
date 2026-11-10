@@ -36,8 +36,18 @@ pub(crate) async fn upstream(
     url: &str,
     identity: bool,
 ) -> Result<reqwest::Response, reqwest::Error> {
+    send(server.engine.fetcher.http(), server, call, url, identity).await
+}
+
+async fn send(
+    http: &reqwest::Client,
+    server: &Server,
+    call: &Call,
+    url: &str,
+    identity: bool,
+) -> Result<reqwest::Response, reqwest::Error> {
     let fetcher = &server.engine.fetcher;
-    let mut req = fetcher.http().request(call.method.clone(), url);
+    let mut req = http.request(call.method.clone(), url);
     let mut has_auth = false;
     for (name, value) in &call.headers {
         let n = name.as_str();
@@ -70,7 +80,11 @@ fn rewrite_link(value: &str, endpoint: &str, origin: &str) -> Option<String> {
     let kept: Vec<String> = value
         .split(',')
         .map(str::trim)
-        .filter(|part| !part.to_lowercase().contains("xet"))
+        // Only the relation names Xet; a repository's own name may contain it.
+        .filter(|part| {
+            let params = part.split_once('>').map_or(*part, |(_, params)| params);
+            !params.to_lowercase().contains("xet")
+        })
         .map(|part| part.replace(endpoint, origin))
         .collect();
     (!kept.is_empty()).then(|| kept.join(", "))
@@ -100,6 +114,18 @@ pub(crate) fn relay_head(
             }
             continue;
         }
+        if n == "location" {
+            // A redirect within the endpoint stays with us; one to a CDN is
+            // the client's to follow.
+            let endpoint = server.engine.fetcher.endpoint();
+            match value.to_str().ok().and_then(|v| v.strip_prefix(endpoint)) {
+                Some(rest) if rest.starts_with('/') => {
+                    out = out.header(header::LOCATION, format!("{}{rest}", call.origin));
+                }
+                _ => out = out.header(name, value),
+            }
+            continue;
+        }
         out = out.header(name, value);
     }
     out
@@ -126,13 +152,18 @@ pub(crate) fn unreachable(e: impl std::fmt::Display) -> Response {
 }
 
 /// Anything dedupd has no special handling for.
+///
+/// Redirects are relayed, not followed: the client reads the commit, the
+/// linked ETag and the size from the redirect itself, and the place it points
+/// to (a CDN) has none of them.
 pub(crate) async fn pass_through(server: &Server, call: &Call) -> Response {
     let url = format!(
         "{}{}",
         server.engine.fetcher.endpoint(),
         call.path_and_query()
     );
-    match upstream(server, call, &url, false).await {
+    let http = server.engine.fetcher.http_no_redirect();
+    match send(http, server, call, &url, false).await {
         Ok(resp) => relay(server, call, resp),
         Err(e) => unreachable(e),
     }
@@ -152,6 +183,11 @@ mod tests {
         assert_eq!(
             rewrite_link(r#"<https://c/a>; rel="xet-auth""#, "e", "o"),
             None
+        );
+        let v = r#"<https://huggingface.co/api/models/xet-team/r/tree/c?cursor=x>; rel="next""#;
+        assert_eq!(
+            rewrite_link(v, "https://huggingface.co", "http://127.0.0.1:8642").unwrap(),
+            r#"<http://127.0.0.1:8642/api/models/xet-team/r/tree/c?cursor=x>; rel="next""#
         );
     }
 }

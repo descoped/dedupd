@@ -160,7 +160,7 @@ pub(crate) async fn api(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Res
 
 /// True when upstream's answer means "ask the archive instead".
 fn failed(status: u16) -> bool {
-    matches!(status, 401 | 404 | 410) || status >= 500
+    matches!(status, 401 | 404 | 408 | 410 | 429) || status >= 500
 }
 
 /// Branch and tag names, which llama.cpp asks for first. Upstream's answer is
@@ -276,17 +276,19 @@ fn requested_paths(call: &Call) -> Vec<String> {
     }
     body.split('&')
         .filter_map(|pair| pair.strip_prefix("paths="))
-        .map(percent_decode)
+        .map(|v| percent_decode(v, true))
         .collect()
 }
 
-fn percent_decode(s: &str) -> String {
+/// Decode `%XX`. With `form`, `+` is a space, as in a form body; in a URL
+/// path it is a plain `+`.
+fn percent_decode(s: &str, form: bool) -> String {
     let bytes = s.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut i = 0;
     while i < bytes.len() {
         match bytes[i] {
-            b'+' => out.push(b' '),
+            b'+' if form => out.push(b' '),
             b'%' if s.is_char_boundary(i + 1) && s.get(i + 1..i + 3).is_some() => {
                 match u8::from_str_radix(&s[i + 1..i + 3], 16) {
                     Ok(b) => {
@@ -435,7 +437,7 @@ pub(crate) async fn resolve(
     rev: &str,
     path: &str,
 ) -> Response {
-    let path = percent_decode(path);
+    let path = percent_decode(path, false);
     let auth = call.header(header::AUTHORIZATION);
     let Ok(found) = server.revision(repo, rev, auth).await else {
         // Not something dedupd knows: relay upstream's own answer, error
@@ -558,7 +560,9 @@ mod tests {
 
     #[test]
     fn decodes_form_values() {
-        assert_eq!(percent_decode("a%2Fb+c.gguf"), "a/b c.gguf");
-        assert_eq!(percent_decode("100%"), "100%");
+        assert_eq!(percent_decode("a%2Fb+c.gguf", true), "a/b c.gguf");
+        assert_eq!(percent_decode("100%", true), "100%");
+        // In a URL path a plus sign is part of the file name.
+        assert_eq!(percent_decode("a%20b+c.gguf", false), "a b+c.gguf");
     }
 }

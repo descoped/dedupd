@@ -12,6 +12,9 @@ pub struct Store {
     /// A second copy of the store on another disk. Files missing here are
     /// brought back from it on demand.
     archive: Option<Home>,
+    /// One restore from the archive at a time: parallel requests for the same
+    /// file would otherwise write, and move, each other's temp file.
+    restoring: std::sync::Mutex<()>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +52,7 @@ impl Store {
         Ok(Self {
             home: home.clone(),
             archive: None,
+            restoring: std::sync::Mutex::new(()),
         })
     }
 
@@ -100,6 +104,11 @@ impl Store {
         let src = archive.blob_path(sha256);
         if !src.is_file() {
             return Ok(false);
+        }
+        let _restoring = self.restoring.lock().unwrap_or_else(|e| e.into_inner());
+        if self.contains(sha256) {
+            // Another caller restored it while this one waited.
+            return Ok(true);
         }
         let tmp = self.tmp_path(&format!("{sha256}.restore.{}", std::process::id()));
         let _ = fs::remove_file(&tmp);

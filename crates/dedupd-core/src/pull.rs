@@ -120,8 +120,14 @@ async fn fetch_entries(
     let mut missing = Vec::new();
     for e in entries {
         let known = engine.db().blob_for_entry(&e)?;
+        // A copy that cannot be brought back from the archive disk (detached
+        // mid-copy, damaged) is downloaded again when that is allowed.
+        let local = |sha: &str| match engine.store.ensure_local(sha) {
+            Err(e) if req.offline => Err(e),
+            other => Ok(other.unwrap_or(false)),
+        };
         match known {
-            Some(b) if engine.store.ensure_local(&b.sha256)? => {
+            Some(b) if local(&b.sha256)? => {
                 progress.done.fetch_add(b.size, Ordering::Relaxed);
                 items.push(Item {
                     rel_path: e.path.clone(),
@@ -367,6 +373,17 @@ pub async fn pull(
                         continue;
                     }
                 };
+                // Without a named quantization the tag is Hugging Face's
+                // choice, which need not be the file the patterns selected.
+                let wanted = weights[0].lfs_sha256.as_deref();
+                if !manifest.all().any(|l| l.sha256().ok() == wanted) {
+                    notes.push(format!(
+                        "not placed into Ollama: its tag {tag} is a different file than {}; \
+                         name the quantization, as in {}:Q8_0",
+                        weights[0].path, req.repo
+                    ));
+                    continue;
+                }
                 place::place_ollama(
                     &engine.db(),
                     &engine.store,

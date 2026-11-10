@@ -146,6 +146,10 @@ pub struct VerifyReport {
 pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Result<VerifyReport> {
     let blobs = lock(db).all_blobs()?;
     let root = match (archive, store.archive()) {
+        (true, Some(a)) if !crate::archive::attached(a) => bail!(
+            "the archive disk is not attached ({} not found)",
+            a.root().display()
+        ),
         (true, Some(a)) => a.clone(),
         (true, None) => bail!("no archive folder is configured"),
         (false, _) => store.home().clone(),

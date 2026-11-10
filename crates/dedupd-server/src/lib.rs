@@ -32,6 +32,12 @@ pub struct Server {
     /// Large files being put together from what clients download through us.
     assemblies: Mutex<HashMap<String, Arc<files::Assembly>>>,
     pub progress: Arc<Progress>,
+    /// Pulls running through the control API. `progress` starts again from
+    /// zero when the last one ends, so a failed pull leaves nothing behind.
+    pub(crate) pulls: Mutex<usize>,
+    /// App files whose adoption failed, as they looked then. They are not
+    /// hashed again until they change.
+    pub(crate) failed_adoptions: Mutex<HashMap<String, dedupd_core::store::Fingerprint>>,
     /// Serialises the background pass and requests to run one now.
     pub(crate) pass_lock: tokio::sync::Mutex<()>,
 }
@@ -54,6 +60,8 @@ impl Server {
             commits: Mutex::new(HashMap::new()),
             assemblies: Mutex::new(HashMap::new()),
             progress: Arc::new(Progress::default()),
+            pulls: Mutex::new(0),
+            failed_adoptions: Mutex::new(HashMap::new()),
             pass_lock: tokio::sync::Mutex::new(()),
         })
     }

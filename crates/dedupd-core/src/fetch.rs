@@ -41,6 +41,8 @@ pub struct Progress {
 
 pub struct Fetcher {
     http: reqwest::Client,
+    /// The same client, except that it hands redirects back to the caller.
+    http_no_redirect: reqwest::Client,
     endpoint: String,
     token: Option<String>,
     /// One download at a time per file, so two requests for the same file
@@ -52,13 +54,19 @@ const ATTEMPTS: usize = 6;
 
 impl Fetcher {
     pub fn new(endpoint: impl Into<String>, token: Option<String>) -> Result<Self> {
-        let http = reqwest::Client::builder()
-            .user_agent(concat!("dedupd/", env!("CARGO_PKG_VERSION")))
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .read_timeout(std::time::Duration::from_secs(60))
+        let builder = || {
+            reqwest::Client::builder()
+                .user_agent(concat!("dedupd/", env!("CARGO_PKG_VERSION")))
+                .connect_timeout(std::time::Duration::from_secs(15))
+                .read_timeout(std::time::Duration::from_secs(60))
+        };
+        let http = builder().build()?;
+        let http_no_redirect = builder()
+            .redirect(reqwest::redirect::Policy::none())
             .build()?;
         Ok(Self {
             http,
+            http_no_redirect,
             endpoint: endpoint.into().trim_end_matches('/').to_string(),
             token,
             in_flight: Mutex::new(HashMap::new()),
@@ -71,6 +79,11 @@ impl Fetcher {
 
     pub fn http(&self) -> &reqwest::Client {
         &self.http
+    }
+
+    /// For relaying an answer as it is: a redirect comes back as a redirect.
+    pub fn http_no_redirect(&self) -> &reqwest::Client {
+        &self.http_no_redirect
     }
 
     /// A GET for `url`. The token is attached only for the configured

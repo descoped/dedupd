@@ -63,6 +63,14 @@ pub async fn pass_with(
     let mut repos = adopt::scan_apps(&engine.db, &engine.dirs, &App::ALL)?;
     {
         let db = engine.db();
+        let mut failed = server.failed_adoptions.lock().expect("lock");
+        // A file that failed and has changed since gets another try.
+        let scanned: std::collections::HashMap<_, _> = repos
+            .iter()
+            .flat_map(|r| &r.files)
+            .map(|f| (f.abs_path.to_string_lossy().into_owned(), f.fingerprint))
+            .collect();
+        failed.retain(|path, seen| scanned.get(path) == Some(seen));
         for repo in &mut repos {
             repo.files.retain(|f| {
                 let known = db
@@ -76,12 +84,19 @@ pub async fn pass_with(
                                 mtime_ns: p.mtime_ns,
                             }
                     });
-                !known && settled(&f.abs_path, settle)
+                !known
+                    && !failed.contains_key(f.abs_path.to_string_lossy().as_ref())
+                    && settled(&f.abs_path, settle)
             });
         }
     }
     repos.retain(|r| !r.files.is_empty());
     if !repos.is_empty() {
+        let fingerprints: std::collections::HashMap<_, _> = repos
+            .iter()
+            .flat_map(|r| &r.files)
+            .map(|f| (f.abs_path.to_string_lossy().into_owned(), f.fingerprint))
+            .collect();
         let opts = Options {
             jobs: 2,
             ..Options::default()
@@ -103,6 +118,13 @@ pub async fn pass_with(
                 }
             }
             for (path, reason) in outcome.errors {
+                if let Some(seen) = fingerprints.get(&path) {
+                    server
+                        .failed_adoptions
+                        .lock()
+                        .expect("lock")
+                        .insert(path.clone(), *seen);
+                }
                 report.errors.push(format!("{path}: {reason}"));
             }
         }
