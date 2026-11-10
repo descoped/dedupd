@@ -509,3 +509,81 @@ async fn control_api_is_closed_to_web_pages() {
         .unwrap();
     assert_eq!(blocked.status(), 403);
 }
+
+#[tokio::test]
+async fn a_model_an_app_downloaded_itself_is_shared_by_the_next_pass() {
+    use dedupd_server::daemon;
+    let fx = fixture().await;
+    let dirs = fx.server.engine.dirs.clone();
+    let zero = Duration::ZERO;
+
+    // Bionic downloads the repository on its own, past the daemon.
+    let bionic = dirs.bionic.join(REPO);
+    std::fs::create_dir_all(bionic.join("sub")).unwrap();
+    std::fs::write(bionic.join("model.gguf"), &fx.weights).unwrap();
+    std::fs::write(bionic.join("sub/config.json"), &fx.config).unwrap();
+
+    // Not yet settled: a download may still be writing.
+    let early = daemon::pass_with(&fx.server, Duration::from_secs(3600), zero)
+        .await
+        .unwrap();
+    assert_eq!(early.adopted, 0);
+
+    let first = daemon::pass_with(&fx.server, zero, zero).await.unwrap();
+    assert_eq!((first.adopted, first.errors.len()), (2, 0));
+    assert!(fx.server.engine.store.contains(&sha256(&fx.weights)));
+
+    // The Hugging Face client can now get the model from the daemon without
+    // any download from upstream.
+    let got = fx
+        .http
+        .get(format!("{}/{REPO}/resolve/main/model.gguf", fx.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(got.bytes().await.unwrap(), fx.weights);
+    assert_eq!(upstream_hits(&fx, "/model.gguf").await, 0);
+
+    // Ollama then pulls the same model itself and writes a second copy of
+    // the weights. The next pass replaces that copy with a clone.
+    let blob = dirs
+        .ollama
+        .join(format!("blobs/sha256-{}", sha256(&fx.weights)));
+    std::fs::create_dir_all(blob.parent().unwrap()).unwrap();
+    std::fs::write(&blob, &fx.weights).unwrap();
+    let manifest = dirs
+        .ollama
+        .join("manifests/hf.co")
+        .join(REPO)
+        .join("latest");
+    std::fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    std::fs::write(&manifest, &fx.manifest).unwrap();
+    let ino = std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(&blob).unwrap());
+
+    let second = daemon::pass_with(&fx.server, zero, zero).await.unwrap();
+    assert_eq!((second.adopted, second.reclaimed), (1, 1));
+    assert_eq!(second.reclaimed_bytes, fx.weights.len() as u64);
+    assert_ne!(
+        std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(&blob).unwrap()),
+        ino
+    );
+    assert_eq!(std::fs::read(&blob).unwrap(), fx.weights);
+
+    // The manifest Ollama wrote is archived, and an idle pass does nothing.
+    let quiet = daemon::pass_with(&fx.server, zero, zero).await.unwrap();
+    assert_eq!((quiet.adopted, quiet.reclaimed, quiet.forgotten), (0, 0, 0));
+    remove_upstream(&fx).await;
+    let m = fx
+        .http
+        .get(format!("{}/v2/{REPO}/manifests/latest", fx.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(m.text().await.unwrap(), fx.manifest);
+
+    // The model is deleted in Bionic: forgotten there, kept in the store.
+    std::fs::remove_dir_all(&bionic).unwrap();
+    let after = daemon::pass_with(&fx.server, zero, zero).await.unwrap();
+    assert_eq!(after.forgotten, 2);
+    assert!(fx.server.engine.store.contains(&sha256(&fx.weights)));
+}

@@ -92,6 +92,22 @@ pub fn sync(
         .filter(|b| !store.contains(&b.sha256) && archive.blob_path(&b.sha256).is_file())
         .count();
 
+    // An idle pass leaves the archive's database copy alone.
+    let newer = |a: &std::path::Path, b: &std::path::Path| {
+        let m = |p: &std::path::Path| fs::metadata(p).and_then(|m| m.modified()).ok();
+        match (m(a), m(b)) {
+            (Some(x), Some(y)) => x > y,
+            _ => true,
+        }
+    };
+    let local_db = store.home().db_path();
+    let wal = local_db.with_extension("sqlite-wal");
+    if report.copied == 0
+        && !newer(&local_db, &archive.db_path())
+        && !(wal.is_file() && newer(&wal, &archive.db_path()))
+    {
+        return Ok(report);
+    }
     let tmp = archive.root().join("dedupd.sqlite.tmp");
     let _ = fs::remove_file(&tmp);
     db.lock()

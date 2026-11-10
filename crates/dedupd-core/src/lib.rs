@@ -9,6 +9,7 @@ pub mod db;
 pub mod fetch;
 pub mod hash;
 pub mod hub;
+pub mod maintain;
 pub mod ollama;
 pub mod paths;
 pub mod place;

@@ -178,7 +178,7 @@ pub async fn adopt(
     hub: Option<&HubClient>,
     repos: Vec<LocalRepo>,
     opts: &Options,
-    on_event: &mut dyn FnMut(Event<'_>),
+    on_event: &mut (dyn FnMut(Event<'_>) + Send),
 ) -> Result<Vec<RepoOutcome>> {
     let mut outcomes: Vec<RepoOutcome> = Vec::new();
     let mut states: Vec<RepoState> = Vec::new();
@@ -441,7 +441,18 @@ pub fn scan_apps(
     for app in apps {
         match app {
             App::Bionic if dirs.bionic.is_dir() => repos.extend(bionic::scan(&dirs.bionic)?),
-            App::Hf => repos.extend(hf_cache::scan(&dirs.hf_cache)?),
+            App::Hf => {
+                // The cache records which commit each branch name was at.
+                let db = db.lock().expect("database lock");
+                for (repo, name, commit) in hf_cache::refs(&dirs.hf_cache) {
+                    let repo_id = db.upsert_repo(PROVIDER_HF, &repo)?;
+                    if db.ref_commit(repo_id, &name)?.is_none() {
+                        db.set_ref(repo_id, &name, &commit)?;
+                    }
+                }
+                drop(db);
+                repos.extend(hf_cache::scan(&dirs.hf_cache)?);
+            }
             App::Ollama => {
                 let db = db.lock().expect("database lock");
                 for m in ollama::manifests(&dirs.ollama) {

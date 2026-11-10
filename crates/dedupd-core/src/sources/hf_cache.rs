@@ -22,6 +22,33 @@ fn dirs(dir: &Path) -> Vec<(String, std::path::PathBuf)> {
     out
 }
 
+/// The branch names the cache knows, as `(repository, name, commit)`.
+pub fn refs(hub_dir: &Path) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for (dir_name, repo_dir) in dirs(hub_dir) {
+        let Some(name) = dir_name.strip_prefix("models--") else {
+            continue;
+        };
+        let repo = name.replacen("--", "/", 1);
+        for entry in std::fs::read_dir(repo_dir.join("refs"))
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let commit = std::fs::read_to_string(entry.path()).unwrap_or_default();
+            let commit = commit.trim();
+            if crate::db::is_commit(commit) {
+                out.push((
+                    repo.clone(),
+                    entry.file_name().to_string_lossy().into_owned(),
+                    commit.to_string(),
+                ));
+            }
+        }
+    }
+    out
+}
+
 /// List the model files in the cache, one group per repository and commit.
 /// A missing cache folder is an empty cache.
 pub fn scan(hub_dir: &Path) -> Result<Vec<LocalRepo>> {

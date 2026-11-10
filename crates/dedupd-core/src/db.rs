@@ -95,7 +95,7 @@ pub struct Db {
 }
 
 /// One stored file as the database knows it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct BlobRow {
     pub sha256: String,
     pub size: u64,

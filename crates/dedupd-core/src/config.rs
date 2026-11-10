@@ -23,6 +23,9 @@ pub struct Config {
     pub hf_cache: Option<PathBuf>,
     /// Whether the daemon replaces duplicate app files with clones.
     pub reclaim: Option<bool>,
+    /// Whether the daemon points apps started from the Dock or Finder at
+    /// itself by setting `HF_ENDPOINT` for the login session.
+    pub set_env: Option<bool>,
     /// Seconds between the daemon's scans of the app folders.
     pub scan_interval: Option<u64>,
 }
