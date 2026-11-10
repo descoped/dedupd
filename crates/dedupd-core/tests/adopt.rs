@@ -101,12 +101,12 @@ async fn adopts_verifies_and_leaves_app_files_alone() {
     let server = fake_hub(&fx.models).await;
     let hub = HubClient::new(server.uri(), None).unwrap();
     let store = Store::open(&fx.home).unwrap();
-    let mut db = Db::open(&fx.home.db_path()).unwrap();
+    let db = std::sync::Mutex::new(Db::open(&fx.home.db_path()).unwrap());
     let before = snapshot_of(&fx.models);
 
     let repos = bionic::scan(&fx.models).unwrap();
     let out = adopt::adopt(
-        &mut db,
+        &db,
         &store,
         Some(&hub),
         repos,
@@ -139,6 +139,8 @@ async fn adopts_verifies_and_leaves_app_files_alone() {
     // The Hub's answers are archived verbatim, including fields dedupd does
     // not itself use.
     let (info, tree): (String, String) = db
+        .lock()
+        .unwrap()
         .conn()
         .query_row(
             "SELECT info_json, tree_json FROM revisions WHERE commit_sha = ?1",
@@ -149,7 +151,7 @@ async fn adopts_verifies_and_leaves_app_files_alone() {
     assert!(info.contains("org/Repo-GGUF"));
     assert!(tree.contains("xetHash") && tree.contains("README.md"));
 
-    let s = status(&db).unwrap();
+    let s = status(&db.lock().unwrap()).unwrap();
     assert_eq!(s.store_files, 4);
     assert_eq!(s.apps.len(), 1);
     assert_eq!((s.apps[0].app.as_str(), s.apps[0].files), ("bionic", 4));
@@ -167,47 +169,47 @@ async fn second_run_does_not_rehash_and_offline_keeps_earlier_verification() {
     let server = fake_hub(&fx.models).await;
     let hub = HubClient::new(server.uri(), None).unwrap();
     let store = Store::open(&fx.home).unwrap();
-    let mut db = Db::open(&fx.home.db_path()).unwrap();
+    let db = std::sync::Mutex::new(Db::open(&fx.home.db_path()).unwrap());
     let opts = Options::default();
 
     let scan = || bionic::scan(&fx.models).unwrap();
-    adopt::adopt(&mut db, &store, Some(&hub), scan(), &opts, &mut |_| {})
+    adopt::adopt(&db, &store, Some(&hub), scan(), &opts, &mut |_| {})
         .await
         .unwrap();
 
     // Run again with the Hub gone: nothing is hashed, earlier results stand.
-    let out = adopt::adopt(&mut db, &store, None, scan(), &opts, &mut |_| {})
+    let out = adopt::adopt(&db, &store, None, scan(), &opts, &mut |_| {})
         .await
         .unwrap();
     assert_eq!(out[0].upstream, Upstream::NotAsked);
     assert!(out[0].files.iter().all(|f| f.action == Action::Unchanged));
     assert_eq!(verify_of(&out[0], "model.gguf").0, Verify::Verified);
-    assert_eq!(status(&db).unwrap().repos[0].verified, 2);
+    assert_eq!(status(&db.lock().unwrap()).unwrap().repos[0].verified, 2);
 
     // A file the app replaced is hashed again and gets a new store entry;
     // the old one stays, because nothing is deleted automatically.
     let old_sha = verify_of(&out[0], "config.json").2.to_string();
     let config = fx.models.join("org/Repo-GGUF/config.json");
     fs::write(&config, b"{\"a\":2,\"b\":3}\n").unwrap();
-    let out = adopt::adopt(&mut db, &store, Some(&hub), scan(), &opts, &mut |_| {})
+    let out = adopt::adopt(&db, &store, Some(&hub), scan(), &opts, &mut |_| {})
         .await
         .unwrap();
     let (v, action, new_sha) = verify_of(&out[0], "config.json");
     assert_eq!((v, action), (Verify::Mismatch, Action::Cloned));
     assert_ne!(new_sha, old_sha);
     assert!(store.contains(&old_sha) && store.contains(new_sha));
-    assert_eq!(status(&db).unwrap().store_files, 5);
+    assert_eq!(status(&db.lock().unwrap()).unwrap().store_files, 5);
 }
 
 #[tokio::test]
 async fn offline_first_run_is_unchecked_then_verified_without_rehash() {
     let fx = fixture();
     let store = Store::open(&fx.home).unwrap();
-    let mut db = Db::open(&fx.home.db_path()).unwrap();
+    let db = std::sync::Mutex::new(Db::open(&fx.home.db_path()).unwrap());
     let opts = Options::default();
     let scan = || bionic::scan(&fx.models).unwrap();
 
-    let out = adopt::adopt(&mut db, &store, None, scan(), &opts, &mut |_| {})
+    let out = adopt::adopt(&db, &store, None, scan(), &opts, &mut |_| {})
         .await
         .unwrap();
     assert!(
@@ -219,7 +221,7 @@ async fn offline_first_run_is_unchecked_then_verified_without_rehash() {
 
     let server = fake_hub(&fx.models).await;
     let hub = HubClient::new(server.uri(), None).unwrap();
-    let out = adopt::adopt(&mut db, &store, Some(&hub), scan(), &opts, &mut |_| {})
+    let out = adopt::adopt(&db, &store, Some(&hub), scan(), &opts, &mut |_| {})
         .await
         .unwrap();
     assert!(out[0].files.iter().all(|f| f.action == Action::Unchanged));
@@ -234,14 +236,14 @@ async fn dry_run_writes_nothing() {
     let server = fake_hub(&fx.models).await;
     let hub = HubClient::new(server.uri(), None).unwrap();
     let store = Store::open(&fx.home).unwrap();
-    let mut db = Db::open(&fx.home.db_path()).unwrap();
+    let db = std::sync::Mutex::new(Db::open(&fx.home.db_path()).unwrap());
     let opts = Options {
         dry_run: true,
         ..Options::default()
     };
 
     let out = adopt::adopt(
-        &mut db,
+        &db,
         &store,
         Some(&hub),
         bionic::scan(&fx.models).unwrap(),
@@ -252,7 +254,7 @@ async fn dry_run_writes_nothing() {
     .unwrap();
     assert!(out[0].files.iter().all(|f| f.action == Action::DryRun));
     assert_eq!(verify_of(&out[0], "model.gguf").0, Verify::Verified);
-    let s = status(&db).unwrap();
+    let s = status(&db.lock().unwrap()).unwrap();
     assert_eq!((s.store_files, s.repos.len()), (0, 0));
     assert!(!store.contains(verify_of(&out[0], "model.gguf").2));
 }
@@ -267,10 +269,10 @@ async fn repo_missing_upstream_is_still_adopted() {
         .await;
     let hub = HubClient::new(server.uri(), None).unwrap();
     let store = Store::open(&fx.home).unwrap();
-    let mut db = Db::open(&fx.home.db_path()).unwrap();
+    let db = std::sync::Mutex::new(Db::open(&fx.home.db_path()).unwrap());
 
     let out = adopt::adopt(
-        &mut db,
+        &db,
         &store,
         Some(&hub),
         bionic::scan(&fx.models).unwrap(),
@@ -286,5 +288,5 @@ async fn repo_missing_upstream_is_still_adopted() {
             .iter()
             .all(|f| f.verify == Verify::Unchecked && f.action == Action::Cloned)
     );
-    assert_eq!(status(&db).unwrap().store_files, 4);
+    assert_eq!(status(&db.lock().unwrap()).unwrap().store_files, 4);
 }

@@ -70,8 +70,49 @@ CREATE TABLE placements (
 );
 "#;
 
+/// Added in schema version 2.
+const SCHEMA_V2: &str = r#"
+-- 1 when the app file shares its disk blocks with the store file (one was
+-- cloned from the other); 0 when it is a separate copy of the same bytes.
+ALTER TABLE placements ADD COLUMN shared INTEGER NOT NULL DEFAULT 1;
+
+-- The manifest the provider's Ollama registry generated for a tag. The answer
+-- depends on who asks, so the asking User-Agent is part of the key.
+CREATE TABLE ollama_manifests (
+    id          INTEGER PRIMARY KEY,
+    repo_id     INTEGER NOT NULL REFERENCES repos(id),
+    tag         TEXT NOT NULL,
+    user_agent  TEXT NOT NULL,
+    media_type  TEXT NOT NULL,
+    body        TEXT NOT NULL,
+    fetched_at  INTEGER NOT NULL,
+    UNIQUE (repo_id, tag, user_agent)
+);
+"#;
+
 pub struct Db {
     conn: Connection,
+}
+
+/// One stored file as the database knows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BlobRow {
+    pub sha256: String,
+    pub size: u64,
+    pub git_oid: Option<String>,
+}
+
+/// An app file recorded in the database.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlacedFile {
+    pub app: String,
+    pub path: String,
+    pub repo: String,
+    pub rel_path: String,
+    pub sha256: String,
+    pub size: u64,
+    pub mtime_ns: i64,
+    pub shared: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,6 +122,7 @@ pub struct PlacementRow {
     pub size: u64,
     pub mtime_ns: i64,
     pub verify_state: String,
+    pub shared: bool,
 }
 
 pub struct NewPlacement<'a> {
@@ -94,6 +136,8 @@ pub struct NewPlacement<'a> {
     pub origin: &'a str,
     pub verify_state: &'a str,
     pub verified_commit: Option<&'a str>,
+    /// Whether the app file shares disk blocks with the store file.
+    pub shared: bool,
 }
 
 impl Db {
@@ -112,15 +156,20 @@ impl Db {
     fn init(conn: Connection) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
+        conn.busy_timeout(std::time::Duration::from_secs(30))?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        match version {
-            0 => {
-                conn.execute_batch(&format!("BEGIN; {SCHEMA} PRAGMA user_version = 1; COMMIT;"))?;
-            }
-            1 => {}
-            other => anyhow::bail!(
-                "database schema version {other} is newer than this build of dedupd understands"
-            ),
+        if version > 2 {
+            anyhow::bail!(
+                "database schema version {version} is newer than this build of dedupd understands"
+            );
+        }
+        if version < 1 {
+            conn.execute_batch(&format!("BEGIN; {SCHEMA} PRAGMA user_version = 1; COMMIT;"))?;
+        }
+        if version < 2 {
+            conn.execute_batch(&format!(
+                "BEGIN; {SCHEMA_V2} PRAGMA user_version = 2; COMMIT;"
+            ))?;
         }
         Ok(Self { conn })
     }
@@ -142,7 +191,12 @@ impl Db {
     }
 
     /// Archive a revision and point `ref_name` at it.
-    pub fn record_snapshot(&mut self, repo_id: i64, ref_name: &str, snap: &Snapshot) -> Result<()> {
+    pub fn record_snapshot(
+        &mut self,
+        repo_id: i64,
+        ref_name: Option<&str>,
+        snap: &Snapshot,
+    ) -> Result<()> {
         let tx = self.conn.transaction()?;
         tx.execute(
             "INSERT INTO revisions (repo_id, commit_sha, fetched_at, info_json, tree_json)
@@ -177,12 +231,14 @@ impl Db {
                 stmt.execute(params![rev_id, path, *size as i64, git_oid, lfs_sha256])?;
             }
         }
-        tx.execute(
-            "INSERT INTO refs (repo_id, name, commit_sha, confirmed_at) VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT (repo_id, name) DO UPDATE SET
-                 commit_sha = excluded.commit_sha, confirmed_at = excluded.confirmed_at",
-            params![repo_id, ref_name, snap.commit, now()],
-        )?;
+        if let Some(ref_name) = ref_name {
+            tx.execute(
+                "INSERT INTO refs (repo_id, name, commit_sha, confirmed_at) VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT (repo_id, name) DO UPDATE SET
+                     commit_sha = excluded.commit_sha, confirmed_at = excluded.confirmed_at",
+                params![repo_id, ref_name, snap.commit, now()],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -200,7 +256,7 @@ impl Db {
         Ok(self
             .conn
             .query_row(
-                "SELECT p.sha256, b.git_oid, p.size, p.mtime_ns, p.verify_state
+                "SELECT p.sha256, b.git_oid, p.size, p.mtime_ns, p.verify_state, p.shared
                  FROM placements p JOIN blobs b ON b.sha256 = p.sha256
                  WHERE p.path = ?1",
                 [path],
@@ -211,6 +267,7 @@ impl Db {
                         size: r.get::<_, i64>(2)? as u64,
                         mtime_ns: r.get(3)?,
                         verify_state: r.get(4)?,
+                        shared: r.get(5)?,
                     })
                 },
             )
@@ -221,13 +278,14 @@ impl Db {
         self.conn.execute(
             "INSERT INTO placements
                  (app, path, repo_id, rel_path, sha256, size, mtime_ns, origin,
-                  verify_state, verified_commit, recorded_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                  verify_state, verified_commit, recorded_at, shared)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
              ON CONFLICT (path) DO UPDATE SET
                  app = excluded.app, repo_id = excluded.repo_id, rel_path = excluded.rel_path,
                  sha256 = excluded.sha256, size = excluded.size, mtime_ns = excluded.mtime_ns,
                  verify_state = excluded.verify_state, verified_commit = excluded.verified_commit,
-                 recorded_at = excluded.recorded_at",
+                 recorded_at = excluded.recorded_at, shared = excluded.shared,
+                 origin = excluded.origin",
             params![
                 p.app,
                 p.path,
@@ -239,11 +297,214 @@ impl Db {
                 p.origin,
                 p.verify_state,
                 p.verified_commit,
-                now()
+                now(),
+                p.shared
             ],
         )?;
         Ok(())
     }
+
+    pub fn repo_id(&self, provider: &str, name: &str) -> Result<Option<i64>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT id FROM repos WHERE provider = ?1 AND name = ?2",
+                params![provider, name],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// The commit an archived branch or tag name pointed at when last confirmed.
+    pub fn ref_commit(&self, repo_id: i64, name: &str) -> Result<Option<String>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT commit_sha FROM refs WHERE repo_id = ?1 AND name = ?2",
+                params![repo_id, name],
+                |r| r.get(0),
+            )
+            .optional()?)
+    }
+
+    /// An archived revision. `revision` is a commit id, or a branch or tag
+    /// name that was archived earlier.
+    pub fn archived_snapshot(&self, repo_id: i64, revision: &str) -> Result<Option<Snapshot>> {
+        let commit = if is_commit(revision) {
+            revision.to_string()
+        } else {
+            match self.ref_commit(repo_id, revision)? {
+                Some(c) => c,
+                None => return Ok(None),
+            }
+        };
+        let row: Option<(i64, String, String)> = self
+            .conn
+            .query_row(
+                "SELECT id, info_json, tree_json FROM revisions
+                 WHERE repo_id = ?1 AND commit_sha = ?2",
+                params![repo_id, commit],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        let Some((rev_id, info_json, tree_json)) = row else {
+            return Ok(None);
+        };
+        let mut stmt = self.conn.prepare(
+            "SELECT path, size, git_oid, lfs_sha256 FROM revision_files
+             WHERE revision_id = ?1 ORDER BY path",
+        )?;
+        let entries = stmt
+            .query_map([rev_id], |r| {
+                Ok(TreeEntry {
+                    path: r.get(0)?,
+                    size: r.get::<_, i64>(1)? as u64,
+                    git_oid: r.get(2)?,
+                    lfs_sha256: r.get(3)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(Some(Snapshot {
+            commit,
+            info_json,
+            tree_json,
+            entries,
+        }))
+    }
+
+    pub fn blob(&self, sha256: &str) -> Result<Option<BlobRow>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT sha256, size, git_oid FROM blobs WHERE sha256 = ?1",
+                [sha256],
+                blob_row,
+            )
+            .optional()?)
+    }
+
+    /// The stored file whose git blob id is `oid`, which is how the Hub names
+    /// files that are not in LFS.
+    pub fn blob_by_git_oid(&self, oid: &str) -> Result<Option<BlobRow>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT sha256, size, git_oid FROM blobs WHERE git_oid = ?1 LIMIT 1",
+                [oid],
+                blob_row,
+            )
+            .optional()?)
+    }
+
+    pub fn all_blobs(&self) -> Result<Vec<BlobRow>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT sha256, size, git_oid FROM blobs ORDER BY sha256")?;
+        Ok(stmt
+            .query_map([], blob_row)?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn delete_blob(&self, sha256: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM blobs WHERE sha256 = ?1", [sha256])?;
+        Ok(())
+    }
+
+    /// The stored content for a file the Hub lists, if it is archived.
+    pub fn blob_for_entry(&self, entry: &TreeEntry) -> Result<Option<BlobRow>> {
+        match &entry.lfs_sha256 {
+            Some(sha) => self.blob(sha),
+            None => self.blob_by_git_oid(&entry.git_oid),
+        }
+    }
+
+    pub fn save_manifest(
+        &self,
+        repo_id: i64,
+        tag: &str,
+        user_agent: &str,
+        media_type: &str,
+        body: &str,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO ollama_manifests (repo_id, tag, user_agent, media_type, body, fetched_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT (repo_id, tag, user_agent) DO UPDATE SET
+                 media_type = excluded.media_type, body = excluded.body,
+                 fetched_at = excluded.fetched_at",
+            params![repo_id, tag, user_agent, media_type, body, now()],
+        )?;
+        Ok(())
+    }
+
+    /// An archived Ollama manifest as `(media type, body)`: the one fetched
+    /// with this User-Agent, else the most recent one for the tag.
+    pub fn manifest(
+        &self,
+        repo_id: i64,
+        tag: &str,
+        user_agent: Option<&str>,
+    ) -> Result<Option<(String, String)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT media_type, body FROM ollama_manifests
+                 WHERE repo_id = ?1 AND tag = ?2
+                 ORDER BY (user_agent = ?3) DESC, fetched_at DESC, id DESC LIMIT 1",
+                params![repo_id, tag, user_agent.unwrap_or("")],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?)
+    }
+
+    pub fn placements(&self) -> Result<Vec<PlacedFile>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT p.app, p.path, r.name, p.rel_path, p.sha256, p.size, p.mtime_ns, p.shared
+             FROM placements p JOIN repos r ON r.id = p.repo_id ORDER BY p.path",
+        )?;
+        Ok(stmt
+            .query_map([], |r| {
+                Ok(PlacedFile {
+                    app: r.get(0)?,
+                    path: r.get(1)?,
+                    repo: r.get(2)?,
+                    rel_path: r.get(3)?,
+                    sha256: r.get(4)?,
+                    size: r.get::<_, i64>(5)? as u64,
+                    mtime_ns: r.get(6)?,
+                    shared: r.get(7)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn delete_placement(&self, path: &str) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM placements WHERE path = ?1", [path])?;
+        Ok(())
+    }
+
+    pub fn set_placement_shared(&self, path: &str, mtime_ns: i64) -> Result<()> {
+        self.conn.execute(
+            "UPDATE placements SET shared = 1, mtime_ns = ?2 WHERE path = ?1",
+            params![path, mtime_ns],
+        )?;
+        Ok(())
+    }
+}
+
+fn blob_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<BlobRow> {
+    Ok(BlobRow {
+        sha256: r.get(0)?,
+        size: r.get::<_, i64>(1)? as u64,
+        git_oid: r.get(2)?,
+    })
+}
+
+/// True for a full 40-character git commit id.
+pub fn is_commit(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 #[cfg(test)]

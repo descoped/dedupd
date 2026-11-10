@@ -9,6 +9,9 @@ use std::path::{Path, PathBuf};
 /// read-only once inside.
 pub struct Store {
     home: Home,
+    /// A second copy of the store on another disk. Files missing here are
+    /// brought back from it on demand.
+    archive: Option<Home>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -43,7 +46,74 @@ impl Store {
         fs::create_dir_all(home.store_dir().join("sha256"))
             .with_context(|| format!("creating {}", home.store_dir().display()))?;
         fs::create_dir_all(home.tmp_dir())?;
-        Ok(Self { home: home.clone() })
+        Ok(Self {
+            home: home.clone(),
+            archive: None,
+        })
+    }
+
+    /// Use `archive` as the second copy. It may be on a disk that is not
+    /// always attached; it is only looked at when a file is needed.
+    pub fn with_archive(mut self, archive: Option<Home>) -> Self {
+        self.archive = archive;
+        self
+    }
+
+    pub fn home(&self) -> &Home {
+        &self.home
+    }
+
+    pub fn archive(&self) -> Option<&Home> {
+        self.archive.as_ref()
+    }
+
+    /// A path in the store's own temp folder, on the store's volume.
+    pub fn tmp_path(&self, name: &str) -> PathBuf {
+        self.home.tmp_dir().join(name)
+    }
+
+    /// Move a finished temp file into the store. The caller has verified that
+    /// its content hashes to `sha256`.
+    pub fn add_tmp(&self, tmp: &Path, sha256: &str) -> Result<Added> {
+        let dst = self.blob_path(sha256);
+        if dst.is_file() {
+            let _ = fs::remove_file(tmp);
+            return Ok(Added::AlreadyPresent);
+        }
+        fs::set_permissions(tmp, fs::Permissions::from_mode(0o444))?;
+        fs::create_dir_all(dst.parent().expect("blob path has a parent"))?;
+        fs::rename(tmp, &dst)
+            .with_context(|| format!("moving {} into the store", tmp.display()))?;
+        Ok(Added::Cloned)
+    }
+
+    /// Make sure the file is in the local store, copying it back from the
+    /// archive disk if that is the only place it is. Returns false when
+    /// neither has it.
+    pub fn ensure_local(&self, sha256: &str) -> Result<bool> {
+        if self.contains(sha256) {
+            return Ok(true);
+        }
+        let Some(archive) = &self.archive else {
+            return Ok(false);
+        };
+        let src = archive.blob_path(sha256);
+        if !src.is_file() {
+            return Ok(false);
+        }
+        let tmp = self.tmp_path(&format!("{sha256}.restore.{}", std::process::id()));
+        let _ = fs::remove_file(&tmp);
+        let copied = crate::hash::copy_hashing(&src, &tmp)
+            .with_context(|| format!("copying {} back from the archive", src.display()))?;
+        if copied != sha256 {
+            let _ = fs::remove_file(&tmp);
+            bail!(
+                "archive file {} is damaged: it hashes to {copied}",
+                src.display()
+            );
+        }
+        self.add_tmp(&tmp, sha256)?;
+        Ok(true)
     }
 
     pub fn blob_path(&self, sha256: &str) -> PathBuf {

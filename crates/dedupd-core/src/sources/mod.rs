@@ -2,6 +2,8 @@
 //! app's folder layout and reports the files it finds, grouped by repository.
 
 pub mod bionic;
+pub mod hf_cache;
+pub mod ollama;
 
 use crate::store::Fingerprint;
 use std::path::PathBuf;
@@ -20,5 +22,8 @@ pub struct LocalRepo {
     pub app: &'static str,
     /// Repository id on the provider, for example `org/name`.
     pub name: String,
+    /// The revision the files belong to, when the app's layout records it.
+    /// `None` means the files are compared with `main`.
+    pub revision: Option<String>,
     pub files: Vec<LocalFile>,
 }

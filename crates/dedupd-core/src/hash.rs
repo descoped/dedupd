@@ -55,6 +55,29 @@ pub fn hash_file(path: &Path, with_git_oid: bool) -> io::Result<FileHashes> {
     })
 }
 
+/// Copy `src` to `dst` (which must not exist), returning the sha256 of the
+/// bytes written. Used between disks, where a clone is not possible.
+pub fn copy_hashing(src: &Path, dst: &Path) -> io::Result<String> {
+    use std::io::{Read, Write};
+    let mut input = std::fs::File::open(src)?;
+    let mut output = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(dst)?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; 4 * 1024 * 1024];
+    loop {
+        let n = input.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+        output.write_all(&buf[..n])?;
+    }
+    output.sync_all()?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -146,6 +146,17 @@ fn verify(
     }
 }
 
+/// A listed LFS file with this content under another path. Apps that store
+/// files by digest (Ollama) do not keep the repository path.
+fn by_content<'a>(
+    tree: Option<&'a HashMap<String, TreeEntry>>,
+    sha256: &str,
+) -> Option<&'a TreeEntry> {
+    tree?
+        .values()
+        .find(|e| e.lfs_sha256.as_deref() == Some(sha256))
+}
+
 struct Job {
     repo_index: usize,
     file: LocalFile,
@@ -162,7 +173,7 @@ struct RepoState {
 /// Adopt every file in `repos`. `hub` is `None` to work without asking the
 /// provider; files are then recorded as unchecked.
 pub async fn adopt(
-    db: &mut Db,
+    db: &std::sync::Mutex<Db>,
     store: &Store,
     hub: Option<&HubClient>,
     repos: Vec<LocalRepo>,
@@ -174,9 +185,10 @@ pub async fn adopt(
     let mut jobs: Vec<Job> = Vec::new();
 
     for (repo_index, repo) in repos.into_iter().enumerate() {
+        let revision = repo.revision.as_deref().unwrap_or("main");
         let (upstream, snapshot) = match hub {
             None => (Upstream::NotAsked, None),
-            Some(hub) => match hub.snapshot(&repo.name, "main").await {
+            Some(hub) => match hub.snapshot(&repo.name, revision).await {
                 Ok(s) => (Upstream::Commit(s.commit.clone()), Some(s)),
                 Err(e @ HubError::NotAvailable { .. }) => {
                     (Upstream::NotAvailable(e.to_string()), None)
@@ -193,9 +205,17 @@ pub async fn adopt(
         let repo_id = if opts.dry_run {
             None
         } else {
-            let id = db.upsert_repo(PROVIDER_HF, &repo.name)?;
+            let id = db
+                .lock()
+                .expect("database lock")
+                .upsert_repo(PROVIDER_HF, &repo.name)?;
             if let Some(snap) = &snapshot {
-                db.record_snapshot(id, "main", snap)?;
+                // A branch name is recorded as a ref; a commit id is not one.
+                db.lock().expect("database lock").record_snapshot(
+                    id,
+                    (!crate::db::is_commit(revision)).then_some(revision),
+                    snap,
+                )?;
             }
             Some(id)
         };
@@ -230,7 +250,7 @@ pub async fn adopt(
             let known = if opts.rehash {
                 None
             } else {
-                db.placement(&abs)?
+                db.lock().expect("database lock").placement(&abs)?
             };
             if let (Some(known), Some(repo_id)) = (known, repo_id) {
                 let unchanged = known.size == file.fingerprint.size
@@ -239,7 +259,7 @@ pub async fn adopt(
                     && (!needs_git_oid_now || known.git_oid.is_some());
                 if unchanged {
                     let v = verify(
-                        entry,
+                        entry.or_else(|| by_content(tree.as_ref(), &known.sha256)),
                         tree.is_some(),
                         &known.sha256,
                         known.git_oid.as_deref(),
@@ -247,20 +267,23 @@ pub async fn adopt(
                     // An answer from the provider replaces an older one; no
                     // answer leaves the earlier result in place.
                     if v != Verify::Unchecked && v.as_str() != known.verify_state {
-                        db.upsert_placement(&NewPlacement {
-                            app: repo.app,
-                            path: &abs,
-                            repo_id,
-                            rel_path: &file.rel_path,
-                            sha256: &known.sha256,
-                            size: known.size,
-                            mtime_ns: known.mtime_ns,
-                            origin: "adopted",
-                            verify_state: v.as_str(),
-                            verified_commit: (v == Verify::Verified)
-                                .then_some(commit.as_deref())
-                                .flatten(),
-                        })?;
+                        db.lock()
+                            .expect("database lock")
+                            .upsert_placement(&NewPlacement {
+                                app: repo.app,
+                                path: &abs,
+                                repo_id,
+                                rel_path: &file.rel_path,
+                                sha256: &known.sha256,
+                                size: known.size,
+                                mtime_ns: known.mtime_ns,
+                                origin: "adopted",
+                                verify_state: v.as_str(),
+                                verified_commit: (v == Verify::Verified)
+                                    .then_some(commit.as_deref())
+                                    .flatten(),
+                                shared: known.shared,
+                            })?;
                     }
                     let recorded = if v == Verify::Unchecked {
                         match known.verify_state.as_str() {
@@ -331,7 +354,7 @@ pub async fn adopt(
             let hashes = hashed?;
             let entry = state.tree.as_ref().and_then(|t| t.get(&job.file.rel_path));
             let v = verify(
-                entry,
+                entry.or_else(|| by_content(state.tree.as_ref(), &hashes.sha256)),
                 state.tree.is_some(),
                 &hashes.sha256,
                 hashes.git_oid.as_deref(),
@@ -345,21 +368,28 @@ pub async fn adopt(
                         &hashes.sha256,
                         job.file.fingerprint,
                     )?;
-                    db.upsert_blob(&hashes.sha256, hashes.size, hashes.git_oid.as_deref())?;
-                    db.upsert_placement(&NewPlacement {
-                        app: state.app,
-                        path: &abs,
-                        repo_id,
-                        rel_path: &job.file.rel_path,
-                        sha256: &hashes.sha256,
-                        size: hashes.size,
-                        mtime_ns: job.file.fingerprint.mtime_ns,
-                        origin: "adopted",
-                        verify_state: v.as_str(),
-                        verified_commit: (v == Verify::Verified)
-                            .then_some(state.commit.as_deref())
-                            .flatten(),
-                    })?;
+                    db.lock().expect("database lock").upsert_blob(
+                        &hashes.sha256,
+                        hashes.size,
+                        hashes.git_oid.as_deref(),
+                    )?;
+                    db.lock()
+                        .expect("database lock")
+                        .upsert_placement(&NewPlacement {
+                            app: state.app,
+                            path: &abs,
+                            repo_id,
+                            rel_path: &job.file.rel_path,
+                            sha256: &hashes.sha256,
+                            size: hashes.size,
+                            mtime_ns: job.file.fingerprint.mtime_ns,
+                            origin: "adopted",
+                            verify_state: v.as_str(),
+                            verified_commit: (v == Verify::Verified)
+                                .then_some(state.commit.as_deref())
+                                .flatten(),
+                            shared: added == Added::Cloned,
+                        })?;
                     match added {
                         Added::Cloned => Action::Cloned,
                         Added::AlreadyPresent => Action::AlreadyInStore,
@@ -396,4 +426,41 @@ pub async fn adopt(
         outcome.files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     }
     Ok(outcomes)
+}
+
+/// List what the given apps hold, and archive the Ollama manifests found
+/// there: Hugging Face generates those and they exist nowhere else.
+pub fn scan_apps(
+    db: &std::sync::Mutex<Db>,
+    dirs: &crate::place::AppDirs,
+    apps: &[crate::place::App],
+) -> Result<Vec<LocalRepo>> {
+    use crate::place::App;
+    use crate::sources::{bionic, hf_cache, ollama};
+    let mut repos = Vec::new();
+    for app in apps {
+        match app {
+            App::Bionic if dirs.bionic.is_dir() => repos.extend(bionic::scan(&dirs.bionic)?),
+            App::Hf => repos.extend(hf_cache::scan(&dirs.hf_cache)?),
+            App::Ollama => {
+                let db = db.lock().expect("database lock");
+                for m in ollama::manifests(&dirs.ollama) {
+                    let repo_id = db.upsert_repo(PROVIDER_HF, &m.repo)?;
+                    if db.manifest(repo_id, &m.tag, None)?.map(|(_, b)| b) != Some(m.body.clone()) {
+                        db.save_manifest(
+                            repo_id,
+                            &m.tag,
+                            "adopted",
+                            crate::ollama::MANIFEST_TYPE,
+                            &m.body,
+                        )?;
+                    }
+                }
+                drop(db);
+                repos.extend(ollama::scan(&dirs.ollama)?);
+            }
+            App::Bionic => {}
+        }
+    }
+    Ok(repos)
 }

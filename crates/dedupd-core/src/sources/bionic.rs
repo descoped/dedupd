@@ -66,6 +66,7 @@ pub fn scan(models_dir: &Path) -> Result<Vec<LocalRepo>> {
                 repos.push(LocalRepo {
                     app: APP,
                     name: format!("{publisher}/{repo}"),
+                    revision: None,
                     files,
                 });
             }
