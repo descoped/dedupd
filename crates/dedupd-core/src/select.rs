@@ -142,9 +142,10 @@ pub fn select(entries: &[TreeEntry], sel: &Selection) -> Result<Vec<TreeEntry>> 
         },
     };
 
+    // Small files and vision projectors (mmproj) go with any quantization.
     let mut picked: Vec<TreeEntry> = entries
         .iter()
-        .filter(|e| !is_gguf(&e.path))
+        .filter(|e| !is_gguf(&e.path) || is_projector(&e.path))
         .cloned()
         .collect();
     picked.extend(groups[&group].iter().map(|e| (*e).clone()));
@@ -195,7 +196,10 @@ mod tests {
             entry("mmproj-f16.gguf"),
         ];
         let default = select(&e, &Selection::default()).unwrap();
-        assert_eq!(paths(&default), ["README.md", "m-Q4_K_M.gguf"]);
+        assert_eq!(
+            paths(&default),
+            ["README.md", "m-Q4_K_M.gguf", "mmproj-f16.gguf"]
+        );
         let q8 = select(
             &e,
             &Selection {
@@ -204,7 +208,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(paths(&q8), ["README.md", "m-Q8_0.gguf"]);
+        assert_eq!(paths(&q8), ["README.md", "m-Q8_0.gguf", "mmproj-f16.gguf"]);
         assert!(
             select(
                 &e,

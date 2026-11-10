@@ -139,9 +139,76 @@ pub async fn pass_with(
     Ok(report)
 }
 
-/// Run the background work until the task is aborted.
+/// Watch the app folders. Any change sends a unit on the returned channel.
+/// The watcher must be kept alive for as long as events are wanted.
+fn watch(
+    server: &Server,
+) -> Option<(
+    notify::RecommendedWatcher,
+    tokio::sync::mpsc::UnboundedReceiver<()>,
+)> {
+    use notify::Watcher;
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut watcher = notify::recommended_watcher(move |event: notify::Result<notify::Event>| {
+        if event.is_ok() {
+            let _ = tx.send(());
+        }
+    })
+    .ok()?;
+    let dirs = &server.engine.dirs;
+    let mut watching = 0;
+    for dir in [&dirs.bionic, &dirs.ollama, &dirs.hf_cache] {
+        // A folder that does not exist yet is covered by the periodic scan.
+        if dir.is_dir() && watcher.watch(dir, notify::RecursiveMode::Recursive).is_ok() {
+            watching += 1;
+        }
+    }
+    (watching > 0).then_some((watcher, rx))
+}
+
+/// Hash the whole store once the last check is older than the configured
+/// number of days, and write the result where the owner can read it.
+async fn scheduled_verify(server: &Arc<Server>) {
+    let days = server.config.verify_days.unwrap_or(7);
+    let marker = server.home.root().join("last-verify.txt");
+    let due = days > 0
+        && std::fs::metadata(&marker)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| SystemTime::now().duration_since(t).ok())
+            .is_none_or(|age| age >= Duration::from_secs(days * 86_400));
+    if !due {
+        return;
+    }
+    let engine = server.engine.clone();
+    let done =
+        tokio::task::spawn_blocking(move || maintain::verify(&engine.db, &engine.store, false, 2))
+            .await;
+    if let Ok(Ok(r)) = done {
+        let summary = format!(
+            "checked {} files: {} damaged, {} missing\n{}",
+            r.checked,
+            r.damaged.len(),
+            r.missing.len(),
+            r.damaged
+                .iter()
+                .map(|s| format!("DAMAGED {s}\n"))
+                .chain(r.missing.iter().map(|s| format!("MISSING {s}\n")))
+                .collect::<String>()
+        );
+        eprintln!(
+            "dedupd: store check: {}",
+            summary.lines().next().unwrap_or("")
+        );
+        let _ = std::fs::write(&marker, summary);
+    }
+}
+
+/// Run the background work until the task is aborted: a pass shortly after
+/// the app folders change, and one on a timer in case a change was missed.
 pub async fn run(server: Arc<Server>) {
-    let every = Duration::from_secs(server.config.scan_interval.unwrap_or(30).max(5));
+    let every = Duration::from_secs(server.config.scan_interval.unwrap_or(300).max(5));
+    let mut watched = watch(&server);
     loop {
         match pass(&server).await {
             Ok(r) => {
@@ -157,6 +224,28 @@ pub async fn run(server: Arc<Server>) {
             }
             Err(e) => eprintln!("dedupd: background pass failed: {e:#}"),
         }
-        tokio::time::sleep(every).await;
+        scheduled_verify(&server).await;
+
+        if watched.is_none() {
+            watched = watch(&server);
+        }
+        let timer = tokio::time::sleep(every);
+        tokio::pin!(timer);
+        match watched.as_mut() {
+            None => timer.await,
+            Some((_, events)) => {
+                tokio::select! {
+                    _ = &mut timer => {}
+                    _ = events.recv() => {
+                        // Wait until the folders have been quiet long enough
+                        // for the new files to count as settled.
+                        let quiet = SETTLE + Duration::from_secs(2);
+                        while let Ok(Some(())) =
+                            tokio::time::timeout(quiet, events.recv()).await
+                        {}
+                    }
+                }
+            }
+        }
     }
 }

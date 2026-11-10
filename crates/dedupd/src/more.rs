@@ -270,7 +270,16 @@ pub async fn run(o: &Opened, cmd: Command) -> Result<()> {
         }
 
         Command::Install { env, label } => {
-            let exe = std::env::current_exe().context("finding the dedupd binary")?;
+            // The agent runs a copy under the home folder, so rebuilding or
+            // cleaning the source tree cannot break the daemon.
+            let built = std::env::current_exe().context("finding the dedupd binary")?;
+            let exe = o.home.root().join("bin/dedupd");
+            if built != exe {
+                std::fs::create_dir_all(exe.parent().expect("bin folder"))?;
+                let _ = std::fs::remove_file(&exe);
+                std::fs::copy(&built, &exe)
+                    .with_context(|| format!("copying dedupd to {}", exe.display()))?;
+            }
             let path = plist_path(&label)?;
             let log = o.home.root().join("daemon.log");
             std::fs::create_dir_all(path.parent().expect("plist has a parent"))?;

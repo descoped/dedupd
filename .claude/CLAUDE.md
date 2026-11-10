@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phases 1 to 4 of the build order are implemented and committed one phase per commit: store and adoption, fetcher and placers, the HTTP front ends, and the daemon with its background work. Not built: the UniFFI client crate and the Swift app, Bionic network interception, and Xet for the daemon's own downloads. `spikes/` holds three standalone Python scripts (standard library only, run with `python3`) that proved the protocol behaviour before the Rust code existed.
+Phases 1 to 4 of the build order are implemented and committed one phase per commit: store and adoption, fetcher and placers, the HTTP front ends, and the daemon with its background work. The UniFFI client crate for the control API exists and generates Swift bindings. Not built: the Swift app itself, Bionic network interception, and Xet for the daemon's own downloads. `spikes/` holds three standalone Python scripts (standard library only, run with `python3`) that proved the protocol behaviour before the Rust code existed.
 
 The full research and plan is the Claude Docs artifact "dedupd: research and implementation plan" (https://claude.ai/artifact/CYuT3GEgaBf9EgKLaMPoxd); read it with the Artifact/Claude Docs tools before making design changes, and update it when a decision changes.
 
@@ -18,6 +18,11 @@ cargo test -p dedupd-server --test frontends   # client request sequences agains
 cargo test -p dedupd-core hub::tests::parses_link_header   # a single test
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
+
+# Swift bindings for the control API client
+cargo build --release -p dedupd-client
+cargo run --release -p dedupd-client --features bindgen --bin uniffi-bindgen -- \
+  generate --library target/release/libdedupd_client.dylib --language swift --out-dir <dir>
 ```
 
 Tests need macOS on APFS, because they create real clones in a temp directory. They use a mock Hugging Face (wiremock) and scratch app folders; they never touch the real app folders or `~/.dedupd`.
@@ -35,10 +40,11 @@ A Cargo workspace (Rust 2024):
   - `hub` (read-only Hub API client), `fetch` (resumable verified downloads), `select` (which files of a repository: a quantization, patterns, or everything), `ollama` (manifest format).
   - `sources/` (what each app already holds: `bionic`, `hf_cache`, `ollama`), `adopt` (hash, verify against the Hub listing, clone into the store).
   - `place` (the three placers), `pull` (resolve, fetch, place; also the `Engine` every caller shares), `archive` (second copy on another disk), `maintain` (reclaim, verify, gc, forget), `status`.
-- `crates/dedupd-server` — the daemon's HTTP side. `hubapi` (Hub API), `registry` (Ollama registry), `files` (Range serving, and assembling large files from what clients download through the daemon), `proxy` (pass-through and header cleaning), `control` (`/dedupd/v1`), `daemon` (the background pass).
+- `crates/dedupd-server` — the daemon's HTTP side. `hubapi` (Hub API), `registry` (Ollama registry), `files` (Range serving, and assembling large files from what clients download through the daemon), `proxy` (pass-through and header cleaning), `control` (`/dedupd/v1`), `daemon` (the background pass, the folder watcher and the scheduled store check).
+- `crates/dedupd-client` — a small blocking client for the control API, exported through UniFFI (`status`, `pull`, `scan`). It does not depend on the core.
 - `crates/dedupd` — the `dedupd` binary: `main.rs` (pull, place, adopt, status, backup) and `more.rs` (serve, reclaim, verify, gc, forget, install, uninstall, env).
 
-The command line works on the store and database directly, also while the daemon runs; SQLite in WAL mode and atomic renames make that safe. The daemon's control API (`GET /dedupd/v1/status`, `POST /dedupd/v1/pull`, `POST /dedupd/v1/scan`) is what the future Swift app talks to, through a thin UniFFI client crate. The app must not embed the core, because the daemon has to keep serving when the app is closed.
+The command line works on the store and database directly, also while the daemon runs; SQLite in WAL mode and atomic renames make that safe. `pull` and `place` are the exception: when a daemon with the same home answers on the configured address they are sent to it through `dedupd-client`, so one process does the downloading. The daemon's control API (`GET /dedupd/v1/status`, `POST /dedupd/v1/pull`, `POST /dedupd/v1/scan`) is what the future Swift app talks to, through `dedupd-client`. The app must not embed the core, because the daemon has to keep serving when the app is closed.
 
 ## Two tiers of storage
 
@@ -71,7 +77,7 @@ Two ways in: explicit (`dedupd pull org/repo --for ollama,bionic,mlx` fetches on
 
 Commands: `pull`, `place`, `adopt`, `status`, `backup`, `serve`, `reclaim`, `verify`, `gc`, `forget`, `install`, `uninstall`, `env`.
 
-The daemon's background pass (every 30 seconds by default): forget app files that are gone, adopt new or changed files in the three app folders once they have been left alone for 20 seconds, swap duplicate copies for clones (`reclaim`, only files unchanged since hashing and older than a minute), and update the archive disk.
+The daemon's background pass (started by a folder watcher when an app folder changes, and by a timer every 300 seconds as a fallback; `scan_interval` in `config.toml`): forget app files that are gone, adopt new or changed files in the three app folders once they have been left alone for 20 seconds, swap duplicate copies for clones (`reclaim`, only files unchanged since hashing and older than a minute), and update the archive disk. The daemon also hashes the whole store on a schedule (`verify_days`) and notes the time in `<home>/last-verify.txt`.
 
 ## Invariants
 
@@ -126,11 +132,11 @@ Use a scratch `HF_HOME` and a tiny model (for example `bartowski/SmolLM2-135M-In
 
 ## Build order
 
-0. Spikes. Done: a multi-file MLX repository placed into Bionic is indexed and loads; a model placed in Ollama's plain `manifests/` tree lists, runs and is removed normally on 0.40.16, so `manifests-v2` is not written. Not tested: surviving an Ollama restart and prune; `HTTPS_PROXY` with Ollama (not needed, since the registry front end works).
+0. Spikes. Done: a multi-file MLX repository placed into Bionic is indexed and loads; a model placed in Ollama's plain `manifests/` tree lists, runs and is removed normally on 0.40.16 and is still listed after the Ollama server restarts, so `manifests-v2` is not written (Ollama's own pull writes both trees; the v2 entry is a symlink to a manifest blob in `blobs/`). `mlx_lm.generate` loads an MLX repository through the daemon, also with Hugging Face unreachable. Not tested: `HTTPS_PROXY` with Ollama (not needed, since the registry front end works).
 1. Done. Store, database, `adopt`, `status`, verification against the Hub tree.
 2. Done. Fetcher, `pull`, `place`, the three placers, the archive tier.
 3. Done. Hub API and Ollama registry front ends; client request sequences replay as tests.
 4. Done. launchd agent, `env`, background pass, reclaim, `verify`, `backup`, `gc`, offline serving.
 5. Gated-repository auth for Ollama is done (the daemon adds its own Hugging Face token to registry requests that carry none). Not done: Bionic network interception (its downloads are picked up by the background pass instead) and Xet for the daemon's own upstream fetch (plain HTTP works; this would only be faster).
 
-Next: the UniFFI client crate and the Swift menu bar app on top of the control API; a folder watcher to replace polling; ModelScope as a second provider (the `repos.provider` column exists for it).
+Next: the Swift menu bar app on top of `dedupd-client`; ModelScope as a second provider (the `repos.provider` column exists for it).

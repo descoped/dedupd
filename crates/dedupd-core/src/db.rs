@@ -338,6 +338,16 @@ impl Db {
             .optional()?)
     }
 
+    /// Every archived branch and tag name of a repository, with its commit.
+    pub fn refs(&self, repo_id: i64) -> Result<Vec<(String, String)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name, commit_sha FROM refs WHERE repo_id = ?1 ORDER BY name")?;
+        Ok(stmt
+            .query_map([repo_id], |r| Ok((r.get(0)?, r.get(1)?)))?
+            .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
     /// An archived revision. `revision` is a commit id, or a branch or tag
     /// name that was archived earlier.
     pub fn archived_snapshot(&self, repo_id: i64, revision: &str) -> Result<Option<Snapshot>> {

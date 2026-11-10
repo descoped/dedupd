@@ -84,10 +84,18 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 jobs: body.jobs.unwrap_or(4),
             };
             match pull::pull(&server.engine, &req, &server.progress).await {
-                Ok(out) => json(
-                    StatusCode::OK,
-                    &serde_json::to_value(out).unwrap_or_default(),
-                ),
+                Ok(out) => {
+                    // The daemon keeps the archive disk current after its
+                    // own pulls, as the command line does after its.
+                    let server = server.clone();
+                    tokio::spawn(async move {
+                        let _ = daemon::pass(&server).await;
+                    });
+                    json(
+                        StatusCode::OK,
+                        &serde_json::to_value(out).unwrap_or_default(),
+                    )
+                }
                 Err(e) => error(StatusCode::BAD_GATEWAY, format!("{e:#}")),
             }
         }

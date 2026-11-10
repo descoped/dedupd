@@ -105,18 +105,26 @@ impl Server {
             }
             // Gone or hidden upstream: an open repository is answered from
             // the archive; a restricted one is the Hub's decision to make.
-            Err(HubError::NotAvailable { .. }) => match archived {
-                Some(snap) if open => Ok(Rev {
-                    snap,
-                    from_archive: true,
-                }),
+            Err(HubError::NotAvailable { status, .. }) => match archived {
+                Some(snap) if open => {
+                    eprintln!(
+                        "dedupd: {repo}@{rev}: Hugging Face answered {status}; using the archived copy"
+                    );
+                    Ok(Rev {
+                        snap,
+                        from_archive: true,
+                    })
+                }
                 _ => Err(()),
             },
             // Upstream is down or unreachable: the archive answers.
-            Err(_) => archived
-                .map(|snap| Rev {
-                    snap,
-                    from_archive: true,
+            Err(e) => archived
+                .map(|snap| {
+                    eprintln!("dedupd: {repo}@{rev}: {e}; using the archived copy");
+                    Rev {
+                        snap,
+                        from_archive: true,
+                    }
                 })
                 .ok_or(()),
         }
@@ -125,7 +133,7 @@ impl Server {
 
 /// `/api/models/...`
 pub(crate) async fn api(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Response {
-    let keyword = |s: &&str| matches!(*s, "revision" | "tree" | "paths-info");
+    let keyword = |s: &&str| matches!(*s, "revision" | "tree" | "paths-info" | "refs");
     let Some(at) = rest
         .iter()
         .position(keyword)
@@ -145,6 +153,7 @@ pub(crate) async fn api(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Res
             listing(server, call, &repo, rev, Some(&path.join("/"))).await
         }
         ("paths-info", [rev]) => listing(server, call, &repo, rev, None).await,
+        ("refs", []) => refs(server, call, &repo).await,
         _ => pass_through(server, call).await,
     }
 }
@@ -152,6 +161,56 @@ pub(crate) async fn api(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Res
 /// True when upstream's answer means "ask the archive instead".
 fn failed(status: u16) -> bool {
     matches!(status, 401 | 404 | 410) || status >= 500
+}
+
+/// Branch and tag names, which llama.cpp asks for first. Upstream's answer is
+/// relayed; when it cannot answer, the names archived for the repository are.
+async fn refs(server: &Arc<Server>, call: &Call, repo: &str) -> Response {
+    let url = format!(
+        "{}{}",
+        server.engine.fetcher.endpoint(),
+        call.path_and_query()
+    );
+    let answer = upstream(server, call, &url, false).await;
+    let down = match &answer {
+        Ok(resp) => failed(resp.status().as_u16()),
+        Err(_) => true,
+    };
+    if down {
+        let archived = {
+            let db = server.engine.db();
+            db.repo_id(PROVIDER_HF, repo)
+                .ok()
+                .flatten()
+                .and_then(|id| db.refs(id).ok())
+                .unwrap_or_default()
+        };
+        // A restricted repository is the Hub's to answer for.
+        let open = server
+            .archived(repo, "main")
+            .is_none_or(|s| !restricted(&s.info_json));
+        if !archived.is_empty() && open {
+            eprintln!("dedupd: {repo}: branch names answered from the archive");
+            let branches: Vec<Value> = archived
+                .iter()
+                .map(|(name, commit)| {
+                    serde_json::json!({
+                        "name": name,
+                        "ref": format!("refs/heads/{name}"),
+                        "targetCommit": commit,
+                    })
+                })
+                .collect();
+            return json(
+                StatusCode::OK,
+                &serde_json::json!({"branches": branches, "converts": [], "tags": []}),
+            );
+        }
+    }
+    match answer {
+        Ok(resp) => relay(server, call, resp),
+        Err(e) => unreachable(e),
+    }
 }
 
 /// Model info. Upstream's answer is relayed as it is; the archive answers

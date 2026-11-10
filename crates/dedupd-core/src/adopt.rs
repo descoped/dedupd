@@ -15,6 +15,8 @@ use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 
 pub const PROVIDER_HF: &str = "hf";
+/// Models from an Ollama registry other than Hugging Face's.
+pub const PROVIDER_OLLAMA: &str = "ollama";
 
 /// Without a file listing from the provider, files up to this size also get a
 /// git blob id, so that small files can be verified later without rehashing.
@@ -186,6 +188,8 @@ pub async fn adopt(
 
     for (repo_index, repo) in repos.into_iter().enumerate() {
         let revision = repo.revision.as_deref().unwrap_or("main");
+        // Only Hugging Face repositories can be checked against the Hub.
+        let hub = hub.filter(|_| repo.provider == PROVIDER_HF);
         let (upstream, snapshot) = match hub {
             None => (Upstream::NotAsked, None),
             Some(hub) => match hub.snapshot(&repo.name, revision).await {
@@ -208,7 +212,7 @@ pub async fn adopt(
             let id = db
                 .lock()
                 .expect("database lock")
-                .upsert_repo(PROVIDER_HF, &repo.name)?;
+                .upsert_repo(repo.provider, &repo.name)?;
             if let Some(snap) = &snapshot {
                 // A branch name is recorded as a ref; a commit id is not one.
                 db.lock().expect("database lock").record_snapshot(
@@ -456,7 +460,7 @@ pub fn scan_apps(
             App::Ollama => {
                 let db = db.lock().expect("database lock");
                 for m in ollama::manifests(&dirs.ollama) {
-                    let repo_id = db.upsert_repo(PROVIDER_HF, &m.repo)?;
+                    let repo_id = db.upsert_repo(m.provider, &m.repo)?;
                     if db.manifest(repo_id, &m.tag, None)?.map(|(_, b)| b) != Some(m.body.clone()) {
                         db.save_manifest(
                             repo_id,

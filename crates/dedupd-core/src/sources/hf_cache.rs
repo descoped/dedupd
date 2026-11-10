@@ -91,6 +91,7 @@ pub fn scan(hub_dir: &Path) -> Result<Vec<LocalRepo>> {
             if !files.is_empty() {
                 repos.push(LocalRepo {
                     app: APP,
+                    provider: crate::adopt::PROVIDER_HF,
                     name: name.clone(),
                     revision: Some(commit),
                     files,

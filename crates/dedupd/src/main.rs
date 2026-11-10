@@ -171,6 +171,7 @@ pub fn backup_if_attached(o: &Opened) {
 }
 
 async fn run_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> Result<()> {
+    let model_spec = model.model.clone();
     let (repo, quant, revision) = pull::parse_model(&model.model)?;
     let req = PullRequest {
         repo,
@@ -183,17 +184,37 @@ async fn run_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
         offline,
         jobs,
     };
+    // When the daemon is running on this store it does the work, so one
+    // process downloads and the daemon's own requests share the result.
+    let address = o.config.listen().to_string();
+    let home = o.home.root().to_string_lossy().into_owned();
+    let via_daemon = {
+        let address = address.clone();
+        tokio::task::spawn_blocking(move || dedupd_client::status(address))
+            .await?
+            .is_ok_and(|s| s.home == home)
+    };
+
     let progress = Arc::new(Progress::default());
     let ticker = {
-        let progress = progress.clone();
+        let (progress, address) = (progress.clone(), address.clone());
         tokio::spawn(async move {
             let started = Instant::now();
             loop {
                 tokio::time::sleep(Duration::from_secs(2)).await;
-                let (done, total) = (
-                    progress.done.load(Ordering::Relaxed),
-                    progress.total.load(Ordering::Relaxed),
-                );
+                let (done, total) = if via_daemon {
+                    let address = address.clone();
+                    match tokio::task::spawn_blocking(move || dedupd_client::status(address)).await
+                    {
+                        Ok(Ok(s)) => (s.downloading_done, s.downloading_total),
+                        _ => continue,
+                    }
+                } else {
+                    (
+                        progress.done.load(Ordering::Relaxed),
+                        progress.total.load(Ordering::Relaxed),
+                    )
+                };
                 if total > 0 && done < total {
                     eprintln!(
                         "  {} of {} ({:.0}%), {:.0?}",
@@ -206,7 +227,38 @@ async fn run_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
             }
         })
     };
-    let result = pull::pull(&o.engine, &req, &progress).await;
+    let result = if via_daemon {
+        eprintln!("The dedupd daemon is running; it does the work.");
+        let apps = req.apps.iter().map(|a| a.as_str().to_string()).collect();
+        let (model, include) = (model_spec, req.selection.include.clone());
+        tokio::task::spawn_blocking(move || {
+            dedupd_client::pull(address, model, apps, include, offline)
+        })
+        .await?
+        .map_err(anyhow::Error::from)
+    } else {
+        pull::pull(&o.engine, &req, &progress)
+            .await
+            .map(|out| dedupd_client::PullResult {
+                repo: out.repo,
+                commit: out.commit,
+                from_archive: out.from_archive,
+                files: out.files as u64,
+                bytes: out.bytes,
+                downloaded: out.downloaded as u64,
+                placed: out
+                    .placed
+                    .into_iter()
+                    .map(|(app, p)| dedupd_client::PlacedApp {
+                        app: app.as_str().to_string(),
+                        cloned: p.cloned as u64,
+                        present: p.present as u64,
+                        conflicts: p.conflicts,
+                    })
+                    .collect(),
+                notes: out.notes,
+            })
+    };
     ticker.abort();
     let out = result?;
 
@@ -227,19 +279,19 @@ async fn run_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
         out.downloaded,
         out.files - out.downloaded
     );
-    for (app, placed) in &out.placed {
+    for placed in &out.placed {
         println!(
             "  {:<7} {} placed as clones, {} already there",
-            app.as_str(),
-            placed.cloned,
-            placed.present
+            placed.app, placed.cloned, placed.present
         );
     }
     for note in &out.notes {
         println!("  note: {note}");
     }
-    backup_if_attached(o);
-    if out.placed.iter().any(|(_, p)| !p.conflicts.is_empty()) {
+    if !via_daemon {
+        backup_if_attached(o);
+    }
+    if out.placed.iter().any(|p| !p.conflicts.is_empty()) {
         bail!("some files exist in an app folder with different content and were left alone");
     }
     Ok(())
@@ -379,6 +431,10 @@ async fn main() -> Result<()> {
             }
             println!("Store: {}", o.home.store_dir().display());
             println!("  {} files, {}", s.store_files, human(s.store_bytes));
+            println!(
+                "  {} of app files share these blocks instead of being copies",
+                human(s.shared_bytes)
+            );
             if let Some(a) = o.config.archive_home() {
                 println!(
                     "Archive: {}{}",
@@ -410,9 +466,10 @@ async fn main() -> Result<()> {
                     }
                 }
                 println!(
-                    "  {:<58} {:>10}  {} files  main@{commit}  {}",
+                    "  {:<58} {:>10}  {} stored, {} in apps  main@{commit}  {}",
                     r.name,
-                    human(r.bytes),
+                    human(r.stored_bytes),
+                    r.stored_files,
                     r.files,
                     notes.join(", ")
                 );

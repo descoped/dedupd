@@ -500,6 +500,32 @@ async fn control_api_is_closed_to_web_pages() {
         .await
         .unwrap();
     assert_eq!(ok["status"]["store_files"], 0);
+    // The client the command line and the app use speaks the same API.
+    let address = fx.base.trim_start_matches("http://").to_string();
+    let (a, b) = (address.clone(), address.clone());
+    let seen = tokio::task::spawn_blocking(move || dedupd_client::status(a))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(seen.store_files, 0);
+    assert_eq!(seen.version, env!("CARGO_PKG_VERSION"));
+    let pulled = tokio::task::spawn_blocking(move || {
+        dedupd_client::pull(b, REPO.into(), vec!["bionic".into()], vec![], false)
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!((pulled.files, pulled.downloaded), (2, 2));
+    assert_eq!(pulled.placed[0].app, "bionic");
+    assert_eq!(pulled.placed[0].cloned, 2);
+    let nobody = tokio::task::spawn_blocking(|| dedupd_client::status("127.0.0.1:1".into()))
+        .await
+        .unwrap();
+    assert!(matches!(
+        nobody,
+        Err(dedupd_client::ClientError::NotRunning { .. })
+    ));
+
     let blocked = fx
         .http
         .get(&status)

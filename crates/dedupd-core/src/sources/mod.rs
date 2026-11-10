@@ -20,6 +20,9 @@ pub struct LocalFile {
 pub struct LocalRepo {
     /// Short name of the app that owns the files, for example `bionic`.
     pub app: &'static str,
+    /// Where the repository comes from: `hf`, or `ollama` for models from an
+    /// Ollama registry, which Hugging Face knows nothing about.
+    pub provider: &'static str,
     /// Repository id on the provider, for example `org/name`.
     pub name: String,
     /// The revision the files belong to, when the app's layout records it.

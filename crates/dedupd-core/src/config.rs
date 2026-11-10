@@ -26,7 +26,10 @@ pub struct Config {
     /// Whether the daemon points apps started from the Dock or Finder at
     /// itself by setting `HF_ENDPOINT` for the login session.
     pub set_env: Option<bool>,
-    /// Seconds between the daemon's scans of the app folders.
+    /// Days between the daemon's full checks of the store; 0 turns them off.
+    pub verify_days: Option<u64>,
+    /// Seconds between the daemon's scans of the app folders when nothing
+    /// was seen to change.
     pub scan_interval: Option<u64>,
 }
 

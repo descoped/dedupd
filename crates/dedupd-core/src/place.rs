@@ -181,6 +181,12 @@ fn place_clone(db: &Db, store: &Store, t: &Target<'_>, dst: &Path, out: &mut Pla
     }
     let parent = dst.parent().context("destination has no parent folder")?;
     fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
+    if !crate::clone::same_volume(parent, &store.blob_path(t.sha256))? {
+        bail!(
+            "{} is on a different volume from the store; clones need one APFS volume",
+            parent.display()
+        );
+    }
     let name = dst.file_name().context("destination has no file name")?;
     let tmp = parent.join(format!(".{}.dedupd-tmp", name.to_string_lossy()));
     let _ = fs::remove_file(&tmp);

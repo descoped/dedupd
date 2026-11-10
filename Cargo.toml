@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/dedupd-core", "crates/dedupd", "crates/dedupd-server"]
+members = ["crates/dedupd-core", "crates/dedupd", "crates/dedupd-server", "crates/dedupd-client"]
 
 [workspace.package]
 version = "0.1.0"

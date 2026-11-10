@@ -65,6 +65,7 @@ pub fn scan(models_dir: &Path) -> Result<Vec<LocalRepo>> {
             if !files.is_empty() {
                 repos.push(LocalRepo {
                     app: APP,
+                    provider: crate::adopt::PROVIDER_HF,
                     name: format!("{publisher}/{repo}"),
                     revision: None,
                     files,
