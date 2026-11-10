@@ -77,7 +77,8 @@ Hub API (for `huggingface_hub`, llama.cpp):
 
 Ollama registry:
 
-- `GET /v2/.../blobs/sha256:{d}` without `Range` must answer 307 to a same-host URL; a direct 200 fails with `no Location header`. Ollama then sends parallel `Range` parts of 100 MB to 1 GB.
+- `GET /v2/.../blobs/sha256:{d}` without `Range` must answer 307 to a URL with a different hostname; a direct 200 fails with `no Location header`, and so does a redirect to the same hostname, because Ollama follows that one itself. The daemon redirects between its two loopback names (`127.0.0.1` and `localhost`) and listens on both. Ollama then sends parallel `Range` parts of 100 MB to 1 GB.
+- Remove `WWW-Authenticate` from relayed registry errors; Ollama rejects a token realm on another host.
 - Plain HTTP requires `ollama pull --insecure 127.0.0.1:PORT/org/repo:tag`; the model name then carries the proxy address. Direct placement keeps the `hf.co/...` name.
 - Manifest responses differ by User-Agent; include it in the cache key.
 

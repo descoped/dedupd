@@ -95,7 +95,12 @@ impl HubClient {
         (!t.trim().is_empty()).then(|| t.trim().to_string())
     }
 
-    async fn get(&self, url: &str, repo: &str) -> Result<reqwest::Response, HubError> {
+    async fn get(
+        &self,
+        url: &str,
+        repo: &str,
+        auth: Option<&str>,
+    ) -> Result<reqwest::Response, HubError> {
         // The token goes to the configured endpoint only, never anywhere a
         // response might point.
         if !url.starts_with(&self.endpoint) {
@@ -105,7 +110,9 @@ impl HubClient {
             )));
         }
         let mut req = self.http.get(url);
-        if let Some(t) = &self.token {
+        if let Some(value) = auth {
+            req = req.header(reqwest::header::AUTHORIZATION, value);
+        } else if let Some(t) = &self.token {
             req = req.bearer_auth(t);
         }
         let resp = req.send().await?;
@@ -125,8 +132,23 @@ impl HubClient {
 
     /// Resolve `revision` (a branch, tag or commit) and list its files.
     pub async fn snapshot(&self, repo: &str, revision: &str) -> Result<Snapshot, HubError> {
+        self.snapshot_as(repo, revision, None).await
+    }
+
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// Like `snapshot`, but asking with the caller's own `Authorization`
+    /// value when it has one, so the Hub decides what that caller may see.
+    pub async fn snapshot_as(
+        &self,
+        repo: &str,
+        revision: &str,
+        auth: Option<&str>,
+    ) -> Result<Snapshot, HubError> {
         let info_url = format!("{}/api/models/{repo}/revision/{revision}", self.endpoint);
-        let info_json = self.get(&info_url, repo).await?.text().await?;
+        let info_json = self.get(&info_url, repo, auth).await?.text().await?;
         let info: serde_json::Value = serde_json::from_str(&info_json)
             .map_err(|e| HubError::Malformed(format!("model info: {e}")))?;
         let commit = info
@@ -142,7 +164,7 @@ impl HubClient {
             self.endpoint
         ));
         while let Some(url) = next {
-            let resp = self.get(&url, repo).await?;
+            let resp = self.get(&url, repo, auth).await?;
             next = resp
                 .headers()
                 .get(reqwest::header::LINK)

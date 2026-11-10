@@ -1,0 +1,24 @@
+[package]
+name = "dedupd-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow = "1"
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
+dedupd-core = { version = "0.1.0", path = "../dedupd-core" }
+futures-util = "0.3.34"
+hex = "0.4.3"
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "stream", "http2"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "fs", "io-util", "time", "net", "sync", "signal"] }
+tokio-util = { version = "0.7.20", features = ["io"] }
+
+[dev-dependencies]
+sha1 = "0.11"
+tempfile = "3.27.0"
+wiremock = "0.6.5"

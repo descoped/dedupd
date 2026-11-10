@@ -304,6 +304,17 @@ impl Db {
         Ok(())
     }
 
+    /// Point a branch or tag name at a commit.
+    pub fn set_ref(&self, repo_id: i64, name: &str, commit: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO refs (repo_id, name, commit_sha, confirmed_at) VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT (repo_id, name) DO UPDATE SET
+                 commit_sha = excluded.commit_sha, confirmed_at = excluded.confirmed_at",
+            params![repo_id, name, commit, now()],
+        )?;
+        Ok(())
+    }
+
     pub fn repo_id(&self, provider: &str, name: &str) -> Result<Option<i64>> {
         Ok(self
             .conn

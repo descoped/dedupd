@@ -253,9 +253,9 @@ async fn pull_places_into_three_apps_and_survives_upstream_removal() {
 
     // Copy to the archive disk, then lose the local copy of the weights.
     let archive_home = Home::new(dir.path().join("trunk/dedupd"));
-    assert!(archive::sync(&e.db(), &e.store, &archive_home, &mut |_, _| {}).is_err());
+    assert!(archive::sync(&e.db, &e.store, &archive_home, &mut |_, _| {}).is_err());
     fs::create_dir_all(dir.path().join("trunk")).unwrap();
-    let report = archive::sync(&e.db(), &e.store, &archive_home, &mut |_, _| {}).unwrap();
+    let report = archive::sync(&e.db, &e.store, &archive_home, &mut |_, _| {}).unwrap();
     assert_eq!((report.copied, report.failed.len()), (4, 0));
     assert!(archive_home.db_path().is_file());
     fs::remove_file(&blob).unwrap();

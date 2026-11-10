@@ -30,7 +30,7 @@ pub fn attached(archive: &Home) -> bool {
 /// database. Each file is hashed as it is written; a file that does not hash
 /// to its name is not kept.
 pub fn sync(
-    db: &Db,
+    db: &std::sync::Mutex<Db>,
     store: &Store,
     archive: &Home,
     on_copy: &mut dyn FnMut(&str, u64),
@@ -45,7 +45,8 @@ pub fn sync(
         .with_context(|| format!("creating {}", archive.root().display()))?;
 
     let mut report = SyncReport::default();
-    for blob in db.all_blobs()? {
+    let blobs = db.lock().expect("database lock").all_blobs()?;
+    for blob in &blobs {
         let src = store.blob_path(&blob.sha256);
         let dst = archive.blob_path(&blob.sha256);
         if fs::metadata(&dst).is_ok_and(|m| m.len() == blob.size) {
@@ -86,15 +87,16 @@ pub fn sync(
             }
         }
     }
-    report.only_in_archive = db
-        .all_blobs()?
+    report.only_in_archive = blobs
         .iter()
         .filter(|b| !store.contains(&b.sha256) && archive.blob_path(&b.sha256).is_file())
         .count();
 
     let tmp = archive.root().join("dedupd.sqlite.tmp");
     let _ = fs::remove_file(&tmp);
-    db.conn()
+    db.lock()
+        .expect("database lock")
+        .conn()
         .execute("VACUUM INTO ?1", [tmp.to_string_lossy().as_ref()])
         .context("copying the database to the archive")?;
     fs::rename(&tmp, archive.db_path())?;

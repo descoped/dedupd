@@ -85,6 +85,11 @@ impl Fetcher {
         req
     }
 
+    /// The `Authorization` value dedupd itself uses for the endpoint.
+    pub fn authorization(&self) -> Option<String> {
+        self.token.as_ref().map(|t| format!("Bearer {t}"))
+    }
+
     pub fn resolve_url(&self, repo: &str, commit: &str, path: &str) -> String {
         format!(
             "{}/{repo}/resolve/{commit}/{}",

@@ -158,12 +158,7 @@ pub fn backup_if_attached(o: &Opened) {
         );
         return;
     }
-    match archive::sync(
-        &o.engine.db(),
-        &o.engine.store,
-        &archive_home,
-        &mut |_, _| {},
-    ) {
+    match archive::sync(&o.engine.db, &o.engine.store, &archive_home, &mut |_, _| {}) {
         Ok(r) if r.copied > 0 => eprintln!(
             "Archived {} files ({}) to {}.",
             r.copied,
@@ -431,7 +426,7 @@ async fn main() -> Result<()> {
                 .context("no archive folder: pass one, or set `archive` in config.toml")?;
             let started = Instant::now();
             let report = archive::sync(
-                &o.engine.db(),
+                &o.engine.db,
                 &o.engine.store,
                 &archive_home,
                 &mut |sha, size| eprintln!("  copied {:>10}  {}", human(size), &sha[..16]),
