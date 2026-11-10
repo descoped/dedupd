@@ -5,15 +5,16 @@
 //! repositories, and their layers are what other apps can share. Models from
 //! Ollama's own registry are archived too, under their full name.
 
-use super::{LocalFile, LocalRepo};
-use crate::adopt::{PROVIDER_HF, PROVIDER_OLLAMA};
+use super::{LocalFile, LocalRepo, rel_components};
+use crate::db::{PROVIDER_HF, PROVIDER_OLLAMA};
 use crate::ollama::{HOST, Manifest};
+use crate::place::App;
 use crate::store::Fingerprint;
 use anyhow::Result;
 use std::path::Path;
 use walkdir::WalkDir;
 
-pub const APP: &str = "ollama";
+pub const APP: &str = App::Ollama.as_str();
 
 /// A manifest found in Ollama's folder.
 #[derive(Debug, Clone)]
@@ -40,13 +41,7 @@ pub fn manifests(models_dir: &Path) -> Vec<FoundManifest> {
         if name.starts_with('.') || !entry.path().is_file() {
             continue;
         }
-        let rel: Vec<String> = entry
-            .path()
-            .strip_prefix(&base)
-            .expect("walked path is under the base")
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy().into_owned())
-            .collect();
+        let rel = rel_components(entry.path(), &base);
         if let Ok(body) = std::fs::read_to_string(entry.path())
             && Manifest::parse(&body).is_ok()
         {

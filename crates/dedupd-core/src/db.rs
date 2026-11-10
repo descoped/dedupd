@@ -3,9 +3,31 @@
 
 use crate::hub::{Snapshot, TreeEntry};
 use crate::now;
+use crate::store::Fingerprint;
 use anyhow::{Context, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
+use std::sync::{Mutex, MutexGuard};
+
+/// `repos.provider` for Hugging Face repositories.
+pub const PROVIDER_HF: &str = "hf";
+/// `repos.provider` for models from an Ollama registry other than Hugging
+/// Face's.
+pub const PROVIDER_OLLAMA: &str = "ollama";
+
+/// `placements.origin` for a file the app had before dedupd knew it.
+pub const ORIGIN_ADOPTED: &str = "adopted";
+/// `placements.origin` for a file dedupd created as a clone.
+pub const ORIGIN_PLACED: &str = "placed";
+
+const BLOB_COLS: &str = "b.sha256, b.size, b.git_oid";
+/// No app file holds this content.
+const UNPLACED: &str = "NOT EXISTS (SELECT 1 FROM placements p WHERE p.sha256 = b.sha256)";
+
+/// Lock the shared database handle.
+pub fn lock(db: &Mutex<Db>) -> MutexGuard<'_, Db> {
+    db.lock().expect("database lock")
+}
 
 const SCHEMA: &str = r#"
 CREATE TABLE blobs (
@@ -125,6 +147,26 @@ pub struct PlacementRow {
     pub shared: bool,
 }
 
+impl PlacedFile {
+    /// What the file looked like when it was recorded.
+    pub fn fingerprint(&self) -> Fingerprint {
+        Fingerprint {
+            size: self.size,
+            mtime_ns: self.mtime_ns,
+        }
+    }
+}
+
+impl PlacementRow {
+    /// What the file looked like when it was recorded.
+    pub fn fingerprint(&self) -> Fingerprint {
+        Fingerprint {
+            size: self.size,
+            mtime_ns: self.mtime_ns,
+        }
+    }
+}
+
 pub struct NewPlacement<'a> {
     pub app: &'a str,
     pub path: &'a str,
@@ -241,6 +283,35 @@ impl Db {
         }
         tx.commit()?;
         Ok(())
+    }
+
+    /// Archive a revision of `provider`'s `repo` as asked for by `revision`
+    /// (a branch, tag or commit). A branch or tag name is recorded as a ref;
+    /// a commit id is not one. Returns the repository's id.
+    pub fn archive_snapshot(
+        &mut self,
+        provider: &str,
+        repo: &str,
+        revision: &str,
+        snap: &Snapshot,
+    ) -> Result<i64> {
+        let repo_id = self.upsert_repo(provider, repo)?;
+        self.record_snapshot(repo_id, ref_name(revision), snap)?;
+        Ok(repo_id)
+    }
+
+    /// The archived revision of `provider`'s `repo`, with the repository's
+    /// id. `revision` is as for `archived_snapshot`.
+    pub fn archived(
+        &self,
+        provider: &str,
+        repo: &str,
+        revision: &str,
+    ) -> Result<Option<(i64, Snapshot)>> {
+        Ok(match self.repo_id(provider, repo)? {
+            Some(id) => self.archived_snapshot(id, revision)?.map(|s| (id, s)),
+            None => None,
+        })
     }
 
     pub fn upsert_blob(&self, sha256: &str, size: u64, git_oid: Option<&str>) -> Result<()> {
@@ -397,7 +468,7 @@ impl Db {
         Ok(self
             .conn
             .query_row(
-                "SELECT sha256, size, git_oid FROM blobs WHERE sha256 = ?1",
+                &format!("SELECT {BLOB_COLS} FROM blobs b WHERE b.sha256 = ?1"),
                 [sha256],
                 blob_row,
             )
@@ -410,20 +481,43 @@ impl Db {
         Ok(self
             .conn
             .query_row(
-                "SELECT sha256, size, git_oid FROM blobs WHERE git_oid = ?1 LIMIT 1",
+                &format!("SELECT {BLOB_COLS} FROM blobs b WHERE b.git_oid = ?1 LIMIT 1"),
                 [oid],
                 blob_row,
             )
             .optional()?)
     }
 
-    pub fn all_blobs(&self) -> Result<Vec<BlobRow>> {
-        let mut stmt = self
-            .conn
-            .prepare("SELECT sha256, size, git_oid FROM blobs ORDER BY sha256")?;
+    /// The stored files matching `condition`, in sha256 order.
+    fn blobs_where(&self, condition: &str) -> Result<Vec<BlobRow>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT {BLOB_COLS} FROM blobs b WHERE {condition} ORDER BY b.sha256"
+        ))?;
         Ok(stmt
             .query_map([], blob_row)?
             .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    pub fn all_blobs(&self) -> Result<Vec<BlobRow>> {
+        self.blobs_where("1")
+    }
+
+    /// Stored files that no app file holds.
+    pub fn unplaced_blobs(&self) -> Result<Vec<BlobRow>> {
+        self.blobs_where(UNPLACED)
+    }
+
+    /// Stored files that no archived revision, Ollama manifest or app file
+    /// refers to.
+    pub fn unreferenced_blobs(&self) -> Result<Vec<BlobRow>> {
+        self.blobs_where(&format!(
+            "{UNPLACED}
+               AND NOT EXISTS (SELECT 1 FROM revision_files f
+                               WHERE f.lfs_sha256 = b.sha256
+                                  OR (f.lfs_sha256 IS NULL AND f.git_oid = b.git_oid))
+               AND NOT EXISTS (SELECT 1 FROM ollama_manifests m
+                               WHERE instr(m.body, b.sha256) > 0)"
+        ))
     }
 
     pub fn delete_blob(&self, sha256: &str) -> Result<()> {
@@ -500,6 +594,32 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// Drop a repository's archive records: its revisions, refs and Ollama
+    /// manifests, then the repository itself. Stored files are not touched.
+    pub fn delete_repo(&mut self, repo_id: i64) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        for sql in [
+            "DELETE FROM revision_files
+             WHERE revision_id IN (SELECT id FROM revisions WHERE repo_id = ?1)",
+            "DELETE FROM revisions WHERE repo_id = ?1",
+            "DELETE FROM refs WHERE repo_id = ?1",
+            "DELETE FROM ollama_manifests WHERE repo_id = ?1",
+            "DELETE FROM repos WHERE id = ?1",
+        ] {
+            tx.execute(sql, [repo_id])?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Write a consistent copy of the whole database to `path`, which must
+    /// not exist.
+    pub fn vacuum_into(&self, path: &Path) -> Result<()> {
+        self.conn
+            .execute("VACUUM INTO ?1", [path.to_string_lossy().as_ref()])?;
+        Ok(())
+    }
+
     pub fn delete_placement(&self, path: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM placements WHERE path = ?1", [path])?;
@@ -526,6 +646,12 @@ fn blob_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<BlobRow> {
 /// True for a full 40-character git commit id.
 pub fn is_commit(s: &str) -> bool {
     s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The branch or tag name in `revision`; `None` when it is a commit id,
+/// which is not a ref.
+pub fn ref_name(revision: &str) -> Option<&str> {
+    (!is_commit(revision)).then_some(revision)
 }
 
 #[cfg(test)]

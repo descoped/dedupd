@@ -5,7 +5,6 @@ use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
 use dedupd_core::place::App;
 use dedupd_core::pull::{self, PullRequest};
-use dedupd_core::select::Selection;
 use dedupd_core::{archive, status};
 use serde::Deserialize;
 use serde_json::json as j;
@@ -68,20 +67,15 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 Ok(b) => b,
                 Err(e) => return error(StatusCode::BAD_REQUEST, e),
             };
-            let (repo, quant, revision) = match pull::parse_model(&body.model) {
-                Ok(v) => v,
+            let req = match PullRequest::from_spec(
+                &body.model,
+                body.include,
+                body.apps,
+                body.offline,
+                body.jobs.unwrap_or(pull::DEFAULT_JOBS),
+            ) {
+                Ok(req) => req,
                 Err(e) => return error(StatusCode::BAD_REQUEST, e),
-            };
-            let req = PullRequest {
-                repo,
-                revision,
-                selection: Selection {
-                    quant,
-                    include: body.include,
-                },
-                apps: body.apps,
-                offline: body.offline,
-                jobs: body.jobs.unwrap_or(4),
             };
             *server.pulls.lock().expect("lock") += 1;
             let pulled = pull::pull(&server.engine, &req, &server.progress).await;

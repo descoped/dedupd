@@ -1,14 +1,15 @@
 //! The Hugging Face cache: `models--org--repo/snapshots/<commit>/<path>` are
 //! links to `blobs/<etag>`. The cache records the commit each file belongs to.
 
-use super::{LocalFile, LocalRepo};
+use super::{LocalFile, LocalRepo, rel_components};
+use crate::place::App;
 use crate::store::Fingerprint;
 use anyhow::Result;
 use std::collections::HashSet;
 use std::path::Path;
 use walkdir::WalkDir;
 
-pub const APP: &str = "hf";
+pub const APP: &str = App::Hf.as_str();
 
 fn dirs(dir: &Path) -> Vec<(String, std::path::PathBuf)> {
     let mut out: Vec<_> = std::fs::read_dir(dir)
@@ -74,16 +75,8 @@ pub fn scan(hub_dir: &Path) -> Result<Vec<LocalRepo>> {
                 if !blob.is_file() || !seen.insert(blob.clone()) {
                     continue;
                 }
-                let rel = entry
-                    .path()
-                    .strip_prefix(&snapshot)
-                    .expect("walked path is under the snapshot");
                 files.push(LocalFile {
-                    rel_path: rel
-                        .components()
-                        .map(|c| c.as_os_str().to_string_lossy())
-                        .collect::<Vec<_>>()
-                        .join("/"),
+                    rel_path: rel_components(entry.path(), &snapshot).join("/"),
                     fingerprint: Fingerprint::of(&blob)?,
                     abs_path: blob,
                 });
@@ -91,7 +84,7 @@ pub fn scan(hub_dir: &Path) -> Result<Vec<LocalRepo>> {
             if !files.is_empty() {
                 repos.push(LocalRepo {
                     app: APP,
-                    provider: crate::adopt::PROVIDER_HF,
+                    provider: crate::db::PROVIDER_HF,
                     name: name.clone(),
                     revision: Some(commit),
                     files,

@@ -8,7 +8,6 @@ use axum::http::{StatusCode, header};
 use axum::response::Response;
 use dedupd_core::adopt::PROVIDER_HF;
 use dedupd_core::db::is_commit;
-use dedupd_core::fetch::Expect;
 use dedupd_core::hub::{HubError, Snapshot};
 use serde_json::Value;
 use std::sync::Arc;
@@ -50,9 +49,8 @@ fn strip_xet(value: &mut Value) {
 
 impl Server {
     fn archived(&self, repo: &str, rev: &str) -> Option<Snapshot> {
-        let db = self.engine.db();
-        let id = db.repo_id(PROVIDER_HF, repo).ok()??;
-        db.archived_snapshot(id, rev).ok()?
+        let found = self.engine.db().archived(PROVIDER_HF, repo, rev);
+        found.ok()?.map(|(_, snap)| snap)
     }
 
     /// Find out what `repo@rev` contains: from upstream when it answers, from
@@ -85,14 +83,12 @@ impl Server {
 
         match self.engine.hub.snapshot_as(repo, rev, auth).await {
             Ok(snap) => {
-                {
-                    let mut db = self.engine.db();
-                    if let Ok(id) = db.upsert_repo(PROVIDER_HF, repo) {
-                        let name = (!is_commit(rev)).then_some(rev);
-                        if let Err(e) = db.record_snapshot(id, name, &snap) {
-                            eprintln!("dedupd: archiving {repo}@{rev}: {e:#}");
-                        }
-                    }
+                let archived = self
+                    .engine
+                    .db()
+                    .archive_snapshot(PROVIDER_HF, repo, rev, &snap);
+                if let Err(e) = archived {
+                    eprintln!("dedupd: archiving {repo}@{rev}: {e:#}");
                 }
                 self.commits.lock().expect("lock").insert(
                     (repo.to_string(), rev.to_string()),
@@ -450,10 +446,9 @@ pub(crate) async fn resolve(
         }
         return pass_through(server, call).await;
     };
-    let etag = entry.lfs_sha256.clone().unwrap_or(entry.git_oid.clone());
     let extra = [
         ("x-repo-commit", found.snap.commit.clone()),
-        ("etag", format!("\"{etag}\"")),
+        ("etag", format!("\"{}\"", entry.etag())),
     ];
 
     if call.is_head() {
@@ -499,7 +494,7 @@ pub(crate) async fn resolve(
                     &server.engine.store,
                     &url,
                     Some(entry.size),
-                    &Expect::GitOid(entry.git_oid.clone()),
+                    &entry.expect(),
                     None,
                 )
                 .await;

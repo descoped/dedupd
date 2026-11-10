@@ -1,6 +1,7 @@
 //! Read-only client for the Hugging Face Hub API: just enough to learn what a
 //! repository revision contains.
 
+use crate::fetch::Expect;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -30,6 +31,22 @@ pub struct TreeEntry {
     pub git_oid: String,
     /// sha256 of the content, present only for files stored in LFS.
     pub lfs_sha256: Option<String>,
+}
+
+impl TreeEntry {
+    /// The name the Hub and the Hugging Face cache give the file's content:
+    /// the sha256 for an LFS file, the git blob id otherwise.
+    pub fn etag(&self) -> &str {
+        self.lfs_sha256.as_deref().unwrap_or(&self.git_oid)
+    }
+
+    /// What a download of the file must hash to.
+    pub fn expect(&self) -> Expect {
+        match &self.lfs_sha256 {
+            Some(sha) => Expect::Sha256(sha.clone()),
+            None => Expect::GitOid(self.git_oid.clone()),
+        }
+    }
 }
 
 /// Everything the Hub says about one revision, with the raw answers kept so
@@ -67,7 +84,7 @@ pub struct HubClient {
 impl HubClient {
     pub fn new(endpoint: impl Into<String>, token: Option<String>) -> Result<Self, HubError> {
         let http = reqwest::Client::builder()
-            .user_agent(concat!("dedupd/", env!("CARGO_PKG_VERSION")))
+            .user_agent(crate::USER_AGENT)
             .connect_timeout(std::time::Duration::from_secs(10))
             .timeout(std::time::Duration::from_secs(60))
             .build()?;
@@ -135,10 +152,6 @@ impl HubClient {
         self.snapshot_as(repo, revision, None).await
     }
 
-    pub fn endpoint(&self) -> &str {
-        &self.endpoint
-    }
-
     /// Like `snapshot`, but asking with the caller's own `Authorization`
     /// value when it has one, so the Hub decides what that caller may see.
     pub async fn snapshot_as(
@@ -154,7 +167,7 @@ impl HubClient {
         let commit = info
             .get("sha")
             .and_then(|v| v.as_str())
-            .filter(|s| s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+            .filter(|s| crate::db::is_commit(s))
             .ok_or_else(|| HubError::Malformed("model info has no commit sha".into()))?
             .to_string();
 
@@ -179,7 +192,7 @@ impl HubClient {
 
         let mut entries = Vec::new();
         for value in &pages {
-            let raw: RawEntry = serde_json::from_value(value.clone())
+            let raw = RawEntry::deserialize(value)
                 .map_err(|e| HubError::Malformed(format!("tree entry: {e}")))?;
             if raw.kind == "file" {
                 entries.push(TreeEntry {

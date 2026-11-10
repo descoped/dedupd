@@ -1,7 +1,7 @@
 //! The Ollama side of a Hugging Face repository: the manifest that Hugging
 //! Face's registry generates for a GGUF, and the layers it names.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use serde::Deserialize;
 
 /// What dedupd presents itself as when asking for a manifest, since the
@@ -25,15 +25,16 @@ pub struct Layer {
 impl Layer {
     /// The hex sha256 of the layer.
     pub fn sha256(&self) -> Result<&str> {
-        let hex = self
-            .digest
-            .strip_prefix("sha256:")
-            .with_context(|| format!("layer digest {} is not a sha256", self.digest))?;
-        if hex.len() != 64 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
-            bail!("layer digest {} is not a sha256", self.digest);
-        }
-        Ok(hex)
+        digest_hex(&self.digest)
+            .with_context(|| format!("layer digest {} is not a sha256", self.digest))
     }
+}
+
+/// The hex part of a `sha256:<64 hex digits>` digest; `None` for anything
+/// else.
+pub fn digest_hex(digest: &str) -> Option<&str> {
+    let hex = digest.strip_prefix("sha256:")?;
+    (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hex)
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -21,6 +21,9 @@ pub mod store;
 
 pub use paths::Home;
 
+/// What dedupd calls itself when it asks the provider for something.
+pub(crate) const USER_AGENT: &str = concat!("dedupd/", env!("CARGO_PKG_VERSION"));
+
 /// Seconds since the Unix epoch.
 pub(crate) fn now() -> i64 {
     std::time::SystemTime::now()

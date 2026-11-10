@@ -56,7 +56,7 @@ impl Fetcher {
     pub fn new(endpoint: impl Into<String>, token: Option<String>) -> Result<Self> {
         let builder = || {
             reqwest::Client::builder()
-                .user_agent(concat!("dedupd/", env!("CARGO_PKG_VERSION")))
+                .user_agent(crate::USER_AGENT)
                 .connect_timeout(std::time::Duration::from_secs(15))
                 .read_timeout(std::time::Duration::from_secs(60))
         };

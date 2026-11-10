@@ -1,18 +1,14 @@
 //! Bionic and LM Studio keep models as plain files under
 //! `<models dir>/<publisher>/<repo>/<file>`.
 
-use super::{LocalFile, LocalRepo};
+use super::{LocalFile, LocalRepo, rel_components};
+use crate::place::App;
 use crate::store::Fingerprint;
 use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-pub const APP: &str = "bionic";
-
-/// `~/.lmstudio/models`, or `None` when `HOME` is not set.
-pub fn default_models_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".lmstudio/models"))
-}
+pub const APP: &str = App::Bionic.as_str();
 
 fn visible_dirs(dir: &Path) -> Result<Vec<(String, PathBuf)>> {
     let mut out = Vec::new();
@@ -47,17 +43,8 @@ pub fn scan(models_dir: &Path) -> Result<Vec<LocalRepo>> {
                 if !entry.file_type().is_file() {
                     continue;
                 }
-                let rel = entry
-                    .path()
-                    .strip_prefix(&repo_dir)
-                    .expect("walked path is under the repo dir");
-                let rel_path = rel
-                    .components()
-                    .map(|c| c.as_os_str().to_string_lossy())
-                    .collect::<Vec<_>>()
-                    .join("/");
                 files.push(LocalFile {
-                    rel_path,
+                    rel_path: rel_components(entry.path(), &repo_dir).join("/"),
                     abs_path: entry.path().to_path_buf(),
                     fingerprint: Fingerprint::of(entry.path())?,
                 });
@@ -65,7 +52,7 @@ pub fn scan(models_dir: &Path) -> Result<Vec<LocalRepo>> {
             if !files.is_empty() {
                 repos.push(LocalRepo {
                     app: APP,
-                    provider: crate::adopt::PROVIDER_HF,
+                    provider: crate::db::PROVIDER_HF,
                     name: format!("{publisher}/{repo}"),
                     revision: None,
                     files,

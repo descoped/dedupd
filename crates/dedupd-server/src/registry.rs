@@ -19,11 +19,6 @@ fn relay(server: &Server, call: &Call, resp: reqwest::Response) -> Response {
     out
 }
 
-fn hex_digest(digest: &str) -> Option<&str> {
-    let hex = digest.strip_prefix("sha256:")?;
-    (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hex)
-}
-
 /// `/v2/{name}/manifests/{tag}` and `/v2/{name}/blobs/{digest}`.
 pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Response {
     match rest {
@@ -109,7 +104,7 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
 /// A layer. Ollama first asks without `Range` and expects a redirect; it then
 /// downloads from the redirect target in parallel ranges.
 async fn blob(server: &Arc<Server>, call: &Call, name: &str, digest: &str) -> Response {
-    let Some(sha) = hex_digest(digest) else {
+    let Some(sha) = dedupd_core::ollama::digest_hex(digest) else {
         return plain(StatusCode::BAD_REQUEST, "only sha256 digests are served");
     };
     if call.is_head() {
@@ -170,7 +165,7 @@ fn other_host(origin: &str) -> String {
 
 /// The redirect target: `/dedupd/blob/sha256:{hex}?repo={name}`.
 pub(crate) async fn blob_direct(server: &Arc<Server>, call: &Call, digest: &str) -> Response {
-    let Some(sha) = hex_digest(digest) else {
+    let Some(sha) = dedupd_core::ollama::digest_hex(digest) else {
         return plain(StatusCode::BAD_REQUEST, "only sha256 digests are served");
     };
     let name = call

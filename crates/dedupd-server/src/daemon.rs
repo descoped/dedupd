@@ -5,7 +5,6 @@
 use crate::Server;
 use dedupd_core::adopt::{self, Action, Options};
 use dedupd_core::place::App;
-use dedupd_core::store::Fingerprint;
 use dedupd_core::{archive, maintain};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -13,9 +12,6 @@ use std::time::{Duration, SystemTime};
 /// A file must have been left alone this long before it is hashed, so a
 /// download in progress is not picked up half-written.
 const SETTLE: Duration = Duration::from_secs(20);
-/// A duplicate must have been left alone this long before it is swapped for
-/// a clone.
-const RECLAIM_AGE: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Default, serde::Serialize)]
 pub struct PassReport {
@@ -42,7 +38,7 @@ fn settled(path: &std::path::Path, settle: Duration) -> bool {
 
 /// One round of background work.
 pub async fn pass(server: &Arc<Server>) -> anyhow::Result<PassReport> {
-    pass_with(server, SETTLE, RECLAIM_AGE).await
+    pass_with(server, SETTLE, maintain::RECLAIM_MIN_AGE).await
 }
 
 /// `pass` with explicit waiting times, for tests.
@@ -77,13 +73,7 @@ pub async fn pass_with(
                     .placement(&f.abs_path.to_string_lossy())
                     .ok()
                     .flatten()
-                    .is_some_and(|p| {
-                        f.fingerprint
-                            == Fingerprint {
-                                size: p.size,
-                                mtime_ns: p.mtime_ns,
-                            }
-                    });
+                    .is_some_and(|p| f.fingerprint == p.fingerprint());
                 !known
                     && !failed.contains_key(f.abs_path.to_string_lossy().as_ref())
                     && settled(&f.abs_path, settle)
@@ -140,23 +130,22 @@ pub async fn pass_with(
         report.reclaimed_bytes = done.bytes;
     }
 
-    if let Some(archive_home) = server.config.archive_home()
-        && archive::attached(&archive_home)
-    {
+    let synced = {
         let engine = engine.clone();
-        let synced = tokio::task::spawn_blocking(move || {
-            archive::sync(&engine.db, &engine.store, &archive_home, &mut |_, _| {})
+        tokio::task::spawn_blocking(move || {
+            archive::sync_if_attached(&engine.db, &engine.store, &mut |_, _| {})
         })
-        .await?;
-        match synced {
-            Ok(r) => {
-                report.archived = r.copied;
-                for (sha, reason) in r.failed {
-                    report.errors.push(format!("archive {sha}: {reason}"));
-                }
+        .await?
+    };
+    match synced {
+        Some(Ok(r)) => {
+            report.archived = r.copied;
+            for (sha, reason) in r.failed {
+                report.errors.push(format!("archive {sha}: {reason}"));
             }
-            Err(e) => report.errors.push(format!("archive: {e:#}")),
         }
+        Some(Err(e)) => report.errors.push(format!("archive: {e:#}")),
+        None => {}
     }
     Ok(report)
 }

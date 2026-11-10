@@ -7,7 +7,7 @@ use dedupd_core::maintain;
 use dedupd_server::Server;
 use std::path::PathBuf;
 use std::process::Command as Process;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// The launchd label of the daemon.
 const LABEL: &str = "com.dedupd.daemon";
@@ -191,7 +191,7 @@ pub async fn run(o: &Opened, cmd: Command) -> Result<()> {
             let report = maintain::reclaim(
                 &o.engine.db,
                 &o.engine.store,
-                Duration::from_secs(60),
+                maintain::RECLAIM_MIN_AGE,
                 dry_run,
             )?;
             println!(

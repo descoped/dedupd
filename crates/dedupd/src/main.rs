@@ -7,7 +7,6 @@ use dedupd_core::fetch::{Fetcher, Progress};
 use dedupd_core::hub::{DEFAULT_ENDPOINT, HubClient};
 use dedupd_core::place::{App, AppDirs};
 use dedupd_core::pull::{self, Engine, PullRequest};
-use dedupd_core::select::Selection;
 use dedupd_core::store::Store;
 use dedupd_core::{Home, archive, status};
 use std::path::PathBuf;
@@ -55,7 +54,7 @@ enum Command {
         #[command(flatten)]
         model: ModelArgs,
         /// Downloads to run at once
-        #[arg(long, default_value_t = 4)]
+        #[arg(long, default_value_t = pull::DEFAULT_JOBS)]
         jobs: usize,
     },
     /// Place an archived model into apps without contacting Hugging Face
@@ -172,18 +171,7 @@ pub fn backup_if_attached(o: &Opened) {
 
 async fn run_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> Result<()> {
     let model_spec = model.model.clone();
-    let (repo, quant, revision) = pull::parse_model(&model.model)?;
-    let req = PullRequest {
-        repo,
-        revision,
-        selection: Selection {
-            quant,
-            include: model.include,
-        },
-        apps: model.apps,
-        offline,
-        jobs,
-    };
+    let req = PullRequest::from_spec(&model.model, model.include, model.apps, offline, jobs)?;
     // When the daemon is running on this store it does the work, so one
     // process downloads and the daemon's own requests share the result.
     let address = o.config.listen().to_string();

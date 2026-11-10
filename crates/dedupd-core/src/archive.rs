@@ -1,7 +1,7 @@
 //! The second copy of the store, on another disk. It has the same layout as
 //! the home folder, so it can be read with `--home` on any Mac.
 
-use crate::db::Db;
+use crate::db::{Db, lock};
 use crate::hash::copy_hashing;
 use crate::paths::Home;
 use crate::store::Store;
@@ -26,6 +26,17 @@ pub fn attached(archive: &Home) -> bool {
     archive.root().is_dir() || archive.root().parent().is_some_and(|p| p.is_dir())
 }
 
+/// `sync` to the store's own archive folder, when one is configured and its
+/// disk is attached; `None` otherwise.
+pub fn sync_if_attached(
+    db: &std::sync::Mutex<Db>,
+    store: &Store,
+    on_copy: &mut dyn FnMut(&str, u64),
+) -> Option<Result<SyncReport>> {
+    let archive = store.archive().filter(|a| attached(a))?;
+    Some(sync(db, store, archive, on_copy))
+}
+
 /// Copy every stored file the archive lacks, then a consistent copy of the
 /// database. Each file is hashed as it is written; a file that does not hash
 /// to its name is not kept.
@@ -45,15 +56,20 @@ pub fn sync(
         .with_context(|| format!("creating {}", archive.root().display()))?;
 
     let mut report = SyncReport::default();
-    let blobs = db.lock().expect("database lock").all_blobs()?;
+    let blobs = lock(db).all_blobs()?;
     for blob in &blobs {
         let src = store.blob_path(&blob.sha256);
         let dst = archive.blob_path(&blob.sha256);
-        if fs::metadata(&dst).is_ok_and(|m| m.len() == blob.size) {
+        let in_store = src.is_file();
+        let in_archive = fs::metadata(&dst).ok();
+        if !in_store && in_archive.as_ref().is_some_and(|m| m.is_file()) {
+            report.only_in_archive += 1;
+        }
+        if in_archive.is_some_and(|m| m.len() == blob.size) {
             report.present += 1;
             continue;
         }
-        if !src.is_file() {
+        if !in_store {
             report.failed.push((
                 blob.sha256.clone(),
                 "missing from the store and from the archive".into(),
@@ -87,10 +103,6 @@ pub fn sync(
             }
         }
     }
-    report.only_in_archive = blobs
-        .iter()
-        .filter(|b| !store.contains(&b.sha256) && archive.blob_path(&b.sha256).is_file())
-        .count();
 
     // An idle pass leaves the archive's database copy alone.
     let newer = |a: &std::path::Path, b: &std::path::Path| {
@@ -110,10 +122,8 @@ pub fn sync(
     }
     let tmp = archive.root().join("dedupd.sqlite.tmp");
     let _ = fs::remove_file(&tmp);
-    db.lock()
-        .expect("database lock")
-        .conn()
-        .execute("VACUUM INTO ?1", [tmp.to_string_lossy().as_ref()])
+    lock(db)
+        .vacuum_into(&tmp)
         .context("copying the database to the archive")?;
     fs::rename(&tmp, archive.db_path())?;
     Ok(report)

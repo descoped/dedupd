@@ -1,7 +1,8 @@
 //! Placement: putting stored files where each app looks for them, as clones.
 
-use crate::clone::clone_file;
-use crate::db::{Db, NewPlacement};
+use crate::adopt::Verify;
+use crate::clone::clone_into_place;
+use crate::db::{Db, NewPlacement, ORIGIN_ADOPTED, ORIGIN_PLACED, lock};
 use crate::hash::hash_file;
 use crate::ollama;
 use crate::store::{Fingerprint, Store};
@@ -9,6 +10,7 @@ use anyhow::{Context, Result, bail};
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -23,7 +25,8 @@ pub enum App {
 impl App {
     pub const ALL: [App; 3] = [App::Bionic, App::Ollama, App::Hf];
 
-    pub fn as_str(self) -> &'static str {
+    /// The app's short name, as recorded in the database.
+    pub const fn as_str(self) -> &'static str {
         match self {
             App::Bionic => "bionic",
             App::Ollama => "ollama",
@@ -112,9 +115,18 @@ pub struct Placed {
     pub conflicts: Vec<String>,
 }
 
+/// Where a repository's files are being placed, and the records to keep.
+pub struct Dest<'a> {
+    pub db: &'a Mutex<Db>,
+    pub store: &'a Store,
+    pub dirs: &'a AppDirs,
+    pub repo_id: i64,
+    /// `org/name`.
+    pub repo: &'a str,
+}
+
 struct Target<'a> {
     app: App,
-    repo_id: i64,
     rel_path: &'a str,
     sha256: &'a str,
     size: u64,
@@ -124,24 +136,28 @@ struct Target<'a> {
 /// Put a clone of a stored file at `dst`. An existing file is never
 /// overwritten: the same content counts as present, anything else is a
 /// conflict for the owner to resolve.
-fn place_clone(db: &Db, store: &Store, t: &Target<'_>, dst: &Path, out: &mut Placed) -> Result<()> {
+///
+/// The database is locked only for its own calls, never while a file is
+/// hashed or brought back from the archive disk.
+fn place_clone(dest: &Dest<'_>, t: &Target<'_>, dst: &Path, out: &mut Placed) -> Result<()> {
     let dst_str = dst.to_string_lossy().into_owned();
     let record = |shared: bool, origin: &str| -> Result<()> {
         let fp = Fingerprint::of(dst)?;
-        db.upsert_placement(&NewPlacement {
+        let verify = if t.commit.is_some() {
+            Verify::Verified
+        } else {
+            Verify::Unchecked
+        };
+        lock(dest.db).upsert_placement(&NewPlacement {
             app: t.app.as_str(),
             path: &dst_str,
-            repo_id: t.repo_id,
+            repo_id: dest.repo_id,
             rel_path: t.rel_path,
             sha256: t.sha256,
             size: fp.size,
             mtime_ns: fp.mtime_ns,
             origin,
-            verify_state: if t.commit.is_some() {
-                "verified"
-            } else {
-                "unchecked"
-            },
+            verify_state: verify.as_str(),
             verified_commit: t.commit,
             shared,
         })
@@ -153,13 +169,10 @@ fn place_clone(db: &Db, store: &Store, t: &Target<'_>, dst: &Path, out: &mut Pla
                 .push(format!("{dst_str} exists and is not a regular file"));
             return Ok(());
         }
-        if let Some(known) = db.placement(&dst_str)?
+        let known = lock(dest.db).placement(&dst_str)?;
+        if let Some(known) = known
             && known.sha256 == t.sha256
-            && Fingerprint::of(dst)?
-                == (Fingerprint {
-                    size: known.size,
-                    mtime_ns: known.mtime_ns,
-                })
+            && Fingerprint::of(dst)? == known.fingerprint()
         {
             out.present += 1;
             return Ok(());
@@ -167,7 +180,7 @@ fn place_clone(db: &Db, store: &Store, t: &Target<'_>, dst: &Path, out: &mut Pla
         if meta.len() == t.size && hash_file(dst, false)?.sha256 == t.sha256 {
             // The app has its own copy of the same bytes. Leave it; the
             // reclaim pass can swap it for a clone.
-            record(false, "adopted")?;
+            record(false, ORIGIN_ADOPTED)?;
             out.present += 1;
         } else {
             out.conflicts
@@ -176,59 +189,49 @@ fn place_clone(db: &Db, store: &Store, t: &Target<'_>, dst: &Path, out: &mut Pla
         return Ok(());
     }
 
+    let store = dest.store;
     if !store.ensure_local(t.sha256)? {
         bail!("{} is not in the store", t.sha256);
     }
     let parent = dst.parent().context("destination has no parent folder")?;
     fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-    if !crate::clone::same_volume(parent, &store.blob_path(t.sha256))? {
+    let blob = store.blob_path(t.sha256);
+    if !crate::clone::same_volume(parent, &blob)? {
         bail!(
             "{} is on a different volume from the store; clones need one APFS volume",
             parent.display()
         );
     }
-    let name = dst.file_name().context("destination has no file name")?;
-    let tmp = parent.join(format!(".{}.dedupd-tmp", name.to_string_lossy()));
-    let _ = fs::remove_file(&tmp);
-    clone_file(&store.blob_path(t.sha256), &tmp)
-        .with_context(|| format!("cloning into {}", parent.display()))?;
-    let finish = || -> Result<()> {
+    let mut cloned = false;
+    let placed = clone_into_place(&blob, dst, |tmp| {
+        cloned = true;
         // Store files are read-only; an app's own file is not.
-        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o644))?;
-        fs::rename(&tmp, dst)?;
+        fs::set_permissions(tmp, fs::Permissions::from_mode(0o644))?;
         Ok(())
-    };
-    if let Err(e) = finish() {
-        let _ = fs::remove_file(&tmp);
-        return Err(e);
+    });
+    match placed {
+        Ok(()) => {}
+        Err(e) if cloned => return Err(e),
+        Err(e) => return Err(e.context(format!("cloning into {}", parent.display()))),
     }
-    record(true, "placed")?;
+    record(true, ORIGIN_PLACED)?;
     out.cloned += 1;
     Ok(())
 }
 
 /// Bionic and LM Studio: `<models>/<org>/<repo>/<file>`.
-pub fn place_bionic(
-    db: &Db,
-    store: &Store,
-    dirs: &AppDirs,
-    repo_id: i64,
-    repo: &str,
-    commit: &str,
-    items: &[Item],
-) -> Result<Placed> {
+pub fn place_bionic(dest: &Dest<'_>, commit: &str, items: &[Item]) -> Result<Placed> {
     let mut out = Placed::default();
-    let base = dirs.bionic.join(repo);
+    let base = dest.dirs.bionic.join(dest.repo);
     for item in items {
         let t = Target {
             app: App::Bionic,
-            repo_id,
             rel_path: &item.rel_path,
             sha256: &item.sha256,
             size: item.size,
             commit: Some(commit),
         };
-        place_clone(db, store, &t, &base.join(&item.rel_path), &mut out)?;
+        place_clone(dest, &t, &base.join(&item.rel_path), &mut out)?;
     }
     Ok(out)
 }
@@ -241,36 +244,24 @@ pub fn hf_repo_dir(dirs: &AppDirs, repo: &str) -> PathBuf {
 
 /// The Hugging Face cache: `blobs/<etag>`, a `snapshots/<commit>/<path>` link
 /// to each blob, and `refs/<branch>` naming the commit.
-#[allow(clippy::too_many_arguments)]
 pub fn place_hf(
-    db: &Db,
-    store: &Store,
-    dirs: &AppDirs,
-    repo_id: i64,
-    repo: &str,
+    dest: &Dest<'_>,
     commit: &str,
     ref_name: Option<&str>,
     items: &[Item],
 ) -> Result<Placed> {
     let mut out = Placed::default();
-    let base = hf_repo_dir(dirs, repo);
+    let base = hf_repo_dir(dest.dirs, dest.repo);
     for item in items {
         let t = Target {
             app: App::Hf,
-            repo_id,
             rel_path: &item.rel_path,
             sha256: &item.sha256,
             size: item.size,
             commit: Some(commit),
         };
         let conflicts = out.conflicts.len();
-        place_clone(
-            db,
-            store,
-            &t,
-            &base.join("blobs").join(&item.etag),
-            &mut out,
-        )?;
+        place_clone(dest, &t, &base.join("blobs").join(&item.etag), &mut out)?;
         if out.conflicts.len() > conflicts {
             continue;
         }
@@ -302,39 +293,36 @@ pub fn ollama_manifest_path(dirs: &AppDirs, repo: &str, tag: &str) -> PathBuf {
 
 /// Ollama: each layer as `blobs/sha256-<hex>`, then the manifest that names
 /// them. The manifest is written last so Ollama never sees a model whose
-/// layers are missing.
+/// layers are missing. `manifest` is `manifest_body` parsed; the body is
+/// written as it is.
 pub fn place_ollama(
-    db: &Db,
-    store: &Store,
-    dirs: &AppDirs,
-    repo_id: i64,
-    repo: &str,
+    dest: &Dest<'_>,
     tag: &str,
+    manifest: &ollama::Manifest,
     manifest_body: &str,
 ) -> Result<Placed> {
-    let manifest = ollama::Manifest::parse(manifest_body)?;
     let mut out = Placed::default();
     for layer in manifest.all() {
         let sha = layer.sha256()?;
-        let size = match db.blob(sha)? {
+        let known = lock(dest.db).blob(sha)?;
+        let size = match known {
             Some(b) => b.size,
             None => bail!("layer {} is not in the store", layer.digest),
         };
         let rel = format!("blobs/sha256-{sha}");
         let t = Target {
             app: App::Ollama,
-            repo_id,
             rel_path: &rel,
             sha256: sha,
             size,
             commit: None,
         };
-        place_clone(db, store, &t, &dirs.ollama.join(&rel), &mut out)?;
+        place_clone(dest, &t, &dest.dirs.ollama.join(&rel), &mut out)?;
     }
     if !out.conflicts.is_empty() {
         return Ok(out);
     }
-    let path = ollama_manifest_path(dirs, repo, tag);
+    let path = ollama_manifest_path(dest.dirs, dest.repo, tag);
     if fs::read_to_string(&path).ok().as_deref() != Some(manifest_body) {
         let parent = path.parent().expect("manifest has a parent");
         fs::create_dir_all(parent)?;

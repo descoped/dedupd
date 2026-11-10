@@ -6,7 +6,17 @@ pub mod hf_cache;
 pub mod ollama;
 
 use crate::store::Fingerprint;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// The parts of `path` below `base`. Joined with `/` they are the path as
+/// the provider names it. `path` must be under `base`.
+pub(crate) fn rel_components(path: &Path, base: &Path) -> Vec<String> {
+    path.strip_prefix(base)
+        .expect("path is under its base folder")
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect()
+}
 
 #[derive(Debug, Clone)]
 pub struct LocalFile {

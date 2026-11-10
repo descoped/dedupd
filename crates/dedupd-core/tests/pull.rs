@@ -1,61 +1,21 @@
 //! End-to-end pull and placement against a fake Hub, with scratch app folders.
 #![cfg(target_os = "macos")]
 
-use dedupd_core::db::Db;
+mod common;
+
+use common::{COMMIT, REPO, Ranged, engine, git_oid, sha256};
 use dedupd_core::fetch::{Expect, Fetcher, Progress};
-use dedupd_core::hub::HubClient;
 use dedupd_core::place::{App, AppDirs};
-use dedupd_core::pull::{self, Engine, PullRequest};
+use dedupd_core::pull::{self, PullRequest};
 use dedupd_core::select::Selection;
 use dedupd_core::store::Store;
 use dedupd_core::{Home, archive};
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use std::fs;
 use std::os::unix::fs::MetadataExt;
-use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use wiremock::matchers::{method, path, path_regex};
-use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
-
-const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
-const REPO: &str = "org/Repo-GGUF";
-
-fn sha256(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
-}
-
-fn git_oid(bytes: &[u8]) -> String {
-    use sha1::Sha1;
-    let mut h = Sha1::new();
-    h.update(format!("blob {}\0", bytes.len()).as_bytes());
-    h.update(bytes);
-    hex::encode(h.finalize())
-}
-
-/// Serves a body and honours `Range: bytes=N-`, as the Hub's CDN does.
-struct Ranged(Vec<u8>);
-
-impl Respond for Ranged {
-    fn respond(&self, req: &Request) -> ResponseTemplate {
-        let range = req
-            .headers
-            .get("range")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("bytes="))
-            .and_then(|v| v.strip_suffix('-'))
-            .and_then(|v| v.parse::<usize>().ok());
-        match range {
-            Some(start) => ResponseTemplate::new(206)
-                .insert_header(
-                    "content-range",
-                    format!("bytes {start}-{}/{}", self.0.len() - 1, self.0.len()).as_str(),
-                )
-                .set_body_bytes(self.0[start..].to_vec()),
-            None => ResponseTemplate::new(200).set_body_bytes(self.0.clone()),
-        }
-    }
-}
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 struct Upstream {
     server: MockServer,
@@ -69,19 +29,7 @@ async fn upstream() -> Upstream {
     let config = b"{\"a\":1}\n".to_vec();
     let ollama_config = b"{\"model_format\":\"gguf\"}".to_vec();
     let template = b"{{ .Prompt }}".to_vec();
-    let manifest = json!({
-        "schemaVersion": 2,
-        "mediaType": "application/vnd.docker.distribution.manifest.v2+json",
-        "config": {"mediaType": "application/vnd.docker.container.image.v1+json",
-                   "digest": format!("sha256:{}", sha256(&ollama_config)), "size": ollama_config.len()},
-        "layers": [
-            {"mediaType": "application/vnd.ollama.image.model",
-             "digest": format!("sha256:{}", sha256(&weights)), "size": weights.len()},
-            {"mediaType": "application/vnd.ollama.image.template",
-             "digest": format!("sha256:{}", sha256(&template)), "size": template.len()}
-        ]
-    })
-    .to_string();
+    let manifest = common::ollama_manifest(&ollama_config, &weights, &template);
 
     let server = MockServer::start().await;
     Mock::given(method("GET"))
@@ -135,16 +83,6 @@ async fn upstream() -> Upstream {
         config,
         manifest,
     }
-}
-
-fn engine(home: &Home, endpoint: &str, apps: &Path, archive: Option<Home>) -> Arc<Engine> {
-    Arc::new(Engine {
-        db: Mutex::new(Db::open(&home.db_path()).unwrap()),
-        store: Store::open(home).unwrap().with_archive(archive),
-        hub: HubClient::new(endpoint, None).unwrap(),
-        fetcher: Fetcher::new(endpoint, None).unwrap(),
-        dirs: AppDirs::under(apps),
-    })
 }
 
 fn request(apps: &[App], offline: bool) -> PullRequest {

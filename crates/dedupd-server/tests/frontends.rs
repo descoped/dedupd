@@ -2,64 +2,20 @@
 //! the front ends with a fake Hugging Face behind them.
 #![cfg(target_os = "macos")]
 
+#[path = "../../dedupd-core/tests/common/mod.rs"]
+mod common;
+
+use common::{COMMIT, REPO, Ranged, git_oid, sha256};
 use dedupd_core::Home;
 use dedupd_core::config::Config;
-use dedupd_core::db::Db;
-use dedupd_core::fetch::Fetcher;
-use dedupd_core::hub::HubClient;
-use dedupd_core::place::AppDirs;
-use dedupd_core::pull::Engine;
-use dedupd_core::store::Store;
 use dedupd_server::Server;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use wiremock::matchers::{method, path, path_regex};
-use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
-const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
-const REPO: &str = "org/Repo-GGUF";
 const OLLAMA_UA: &str = "ollama/0.40.16 (arm64 darwin) Go/go1.24.0";
-
-fn sha256(bytes: &[u8]) -> String {
-    hex::encode(Sha256::digest(bytes))
-}
-
-fn git_oid(bytes: &[u8]) -> String {
-    use sha1::Sha1;
-    let mut h = Sha1::new();
-    h.update(format!("blob {}\0", bytes.len()).as_bytes());
-    h.update(bytes);
-    hex::encode(h.finalize())
-}
-
-/// Serves a body and honours `Range`, as the Hub's CDN does.
-struct Ranged(Vec<u8>);
-
-impl Respond for Ranged {
-    fn respond(&self, req: &Request) -> ResponseTemplate {
-        let spec = req
-            .headers
-            .get("range")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("bytes="))
-            .and_then(|v| v.split_once('-'));
-        match spec {
-            Some((a, b)) => {
-                let start: usize = a.parse().unwrap();
-                let end: usize = b.parse().unwrap_or(self.0.len() - 1);
-                ResponseTemplate::new(206)
-                    .insert_header(
-                        "content-range",
-                        format!("bytes {start}-{end}/{}", self.0.len()).as_str(),
-                    )
-                    .set_body_bytes(self.0[start..=end].to_vec())
-            }
-            None => ResponseTemplate::new(200).set_body_bytes(self.0.clone()),
-        }
-    }
-}
 
 struct Fixture {
     _dir: tempfile::TempDir,
@@ -78,18 +34,7 @@ async fn fixture() -> Fixture {
     let config = b"{\"a\":1}\n".to_vec();
     let ollama_config = b"{\"model_format\":\"gguf\"}".to_vec();
     let template: Vec<u8> = (0..5000u32).map(|i| (i % 97) as u8).collect();
-    let manifest = json!({
-        "schemaVersion": 2,
-        "config": {"mediaType": "application/vnd.docker.container.image.v1+json",
-                   "digest": format!("sha256:{}", sha256(&ollama_config)), "size": ollama_config.len()},
-        "layers": [
-            {"mediaType": "application/vnd.ollama.image.model",
-             "digest": format!("sha256:{}", sha256(&weights)), "size": weights.len()},
-            {"mediaType": "application/vnd.ollama.image.template",
-             "digest": format!("sha256:{}", sha256(&template)), "size": template.len()}
-        ]
-    })
-    .to_string();
+    let manifest = common::ollama_manifest(&ollama_config, &weights, &template);
 
     let upstream = MockServer::start().await;
     let info = json!({"sha": COMMIT, "id": REPO, "gated": false, "private": false});
@@ -167,13 +112,7 @@ async fn fixture() -> Fixture {
 
     let dir = tempfile::tempdir().unwrap();
     let home = Home::new(dir.path().join("home"));
-    let engine = Arc::new(Engine {
-        db: Mutex::new(Db::open(&home.db_path()).unwrap()),
-        store: Store::open(&home).unwrap(),
-        hub: HubClient::new(upstream.uri(), None).unwrap(),
-        fetcher: Fetcher::new(upstream.uri(), None).unwrap(),
-        dirs: AppDirs::under(&dir.path().join("apps")),
-    });
+    let engine = common::engine(&home, &upstream.uri(), &dir.path().join("apps"), None);
     let server = Server::new(engine, Config::default(), home);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());

@@ -1,21 +1,21 @@
 //! Upkeep: swapping duplicate app files for clones, checking the store, and
 //! explicit removal. Nothing here runs unless the owner or the daemon asks.
 
-use crate::adopt::PROVIDER_HF;
-use crate::clone::{clone_file, same_volume};
-use crate::db::{BlobRow, Db};
+use crate::clone::{clone_into_place, same_volume};
+use crate::db::{BlobRow, Db, PROVIDER_HF, lock};
 use crate::hash::hash_file;
 use crate::store::{Fingerprint, Store};
 use anyhow::{Context, Result, bail};
+use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
 
-fn lock(db: &Mutex<Db>) -> std::sync::MutexGuard<'_, Db> {
-    db.lock().expect("database lock")
-}
+/// How long a duplicate must have been left alone before `reclaim` swaps it
+/// for a clone, so a file an app is still writing is not touched.
+pub const RECLAIM_MIN_AGE: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct ReclaimReport {
@@ -54,10 +54,7 @@ pub fn reclaim(
             if !meta.is_file() {
                 return Ok(Some("not a regular file".into()));
             }
-            let recorded = Fingerprint {
-                size: p.size,
-                mtime_ns: p.mtime_ns,
-            };
+            let recorded = p.fingerprint();
             if Fingerprint::of(path)? != recorded {
                 return Ok(Some("changed since it was hashed".into()));
             }
@@ -78,26 +75,16 @@ pub fn reclaim(
                 return Ok(None);
             }
 
-            let parent = path.parent().context("file has no parent folder")?;
-            let name = path.file_name().context("file has no name")?;
-            let tmp = parent.join(format!(".{}.dedupd-tmp", name.to_string_lossy()));
-            let _ = fs::remove_file(&tmp);
-            clone_file(&blob, &tmp)?;
-            let swap = || -> Result<()> {
+            clone_into_place(&blob, path, |tmp| {
                 // The clone takes the place of the app's file, so it carries
                 // the same permissions and modification time.
-                fs::set_permissions(&tmp, meta.permissions())?;
-                fs::File::open(&tmp)?.set_modified(meta.modified()?)?;
+                fs::set_permissions(tmp, meta.permissions())?;
+                fs::File::open(tmp)?.set_modified(meta.modified()?)?;
                 if Fingerprint::of(path)? != recorded {
                     bail!("changed while it was being replaced");
                 }
-                fs::rename(&tmp, path)?;
                 Ok(())
-            };
-            if let Err(e) = swap() {
-                let _ = fs::remove_file(&tmp);
-                return Err(e);
-            }
+            })?;
             lock(db).set_placement_shared(&p.path, Fingerprint::of(path)?.mtime_ns)?;
             Ok(None)
         })();
@@ -204,65 +191,44 @@ pub struct GcPlan {
 /// Work out what `gc` would remove. Removes nothing.
 pub fn gc_plan(db: &Mutex<Db>, store: &Store, offload: bool) -> Result<GcPlan> {
     let db = lock(db);
-    let query = |sql: &str| -> Result<Vec<BlobRow>> {
-        let mut stmt = db.conn().prepare(sql)?;
-        let rows = stmt
-            .query_map([], |r| {
-                Ok(BlobRow {
-                    sha256: r.get(0)?,
-                    size: r.get::<_, i64>(1)? as u64,
-                    git_oid: r.get(2)?,
-                })
-            })?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(rows)
-    };
-    const UNPLACED: &str = "NOT EXISTS (SELECT 1 FROM placements p WHERE p.sha256 = b.sha256)";
-    let orphans = query(&format!(
-        "SELECT b.sha256, b.size, b.git_oid FROM blobs b WHERE {UNPLACED}
-           AND NOT EXISTS (SELECT 1 FROM revision_files f
-                           WHERE f.lfs_sha256 = b.sha256
-                              OR (f.lfs_sha256 IS NULL AND f.git_oid = b.git_oid))
-           AND NOT EXISTS (SELECT 1 FROM ollama_manifests m WHERE instr(m.body, b.sha256) > 0)
-         ORDER BY b.sha256"
-    ))?;
     let mut plan = GcPlan {
-        orphans,
+        orphans: db.unreferenced_blobs()?,
         offload: Vec::new(),
     };
     if offload && let Some(archive) = store.archive() {
-        plan.offload = query(&format!(
-            "SELECT b.sha256, b.size, b.git_oid FROM blobs b WHERE {UNPLACED} ORDER BY b.sha256"
-        ))?
-        .into_iter()
-        .filter(|b| !plan.orphans.iter().any(|o| o.sha256 == b.sha256))
-        .filter(|b| store.contains(&b.sha256))
-        .filter(|b| fs::metadata(archive.blob_path(&b.sha256)).is_ok_and(|m| m.len() == b.size))
-        .collect();
+        let orphans: HashSet<&str> = plan.orphans.iter().map(|o| o.sha256.as_str()).collect();
+        plan.offload = db
+            .unplaced_blobs()?
+            .into_iter()
+            .filter(|b| !orphans.contains(b.sha256.as_str()))
+            .filter(|b| store.contains(&b.sha256))
+            .filter(|b| fs::metadata(archive.blob_path(&b.sha256)).is_ok_and(|m| m.len() == b.size))
+            .collect();
     }
     Ok(plan)
 }
 
 /// Carry out a plan. Returns the bytes freed on the local disk.
 pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
+    // Remove the local copy; the bytes that freed.
+    let remove_local = |blob: &BlobRow| -> Result<u64> {
+        let path = store.blob_path(&blob.sha256);
+        if !path.is_file() {
+            return Ok(0);
+        }
+        fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+        Ok(blob.size)
+    };
     let mut freed = 0;
     for blob in &plan.orphans {
-        let path = store.blob_path(&blob.sha256);
-        if path.is_file() {
-            fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
-            freed += blob.size;
-        }
+        freed += remove_local(blob)?;
         if let Some(archive) = store.archive() {
             let _ = fs::remove_file(archive.blob_path(&blob.sha256));
         }
         lock(db).delete_blob(&blob.sha256)?;
     }
     for blob in &plan.offload {
-        let path = store.blob_path(&blob.sha256);
-        if path.is_file() {
-            fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
-            freed += blob.size;
-        }
+        freed += remove_local(blob)?;
     }
     Ok(freed)
 }
@@ -271,7 +237,7 @@ pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
 /// unreferenced. Refused while an app still has files of the repository.
 pub fn forget(db: &Mutex<Db>, repo: &str) -> Result<()> {
     prune_placements(db)?;
-    let db = lock(db);
+    let mut db = lock(db);
     let Some(id) = db.repo_id(PROVIDER_HF, repo)? else {
         bail!("{repo} is not in the archive");
     };
@@ -287,14 +253,5 @@ pub fn forget(db: &Mutex<Db>, repo: &str) -> Result<()> {
             in_use.len()
         );
     }
-    db.conn().execute_batch(&format!(
-        "BEGIN;
-         DELETE FROM revision_files WHERE revision_id IN (SELECT id FROM revisions WHERE repo_id = {id});
-         DELETE FROM revisions WHERE repo_id = {id};
-         DELETE FROM refs WHERE repo_id = {id};
-         DELETE FROM ollama_manifests WHERE repo_id = {id};
-         DELETE FROM repos WHERE id = {id};
-         COMMIT;"
-    ))?;
-    Ok(())
+    db.delete_repo(id)
 }

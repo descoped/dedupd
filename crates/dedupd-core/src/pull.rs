@@ -1,12 +1,11 @@
 //! `pull` and `place`: get a repository revision into the store, then put it
 //! where the chosen apps look for it.
 
-use crate::adopt::PROVIDER_HF;
-use crate::db::{Db, is_commit};
+use crate::db::{self, Db, PROVIDER_HF};
 use crate::fetch::{Expect, Fetcher, Progress, Unavailable};
 use crate::hub::{HubClient, Snapshot, TreeEntry};
 use crate::ollama;
-use crate::place::{self, App, AppDirs, Item, Placed};
+use crate::place::{self, App, AppDirs, Dest, Item, Placed};
 use crate::select::{self, Selection};
 use crate::store::Store;
 use anyhow::{Context, Result, anyhow, bail};
@@ -26,9 +25,12 @@ pub struct Engine {
 
 impl Engine {
     pub fn db(&self) -> std::sync::MutexGuard<'_, Db> {
-        self.db.lock().expect("database lock")
+        db::lock(&self.db)
     }
 }
+
+/// Downloads to run at once when the caller does not say.
+pub const DEFAULT_JOBS: usize = 4;
 
 #[derive(Debug, Clone)]
 pub struct PullRequest {
@@ -42,6 +44,28 @@ pub struct PullRequest {
     pub offline: bool,
     /// Downloads to run at once.
     pub jobs: usize,
+}
+
+impl PullRequest {
+    /// A request for `model`, written `org/repo[:quant][@revision]` as on
+    /// the command line. `include` holds extra file patterns.
+    pub fn from_spec(
+        model: &str,
+        include: Vec<String>,
+        apps: Vec<App>,
+        offline: bool,
+        jobs: usize,
+    ) -> Result<Self> {
+        let (repo, quant, revision) = parse_model(model)?;
+        Ok(Self {
+            repo,
+            revision,
+            selection: Selection { quant, include },
+            apps,
+            offline,
+            jobs,
+        })
+    }
 }
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -60,51 +84,68 @@ pub struct PullOutcome {
     pub notes: Vec<String>,
 }
 
+/// The revision a pull works on.
+struct Resolved {
+    repo_id: i64,
+    snap: Snapshot,
+    /// The provider could not answer and the archived copy is used.
+    from_archive: bool,
+    /// Why the archived copy is used, for the owner.
+    note: Option<String>,
+}
+
 /// Find the revision: ask the provider, and fall back to the archive when it
 /// cannot answer or no longer has the repository.
-async fn resolve(engine: &Engine, req: &PullRequest) -> Result<(i64, Snapshot, bool, Vec<String>)> {
-    let mut notes = Vec::new();
+async fn resolve(engine: &Engine, req: &PullRequest) -> Result<Resolved> {
+    let mut upstream_error = None;
     let fresh = if req.offline {
         None
     } else {
         match engine.hub.snapshot(&req.repo, &req.revision).await {
             Ok(s) => Some(s),
             Err(e) => {
-                notes.push(format!("{e}; using the archived copy"));
+                upstream_error = Some(e);
                 None
             }
         }
     };
     let mut db = engine.db();
-    match fresh {
-        Some(snap) => {
-            let repo_id = db.upsert_repo(PROVIDER_HF, &req.repo)?;
-            let ref_name = (!is_commit(&req.revision)).then_some(req.revision.as_str());
-            db.record_snapshot(repo_id, ref_name, &snap)?;
-            Ok((repo_id, snap, false, notes))
-        }
-        None => {
-            let archived = match db.repo_id(PROVIDER_HF, &req.repo)? {
-                Some(id) => db.archived_snapshot(id, &req.revision)?.map(|s| (id, s)),
-                None => None,
-            };
-            match archived {
-                Some((id, snap)) => Ok((id, snap, true, notes)),
-                None if req.offline => bail!(
-                    "{}@{} is not archived, and --offline was given",
-                    req.repo,
-                    req.revision
-                ),
-                None => bail!(
-                    "{} and it is not archived",
-                    notes
-                        .pop()
-                        .unwrap_or_default()
-                        .replace("; using the archived copy", "")
-                ),
-            }
-        }
+    if let Some(snap) = fresh {
+        let repo_id = db.archive_snapshot(PROVIDER_HF, &req.repo, &req.revision, &snap)?;
+        return Ok(Resolved {
+            repo_id,
+            snap,
+            from_archive: false,
+            note: None,
+        });
     }
+    match (
+        db.archived(PROVIDER_HF, &req.repo, &req.revision)?,
+        upstream_error,
+    ) {
+        (Some((repo_id, snap)), e) => Ok(Resolved {
+            repo_id,
+            snap,
+            from_archive: true,
+            note: e.map(|e| format!("{e}; using the archived copy")),
+        }),
+        (None, Some(e)) => bail!("{e} and it is not archived"),
+        (None, None) => bail!(
+            "{}@{} is not archived, and --offline was given",
+            req.repo,
+            req.revision
+        ),
+    }
+}
+
+/// Run blocking store work (a file may be copied back from the archive disk)
+/// off the async runtime.
+async fn blocking<T: Send + 'static>(
+    engine: &Arc<Engine>,
+    work: impl FnOnce(&Engine) -> Result<T> + Send + 'static,
+) -> Result<T> {
+    let engine = engine.clone();
+    tokio::task::spawn_blocking(move || work(&engine)).await?
 }
 
 /// Fetch whatever of `entries` the store does not hold yet. Returns one item
@@ -120,23 +161,27 @@ async fn fetch_entries(
     let mut missing = Vec::new();
     for e in entries {
         let known = engine.db().blob_for_entry(&e)?;
+        let Some(b) = known else {
+            missing.push(e);
+            continue;
+        };
         // A copy that cannot be brought back from the archive disk (detached
         // mid-copy, damaged) is downloaded again when that is allowed.
-        let local = |sha: &str| match engine.store.ensure_local(sha) {
-            Err(e) if req.offline => Err(e),
-            other => Ok(other.unwrap_or(false)),
+        let sha = b.sha256.clone();
+        let local = match blocking(engine, move |engine| engine.store.ensure_local(&sha)).await {
+            Err(e) if req.offline => return Err(e),
+            other => other.unwrap_or(false),
         };
-        match known {
-            Some(b) if local(&b.sha256)? => {
-                progress.done.fetch_add(b.size, Ordering::Relaxed);
-                items.push(Item {
-                    rel_path: e.path.clone(),
-                    sha256: b.sha256,
-                    size: b.size,
-                    etag: e.lfs_sha256.clone().unwrap_or(e.git_oid.clone()),
-                });
-            }
-            _ => missing.push(e),
+        if local {
+            progress.done.fetch_add(b.size, Ordering::Relaxed);
+            items.push(Item {
+                rel_path: e.path.clone(),
+                sha256: b.sha256,
+                size: b.size,
+                etag: e.etag().to_string(),
+            });
+        } else {
+            missing.push(e);
         }
     }
     if missing.is_empty() {
@@ -158,23 +203,25 @@ async fn fetch_entries(
         let url = engine.fetcher.resolve_url(&req.repo, commit, &e.path);
         running.spawn(async move {
             let _permit = limit.acquire_owned().await.expect("semaphore is open");
-            let expect = match &e.lfs_sha256 {
-                Some(sha) => Expect::Sha256(sha.clone()),
-                None => Expect::GitOid(e.git_oid.clone()),
-            };
             let got = engine
                 .fetcher
-                .fetch(&engine.store, &url, Some(e.size), &expect, Some(&progress))
+                .fetch(
+                    &engine.store,
+                    &url,
+                    Some(e.size),
+                    &e.expect(),
+                    Some(&progress),
+                )
                 .await
                 .with_context(|| format!("fetching {}", e.path))?;
             engine
                 .db()
                 .upsert_blob(&got.sha256, got.size, got.git_oid.as_deref())?;
             Ok(Item {
-                rel_path: e.path.clone(),
+                etag: e.etag().to_string(),
+                rel_path: e.path,
                 sha256: got.sha256,
                 size: got.size,
-                etag: e.lfs_sha256.unwrap_or(e.git_oid),
             })
         });
     }
@@ -193,18 +240,19 @@ async fn fetch_entries(
 }
 
 /// Get the manifest Hugging Face's registry generates for `repo:tag`, archive
-/// it, and make sure every layer it names is in the store.
+/// it, and make sure every layer it names is in the store. Returns the
+/// manifest with its body as the registry sent it.
 pub async fn ollama_manifest(
-    engine: &Engine,
+    engine: &Arc<Engine>,
     repo_id: i64,
     repo: &str,
     tag: &str,
     tree: &[TreeEntry],
     commit: &str,
     offline: bool,
-) -> Result<String> {
+) -> Result<(ollama::Manifest, String)> {
     let mut upstream_error = None;
-    let mut body = None;
+    let mut fetched = None;
     if !offline {
         let url = format!("{}/v2/{repo}/manifests/{tag}", engine.fetcher.endpoint());
         let sent = engine
@@ -223,11 +271,11 @@ pub async fn ollama_manifest(
                     .unwrap_or(ollama::MANIFEST_TYPE)
                     .to_string();
                 let text = resp.text().await?;
-                ollama::Manifest::parse(&text)?;
+                let manifest = ollama::Manifest::parse(&text)?;
                 engine
                     .db()
                     .save_manifest(repo_id, tag, ollama::USER_AGENT, &media_type, &text)?;
-                body = Some(text);
+                fetched = Some((manifest, text));
             }
             Ok(resp) => {
                 upstream_error = Some(anyhow!(
@@ -238,25 +286,27 @@ pub async fn ollama_manifest(
             Err(e) => upstream_error = Some(anyhow!("could not reach Hugging Face: {e}")),
         }
     }
-    let body = match body {
-        Some(b) => b,
-        None => match engine
-            .db()
-            .manifest(repo_id, tag, Some(ollama::USER_AGENT))?
-        {
-            Some((_, b)) => b,
-            None => {
-                return Err(upstream_error.unwrap_or_else(|| {
-                    anyhow!("no Ollama manifest for {repo}:{tag} is archived")
-                }));
+    let (manifest, body) = match fetched {
+        Some(found) => found,
+        None => {
+            let archived = engine
+                .db()
+                .manifest(repo_id, tag, Some(ollama::USER_AGENT))?;
+            match archived {
+                Some((_, body)) => (ollama::Manifest::parse(&body)?, body),
+                None => {
+                    return Err(upstream_error.unwrap_or_else(|| {
+                        anyhow!("no Ollama manifest for {repo}:{tag} is archived")
+                    }));
+                }
             }
-        },
+        }
     };
 
-    let manifest = ollama::Manifest::parse(&body)?;
     for layer in manifest.all() {
         let sha = layer.sha256()?;
-        if engine.store.ensure_local(sha)? {
+        let owned = sha.to_string();
+        if blocking(engine, move |engine| engine.store.ensure_local(&owned)).await? {
             if engine.db().blob(sha)?.is_none() {
                 let size = std::fs::metadata(engine.store.blob_path(sha))?.len();
                 engine.db().upsert_blob(sha, size, None)?;
@@ -286,7 +336,71 @@ pub async fn ollama_manifest(
             .with_context(|| format!("fetching layer {}", layer.digest))?;
         engine.db().upsert_blob(&got.sha256, got.size, None)?;
     }
-    Ok(body)
+    Ok((manifest, body))
+}
+
+/// Place the selection into Ollama. The inner `Err` is the reason it was not
+/// placed, which does not fail the pull.
+async fn place_into_ollama(
+    engine: &Arc<Engine>,
+    req: &PullRequest,
+    repo_id: i64,
+    snap: &Snapshot,
+    entries: &[TreeEntry],
+) -> Result<Result<Placed, String>> {
+    let weights = select::weights(entries);
+    if weights.len() != 1 {
+        return Ok(Err(if weights.is_empty() {
+            "not placed into Ollama: it only runs GGUF files from Hugging Face".into()
+        } else {
+            "not placed into Ollama: it cannot use a GGUF that is split into parts".into()
+        }));
+    }
+    let tag = req
+        .selection
+        .quant
+        .as_deref()
+        .unwrap_or(ollama::DEFAULT_TAG);
+    let found = ollama_manifest(
+        engine,
+        repo_id,
+        &req.repo,
+        tag,
+        &snap.entries,
+        &snap.commit,
+        req.offline,
+    )
+    .await;
+    let (manifest, body) = match found {
+        Ok(m) => m,
+        Err(e) => return Ok(Err(format!("not placed into Ollama: {e:#}"))),
+    };
+    // Without a named quantization the tag is Hugging Face's choice, which
+    // need not be the file the patterns selected.
+    let wanted = weights[0].lfs_sha256.as_deref();
+    if !manifest.all().any(|l| l.sha256().ok() == wanted) {
+        return Ok(Err(format!(
+            "not placed into Ollama: its tag {tag} is a different file than {}; \
+             name the quantization, as in {}:Q8_0",
+            weights[0].path, req.repo
+        )));
+    }
+    let (repo, tag) = (req.repo.clone(), tag.to_string());
+    let placed = blocking(engine, move |engine| {
+        place::place_ollama(&dest(engine, repo_id, &repo), &tag, &manifest, &body)
+    })
+    .await?;
+    Ok(Ok(placed))
+}
+
+fn dest<'a>(engine: &'a Engine, repo_id: i64, repo: &'a str) -> Dest<'a> {
+    Dest {
+        db: &engine.db,
+        store: &engine.store,
+        dirs: &engine.dirs,
+        repo_id,
+        repo,
+    }
 }
 
 /// Fetch a revision into the store and place it into `req.apps`.
@@ -295,18 +409,19 @@ pub async fn pull(
     req: &PullRequest,
     progress: &Arc<Progress>,
 ) -> Result<PullOutcome> {
-    let (repo_id, snap, from_archive, mut notes) = resolve(engine, req).await?;
+    let Resolved {
+        repo_id,
+        snap,
+        from_archive,
+        note,
+    } = resolve(engine, req).await?;
+    let mut notes: Vec<String> = note.into_iter().collect();
     let entries = select::select(&snap.entries, &req.selection)?;
     let bytes: u64 = entries.iter().map(|e| e.size).sum();
     progress.total.fetch_add(bytes, Ordering::Relaxed);
 
-    // With the provider out of reach, whatever is missing cannot be fetched.
-    let fetch_req = PullRequest {
-        offline: req.offline,
-        ..req.clone()
-    };
     let (items, downloaded) =
-        match fetch_entries(engine, &fetch_req, &snap.commit, entries.clone(), progress).await {
+        match fetch_entries(engine, req, &snap.commit, entries.clone(), progress).await {
             Ok(v) => v,
             Err(e) if from_archive && e.downcast_ref::<Unavailable>().is_some() => {
                 return Err(e.context(format!(
@@ -317,85 +432,37 @@ pub async fn pull(
             Err(e) => return Err(e),
         };
 
-    let ref_name = (!is_commit(&req.revision)).then_some(req.revision.as_str());
+    // Placement hashes and copies files, so it runs off the async runtime.
+    let items = Arc::new(items);
     let mut placed = Vec::new();
     for app in &req.apps {
+        let (repo, commit, items) = (req.repo.clone(), snap.commit.clone(), items.clone());
         let result = match app {
-            App::Bionic => place::place_bionic(
-                &engine.db(),
-                &engine.store,
-                &engine.dirs,
-                repo_id,
-                &req.repo,
-                &snap.commit,
-                &items,
-            )?,
-            App::Hf => place::place_hf(
-                &engine.db(),
-                &engine.store,
-                &engine.dirs,
-                repo_id,
-                &req.repo,
-                &snap.commit,
-                ref_name,
-                &items,
-            )?,
-            App::Ollama => {
-                let weights = select::weights(&entries);
-                if weights.len() != 1 {
-                    notes.push(if weights.is_empty() {
-                        "not placed into Ollama: it only runs GGUF files from Hugging Face".into()
-                    } else {
-                        "not placed into Ollama: it cannot use a GGUF that is split into parts"
-                            .into()
-                    });
-                    continue;
-                }
-                let tag = req
-                    .selection
-                    .quant
-                    .as_deref()
-                    .unwrap_or(ollama::DEFAULT_TAG);
-                let manifest = ollama_manifest(
-                    engine,
-                    repo_id,
-                    &req.repo,
-                    tag,
-                    &snap.entries,
-                    &snap.commit,
-                    req.offline,
-                )
-                .await;
-                let manifest = match manifest {
-                    Ok(m) => m,
-                    Err(e) => {
-                        notes.push(format!("not placed into Ollama: {e:#}"));
-                        continue;
-                    }
-                };
-                // Without a named quantization the tag is Hugging Face's
-                // choice, which need not be the file the patterns selected.
-                let wanted = weights[0].lfs_sha256.as_deref();
-                let names_it = ollama::Manifest::parse(&manifest)
-                    .is_ok_and(|m| m.all().any(|l| l.sha256().ok() == wanted));
-                if !names_it {
-                    notes.push(format!(
-                        "not placed into Ollama: its tag {tag} is a different file than {}; \
-                         name the quantization, as in {}:Q8_0",
-                        weights[0].path, req.repo
-                    ));
-                    continue;
-                }
-                place::place_ollama(
-                    &engine.db(),
-                    &engine.store,
-                    &engine.dirs,
-                    repo_id,
-                    &req.repo,
-                    tag,
-                    &manifest,
-                )?
+            App::Bionic => {
+                blocking(engine, move |engine| {
+                    place::place_bionic(&dest(engine, repo_id, &repo), &commit, &items)
+                })
+                .await?
             }
+            App::Hf => {
+                let ref_name = db::ref_name(&req.revision).map(str::to_string);
+                blocking(engine, move |engine| {
+                    place::place_hf(
+                        &dest(engine, repo_id, &repo),
+                        &commit,
+                        ref_name.as_deref(),
+                        &items,
+                    )
+                })
+                .await?
+            }
+            App::Ollama => match place_into_ollama(engine, req, repo_id, &snap, &entries).await? {
+                Ok(result) => result,
+                Err(note) => {
+                    notes.push(note);
+                    continue;
+                }
+            },
         };
         for c in &result.conflicts {
             notes.push(format!("left alone: {c}"));

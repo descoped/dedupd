@@ -1,6 +1,9 @@
 //! End-to-end adoption against a fake Hub and a fake Bionic models folder.
 #![cfg(target_os = "macos")]
 
+mod common;
+
+use common::COMMIT;
 use dedupd_core::Home;
 use dedupd_core::adopt::{self, Action, Options, Upstream, Verify};
 use dedupd_core::db::Db;
@@ -15,8 +18,6 @@ use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
-
-const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 
 struct Fixture {
     _dir: tempfile::TempDir,
