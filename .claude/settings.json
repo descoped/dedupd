@@ -1,0 +1,70 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "s=\"${CLAUDE_PROJECT_DIR:-.}/scripts/claude/finish-worktree-removal.sh\"; [ -r \"$s\" ] || exit 0; exec sh \"$s\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command // empty' | grep -Eq 'git[[:space:]]+worktree[[:space:]]+(remove|prune)' || exit 0; s=\"${CLAUDE_PROJECT_DIR:-.}/scripts/claude/finish-worktree-removal.sh\"; [ -r \"$s\" ] || exit 0; exec sh \"$s\"",
+            "timeout": 120
+          }
+        ]
+      },
+      {
+        "matcher": "ExitWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "s=\"${CLAUDE_PROJECT_DIR:-.}/scripts/claude/finish-worktree-removal.sh\"; [ -r \"$s\" ] || exit 0; exec sh \"$s\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "PostToolUseFailure": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "jq -r '.tool_input.command // empty' | grep -Eq 'git[[:space:]]+worktree[[:space:]]+(remove|prune)' || exit 0; s=\"${CLAUDE_PROJECT_DIR:-.}/scripts/claude/finish-worktree-removal.sh\"; [ -r \"$s\" ] || exit 0; exec sh \"$s\"",
+            "timeout": 120
+          }
+        ]
+      },
+      {
+        "matcher": "ExitWorktree",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "s=\"${CLAUDE_PROJECT_DIR:-.}/scripts/claude/finish-worktree-removal.sh\"; [ -r \"$s\" ] || exit 0; exec sh \"$s\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ],
+    "SubagentStop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "s=\"${CLAUDE_PROJECT_DIR:-.}/scripts/claude/finish-worktree-removal.sh\"; [ -r \"$s\" ] || exit 0; exec sh \"$s\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

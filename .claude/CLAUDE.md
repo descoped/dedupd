@@ -112,6 +112,10 @@ Ollama registry:
 - Bionic has no endpoint setting. Its downloads go to `search.lmstudio.ai/v1/hf-proxy/...`; the base-URL override exists only in a signed enterprise policy. Bionic is covered by placement and by adopting what it downloads. Avoid folder-level symlinks in its models folder.
 - Bionic and LM Studio are separate apps sharing `~/.lmstudio`.
 
+## Harness
+
+`scripts/claude/finish-worktree-removal.sh` removes what a failed `git worktree remove` leaves under `.claude/worktrees/` (on this Mac, Finder can write a `.DS_Store` into the tree while git deletes it; git then stops and the directory is no longer listed). Hooks in `.claude/settings.json` run it at session start, after `git worktree remove|prune`, after `ExitWorktree` and when a subagent stops. Test it with `sh scripts/claude/finish-worktree-removal.test.sh`.
+
 ## Spikes
 
 `spikes/` holds the scripts that proved the protocol behaviour. They are evidence and seeds for conformance tests, not product code.
