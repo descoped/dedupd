@@ -194,7 +194,7 @@ final class DedupdUITests: XCTestCase {
     }
 
     func testMenuBarPanelShowsTheStateAtAGlance() {
-        let window = launch(arguments: ["-uiTestFixture", "downloading", "-panelWindow"])
+        let window = launch(arguments: ["-uiTestFixture", "downloading", "-panelWindow", "YES"])
 
         XCTAssertTrue(text("Running, version 0.1.0", in: window).waitForExistence(timeout: 5))
         XCTAssertEqual(element("tile-store", in: window).label, "Store, 290.04 GB, 61 files")
@@ -223,7 +223,7 @@ final class DedupdUITests: XCTestCase {
         let repository = parts[0]
         let variant = parts.count > 1 ? parts[1] : "all files"
 
-        let window = launch(arguments: ["-mainWindow", "-daemonAddress", address, "-pane", "discover"])
+        let window = launch(arguments: ["-mainWindow", "YES", "-daemonAddress", address, "-pane", "discover"])
         XCTAssertTrue(
             element("sidebar-status", in: window).label.contains("Running, version"),
             "the daemon at \(address) answers"

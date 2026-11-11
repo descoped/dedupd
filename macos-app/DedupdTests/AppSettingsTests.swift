@@ -48,14 +48,15 @@ struct AppSettingsTests {
     @Test("The panel is shown in a window only when asked for")
     func panelWindow() {
         #expect(!LaunchOptions(arguments: ["Dedupd", "-uiTestFixture", "running"]).showsPanelWindow)
-        #expect(LaunchOptions(arguments: ["Dedupd", "-panelWindow"]).showsPanelWindow)
+        #expect(LaunchOptions(arguments: ["Dedupd", "-panelWindow", "YES"]).showsPanelWindow)
+        #expect(!LaunchOptions(arguments: ["Dedupd", "-panelWindow"]).showsPanelWindow, "an option is a name and a value")
         #expect(!LaunchOptions(arguments: ["Dedupd"]).showsPanelWindow)
     }
 
     @Test("A screen, a main window and a trial daemon can be asked for on the command line")
     func otherArguments() {
         let options = LaunchOptions(arguments: [
-            "Dedupd", "-mainWindow", "-pane", "downloads", "-daemonHome", "/tmp/home", "-agentLabel", "com.dedupd.trial",
+            "Dedupd", "-mainWindow", "YES", "-pane", "downloads", "-daemonHome", "/tmp/home", "-agentLabel", "com.dedupd.trial",
         ])
         #expect(options.showsMainWindow)
         #expect(options.pane == .downloads)

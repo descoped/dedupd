@@ -104,14 +104,19 @@ extension View {
 }
 
 /// How the app was started.
+///
+/// Every option is written as a pair, `-name value`, the way AppKit reads
+/// its own arguments. A name without a value in front of another option
+/// shifts the pairs, the last word is then taken for a file to open, and an
+/// app started to open a file shows no window of its own.
 struct LaunchOptions: Equatable {
     /// The canned daemon a UI test asked for, with `-uiTestFixture <name>`.
     var fixture: FixtureScenario?
     /// Show the menu bar panel in an ordinary window, asked for with
-    /// `-panelWindow`. A menu bar panel closes when it loses focus, so it
+    /// `-panelWindow YES`. A menu bar panel closes when it loses focus, so it
     /// can be neither driven by a UI test nor photographed.
     var showsPanelWindow = false
-    /// Open the main window at launch, asked for with `-mainWindow`.
+    /// Open the main window at launch, asked for with `-mainWindow YES`.
     var showsMainWindow = false
     /// The screen to start on, asked for with `-pane <name>`.
     var pane: Pane?
@@ -130,8 +135,8 @@ struct LaunchOptions: Equatable {
             return arguments[index + 1]
         }
         fixture = value(of: "-uiTestFixture").flatMap(FixtureScenario.init(rawValue:))
-        showsPanelWindow = arguments.contains("-panelWindow")
-        showsMainWindow = arguments.contains("-mainWindow")
+        showsPanelWindow = value(of: "-panelWindow") == "YES"
+        showsMainWindow = value(of: "-mainWindow") == "YES"
         pane = value(of: "-pane").flatMap(Pane.init(rawValue:))
         agentHome = value(of: "-daemonHome")
         agentLabel = value(of: "-agentLabel")
