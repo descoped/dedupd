@@ -43,7 +43,7 @@ In zsh, write `"${repo}:Q4_K_M"`, not `$repo:Q4_K_M`: `:Q` is a zsh modifier and
 
 ## Code layout
 
-A Cargo workspace (Rust 2024):
+A Cargo workspace (Rust 2024). `.cargo/config.toml` sets the minimum macOS for every Rust build to 26, the same as the app's; keep the two equal.
 
 - `crates/dedupd-core` — library, no HTTP server.
   - `store` (content-addressed folder, clone-in, restore from the archive disk), `db` (SQLite schema and queries), `hash`, `clone`, `paths`, `config` (`<home>/config.toml`).

@@ -1,0 +1,4 @@
+# One minimum macOS for the whole product: the app (macos-app/project.yml),
+# the daemon and the command line. Without this, Rust builds for macOS 11.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "26.0"
