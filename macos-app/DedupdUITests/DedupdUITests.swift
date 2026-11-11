@@ -1,10 +1,10 @@
 import XCTest
 
-/// Drives the panel with a canned daemon behind it. The app is started with
-/// `-uiTestFixture <name>`, which also shows the panel in an ordinary window:
-/// a menu bar panel closes when it loses focus and cannot be driven reliably.
+/// Drives the app with a canned daemon behind it. Started with
+/// `-uiTestFixture <name>` the app opens its main window on fixed data and
+/// touches neither the real daemon nor the owner's preferences.
 ///
-/// Each test attaches a picture of the panel; `just app-screenshots` exports
+/// Each test attaches pictures of the window; `just app-screenshots` exports
 /// them.
 @MainActor
 final class DedupdUITests: XCTestCase {
@@ -18,117 +18,194 @@ final class DedupdUITests: XCTestCase {
         app.terminate()
     }
 
-    private func launch(_ fixture: String) -> XCUIElement {
-        launch(arguments: ["-uiTestFixture", fixture])
+    // MARK: - Helpers
+
+    /// Start the app on a canned daemon and return its main window.
+    private func launch(_ fixture: String, pane: String? = nil) -> XCUIElement {
+        launch(arguments: ["-uiTestFixture", fixture] + (pane.map { ["-pane", $0] } ?? []))
     }
 
     private func launch(arguments: [String]) -> XCUIElement {
         app = XCUIApplication()
         app.launchArguments = arguments
         app.launch()
-        let window = app.windows["dedupd"]
-        XCTAssertTrue(window.waitForExistence(timeout: 10), "the panel window opens")
+        app.activate()
+        let window = app.windows.firstMatch
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "the window opens")
         return window
     }
 
-    /// What VoiceOver reads for the element with this identifier. The tiles
-    /// and the progress bar are each one element, so their text is in the label.
-    private func label(_ identifier: String, in window: XCUIElement) -> String {
+    /// The element with this identifier, whatever kind it is.
+    private func element(_ identifier: String, in window: XCUIElement, timeout: TimeInterval = 5) -> XCUIElement {
         let element = window.descendants(matching: .any)[identifier].firstMatch
-        XCTAssertTrue(element.waitForExistence(timeout: 5), "\(identifier) is on screen")
-        return element.label
+        XCTAssertTrue(element.waitForExistence(timeout: timeout), "\(identifier) is on screen")
+        return element
     }
 
-    /// An element of any kind by its label, whatever its case: section
-    /// headings are shown in capitals.
-    private func anything(in window: XCUIElement, labelled label: String) -> XCUIElement {
-        window.descendants(matching: .any).matching(NSPredicate(format: "label ==[c] %@", label)).firstMatch
-    }
-
-    /// An element of any kind whose label has this text in it: a row of the
-    /// model list is one element that reads its name, its detail and its size.
-    private func anything(in window: XCUIElement, labelContains text: String) -> XCUIElement {
-        window.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
-    }
-
-    /// A piece of text on screen that has these words in it. On macOS a text's
-    /// words are its accessibility value, not its label.
-    private func text(in window: XCUIElement, containing words: String) -> XCUIElement {
+    /// A piece of text on screen that has these words in it. On macOS a
+    /// text's words are its accessibility value, not its label.
+    private func text(_ words: String, in window: XCUIElement) -> XCUIElement {
         window.staticTexts.matching(NSPredicate(format: "value CONTAINS %@", words)).firstMatch
     }
 
+    /// An element of any kind whose label has these words in it.
+    private func labelled(_ words: String, in window: XCUIElement) -> XCUIElement {
+        window.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", words)).firstMatch
+    }
+
+    private func go(to pane: String, in window: XCUIElement) {
+        element("pane-\(pane)", in: window).click()
+    }
+
+    /// A picture of the window. It is cut out of the screen, so the app is
+    /// brought to the front first; a window of another app that is in front
+    /// of it would be in the picture.
     private func screenshot(_ window: XCUIElement, _ name: String) {
+        app.activate()
         let attachment = XCTAttachment(screenshot: window.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
     }
 
-    func testRunningDaemonShowsStoreAppsAndModels() {
+    // MARK: - The screens
+
+    func testEverySidebarRowOpensItsScreen() {
+        let window = launch("running")
+        for (pane, title) in [
+            ("downloads", "Downloads"), ("storage", "Storage"), ("daemon", "Daemon"),
+            ("discover", "Discover"), ("library", "Library"),
+        ] {
+            go(to: pane, in: window)
+            XCTAssertTrue(window.title.hasPrefix(title), "the \(pane) row opens its screen, not \(window.title)")
+        }
+    }
+
+    func testLibraryListsTheModelsAndShowsOneInFull() {
         let window = launch("running")
 
-        XCTAssertTrue(window.staticTexts["Running, version 0.1.0"].waitForExistence(timeout: 5))
-        XCTAssertEqual(label("tile-store", in: window), "Store, 290.04 GB, 61 files")
-        XCTAssertEqual(label("tile-shared", in: window), "Shared with apps, 290.07 GB, not stored twice")
-        XCTAssertEqual(label("tile-archive", in: window), "Archive, Attached, /Volumes/Trunk/dedupd")
-        XCTAssertTrue(anything(in: window, labelled: "Models (4)").exists, "the heading counts the models")
+        let model = element("model-bartowski/SmolLM2-135M-Instruct-GGUF", in: window)
         XCTAssertTrue(
-            anything(in: window, labelContains: "lmstudio-community/Qwen3.8-27B-MLX-4bit").exists,
-            "a model is listed by name"
+            element("model-mlx-community/SmolLM-135M-Instruct-4bit", in: window).exists,
+            "a model no app has is listed too"
         )
-        XCTAssertTrue(
-            anything(in: window, labelContains: "8 stored · 0 in apps").exists,
-            "a model no app holds is listed too"
-        )
-        XCTAssertFalse(window.buttons["pull-button"].isEnabled, "nothing to pull until a model is named")
-        XCTAssertTrue(window.buttons["scan-button"].isEnabled)
+        XCTAssertEqual(element("sidebar-status", in: window).label, "Running, version 0.1.0")
+        screenshot(window, "01-library")
 
-        screenshot(window, "01-running")
+        model.click()
+        XCTAssertTrue(element("remove-ollama", in: window).exists, "Ollama has the model, so it can be removed from it")
+        XCTAssertTrue(element("place-hf", in: window).exists, "the Hugging Face cache does not, so it can be placed there")
+        XCTAssertTrue(labelled("Parameters: 135M", in: window).exists)
+        screenshot(window, "02-library-inspector")
+
+        element("row-density", in: window).click()
+        XCTAssertEqual(
+            element("model-bartowski/SmolLM2-135M-Instruct-GGUF", in: window).label,
+            "bartowski/SmolLM2-135M-Instruct-GGUF, GGUF · 135M · apache-2.0",
+            "larger rows add a second line"
+        )
+        screenshot(window, "03-library-larger-rows")
+
+        element("remove-ollama", in: window).click()
+        XCTAssertTrue(element("confirm-removal", in: window).exists, "nothing is removed before the owner has seen the list")
+        XCTAssertTrue(text("manifests/hf.co/bartowski/SmolLM2-135M-Instruct-GGUF/Q4_K_M", in: window).exists)
+        screenshot(window, "04-remove-from-app")
     }
 
-    func testPullAndScanShowTheirOutcome() {
-        let window = launch("running")
+    func testDiscoverFindsAModelAndQueuesADownload() {
+        let window = launch("running", pane: "discover")
 
-        let field = window.textFields["pull-model"]
-        XCTAssertTrue(field.waitForExistence(timeout: 5))
-        field.click()
-        field.typeText("bartowski/SmolLM2-135M-Instruct-GGUF:Q4_K_M")
-        let pull = window.buttons["pull-button"]
-        XCTAssertTrue(pull.isEnabled)
-        pull.click()
+        let hit = element("hit-unsloth/Qwen3.8-9B-Instruct-GGUF", in: window)
+        XCTAssertTrue(labelled("In Bionic and Ollama", in: window).exists, "a model that is already here says so")
+        hit.click()
 
-        XCTAssertTrue(
-            window.staticTexts["4 files, 106.07 MB. Downloaded 4; 0 already in the store."].waitForExistence(timeout: 5),
-            "the outcome of the pull"
-        )
-        XCTAssertTrue(window.staticTexts["Bionic: 4 placed as clones, 0 already there"].exists)
+        let ollama = element("target-gguf-ollama", in: window)
+        XCTAssertEqual(ollama.value as? Int, 1, "GGUF goes into Ollama unless the owner chose otherwise")
+        XCTAssertEqual(element("target-gguf-hf", in: window).value as? Int, 0)
+        screenshot(window, "05-discover")
 
-        window.buttons["scan-button"].click()
-        XCTAssertTrue(window.staticTexts["Scan finished"].waitForExistence(timeout: 5))
-
-        screenshot(window, "02-pull-and-scan")
+        element("download-Q4_K_M", in: window).click()
+        XCTAssertFalse(app.sheets.firstMatch.exists, "the daemon took the download")
+        go(to: "downloads", in: window)
+        // The canned daemon numbers what the app queues from 20.
+        let queued = element("download-20", in: window).label
+        XCTAssertTrue(queued.contains("unsloth/Qwen3.8-9B-Instruct-GGUF:Q4_K_M"), "the download is in the queue: \(queued)")
+        screenshot(window, "06-download-queued")
     }
 
-    func testDownloadInFlightShowsProgress() {
-        let window = launch("downloading")
+    func testDownloadsShowProgressAndCanBePaused() {
+        let window = launch("downloading", pane: "downloads")
 
-        XCTAssertTrue(
-            label("download-progress", in: window).contains("Downloading: 41.94 MB of 106.07 MB"),
-            "the progress of the download"
-        )
+        let running = element("download-7", in: window)
+        XCTAssertTrue(running.label.contains("41.94 MB of 106.07 MB"), "the progress of the download: \(running.label)")
+        XCTAssertTrue(element("download-5", in: window).label.contains("accept the model's terms"), "why a download needs the owner")
+        XCTAssertTrue(element("governor", in: window).exists)
+        running.click()
+        XCTAssertTrue(text("Found 4 files at revision", in: window).waitForExistence(timeout: 5), "the download's history")
+        screenshot(window, "07-downloads")
 
-        screenshot(window, "03-downloading")
+        element("pause-7", in: window).click()
+        XCTAssertTrue(element("resume-7", in: window).exists, "a paused download can be resumed")
+        XCTAssertTrue(element("download-7", in: window).label.contains("Paused"))
+
+        element("clear-finished", in: window).click()
+        XCTAssertFalse(window.descendants(matching: .any)["download-4"].firstMatch.waitForExistence(timeout: 1), "the finished one is gone")
+        screenshot(window, "08-downloads-paused")
     }
 
-    func testNoDaemonExplainsHowToStartOne() {
+    func testStorageShowsThePlacesAndAsksBeforeCleaningUp() {
+        let window = launch("running", pane: "storage")
+
+        XCTAssertTrue(element("location-store", in: window).exists)
+        XCTAssertTrue(element("location-archive", in: window).exists)
+        XCTAssertTrue(element("sharing-saves", in: window).exists)
+        XCTAssertTrue(element("check-result", in: window).exists)
+        screenshot(window, "09-storage")
+
+        element("review-clean", in: window).click()
+        XCTAssertTrue(element("confirm-clean", in: window).exists, "the files are listed before anything is removed")
+        screenshot(window, "10-clean-up")
+
+        element("confirm-clean", in: window).click()
+        XCTAssertTrue(text("The last clean-up freed 4.92 GB.", in: window).waitForExistence(timeout: 5))
+    }
+
+    func testDaemonScreenShowsTheServiceAndItsSettings() {
+        let window = launch("running", pane: "daemon")
+
+        XCTAssertTrue(text("Running, version 0.1.0", in: window).waitForExistence(timeout: 5))
+        XCTAssertTrue(element("stop-agent", in: window).exists)
+        XCTAssertTrue(element("uninstall-agent", in: window).exists)
+        XCTAssertTrue(element("apply-settings", in: window).exists)
+        XCTAssertFalse(element("apply-settings", in: window).isEnabled, "nothing to apply until something is changed")
+        screenshot(window, "11-daemon")
+    }
+
+    func testWithoutADaemonTheAppOffersToInstallIt() {
         let window = launch("notRunning")
 
-        XCTAssertTrue(window.staticTexts["The daemon is not running"].waitForExistence(timeout: 5))
-        XCTAssertTrue(window.staticTexts["No dedupd daemon answers at 127.0.0.1:8642."].exists)
-        XCTAssertTrue(window.staticTexts["dedupd install"].exists, "the command that starts the daemon")
-        XCTAssertFalse(window.buttons["scan-button"].isEnabled)
+        XCTAssertTrue(text("The daemon is not running", in: window).waitForExistence(timeout: 5))
+        XCTAssertEqual(element("sidebar-status", in: window).label, "The daemon is not running")
+        screenshot(window, "12-not-running")
 
-        screenshot(window, "04-not-running")
+        element("go-to-daemon", in: window).click()
+        XCTAssertTrue(element("install-agent", in: window).exists)
+        screenshot(window, "13-install")
+    }
+
+    func testMenuBarPanelShowsTheStateAtAGlance() {
+        let window = launch(arguments: ["-uiTestFixture", "downloading", "-panelWindow"])
+
+        XCTAssertTrue(text("Running, version 0.1.0", in: window).waitForExistence(timeout: 5))
+        XCTAssertEqual(element("tile-store", in: window).label, "Store, 290.04 GB, 61 files")
+        XCTAssertEqual(element("tile-shared", in: window).label, "Shared with apps, 290.07 GB, not stored twice")
+        XCTAssertEqual(element("tile-archive", in: window).label, "Archive, Attached, dedupd")
+        XCTAssertTrue(labelled("Downloading, 41.94 MB of 106.07 MB", in: window).exists, "the download in flight")
+        XCTAssertTrue(element("open-main", in: window).isEnabled)
+        screenshot(window, "14-menu-panel")
+
+        element("scan-button", in: window).click()
+        XCTAssertTrue(element("scan-result", in: window, timeout: 5).exists)
     }
 
     /// The real thing: the app, the Rust client and a running daemon. Skipped
@@ -137,34 +214,37 @@ final class DedupdUITests: XCTestCase {
     ///     just app-live 127.0.0.1:8643
     ///
     /// Point it at a daemon with a scratch home, not at the real one.
-    func testLiveDaemonPullsAModel() throws {
+    func testLiveDaemonDownloadsAModel() throws {
         let environment = ProcessInfo.processInfo.environment
         let address = (environment["DEDUPD_LIVE_ADDRESS"] ?? "").trimmingCharacters(in: .whitespaces)
         try XCTSkipIf(address.isEmpty, "set DEDUPD_LIVE_ADDRESS to run against a daemon")
         let model = environment["DEDUPD_LIVE_MODEL"] ?? "bartowski/SmolLM2-135M-Instruct-GGUF:Q4_K_M"
+        let parts = model.split(separator: ":").map(String.init)
+        let repository = parts[0]
+        let variant = parts.count > 1 ? parts[1] : "all files"
 
-        let window = launch(arguments: ["-panelWindow", "-daemonAddress", address])
-        let summary = window.staticTexts["daemon-summary"]
-        XCTAssertTrue(summary.waitForExistence(timeout: 10))
+        let window = launch(arguments: ["-mainWindow", "-daemonAddress", address, "-pane", "discover"])
         XCTAssertTrue(
-            text(in: window, containing: "Running, version").waitForExistence(timeout: 10),
-            "the daemon at \(address) answers; the panel says: \(String(describing: summary.value))"
+            element("sidebar-status", in: window).label.contains("Running, version"),
+            "the daemon at \(address) answers"
         )
-        screenshot(window, "10-live-before")
 
-        let field = window.textFields["pull-model"]
-        field.click()
-        field.typeText(model)
-        window.buttons["pull-button"].click()
+        let search = window.searchFields.firstMatch
+        XCTAssertTrue(search.waitForExistence(timeout: 10))
+        search.click()
+        search.typeText(repository + "\n")
+        let download = element("download-\(variant)", in: window, timeout: 30)
+        screenshot(window, "20-live-model")
+        download.click()
 
-        let outcome = window.descendants(matching: .any)["pull-result"].firstMatch
-        XCTAssertTrue(outcome.waitForExistence(timeout: 300), "the pull of \(model) finishes")
-        XCTAssertTrue(text(in: window, containing: "placed as clones").exists, "the model was placed into an app")
-        let repository = model.split(separator: ":").first.map(String.init) ?? model
-        XCTAssertTrue(
-            anything(in: window, labelContains: repository).waitForExistence(timeout: 10),
-            "the model is listed after the pull"
-        )
-        screenshot(window, "11-live-after-pull")
+        go(to: "downloads", in: window)
+        let done = window.descendants(matching: .any)
+            .matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS 'Placed into'", model)).firstMatch
+        XCTAssertTrue(done.waitForExistence(timeout: 300), "the download of \(model) finishes")
+        screenshot(window, "21-live-downloaded")
+
+        go(to: "library", in: window)
+        XCTAssertTrue(element("model-\(repository)", in: window, timeout: 20).exists, "the model is in the library")
+        screenshot(window, "22-live-library")
     }
 }

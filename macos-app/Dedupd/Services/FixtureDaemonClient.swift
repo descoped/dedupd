@@ -3,127 +3,299 @@ import Foundation
 
 /// The canned daemons a UI test can ask for with `-uiTestFixture <name>`.
 enum FixtureScenario: String, CaseIterable, Sendable {
-    /// A daemon with four models, an attached archive and nothing in flight.
+    /// A daemon with five models, an attached archive and nothing in flight.
     case running
-    /// The same daemon in the middle of a download.
+    /// The same daemon in the middle of a download, with one that needs
+    /// attention and one that is done.
     case downloading
     /// No daemon answers.
     case notRunning
 }
 
 /// A daemon that answers from fixed data, for UI tests and previews. It never
-/// touches the network.
-struct FixtureDaemonClient: DaemonClient {
+/// touches the network. Its download queue is alive: what the app asks of it
+/// shows up in the next event, as with the real daemon.
+actor FixtureDaemonClient: DaemonClient {
     let scenario: FixtureScenario
+    private var jobs: [Job]
+    private var settings = FixtureData.settings
+    private var seq: UInt64 = 0
+    private var nextID: Int64 = 20
+    private var listeners: [UUID: AsyncStream<DaemonSignal>.Continuation] = [:]
 
-    func status(at address: String) async throws -> DaemonStatus {
-        switch scenario {
-        case .running:
-            return Self.status()
-        case .downloading:
-            return Self.status(downloadingTotal: 106_070_000, downloadingDone: 41_940_000)
-        case .notRunning:
+    init(scenario: FixtureScenario) {
+        self.scenario = scenario
+        jobs = scenario == .downloading ? FixtureData.jobs : []
+    }
+
+    private func answering(_ address: String) throws {
+        if scenario == .notRunning {
             throw ClientError.NotRunning(address: address)
         }
     }
 
-    func pull(_ request: PullRequest, at address: String) async throws -> PullResult {
-        if scenario == .notRunning {
-            throw ClientError.NotRunning(address: address)
+    // MARK: - Following
+
+    nonisolated func events(at address: String) -> AsyncStream<DaemonSignal> {
+        AsyncStream { continuation in
+            let id = UUID()
+            continuation.onTermination = { _ in
+                Task { await self.detach(id) }
+            }
+            Task { await self.attach(id, continuation) }
         }
-        return PullResult(
-            repo: request.model,
-            commit: "09816acd5d99c8a1c1b2f6d0d0a1b2c3d4e5f607",
-            fromArchive: false,
-            files: 4,
-            bytes: 106_070_000,
-            downloaded: 4,
-            placed: request.apps.map { PlacedApp(app: $0, cloned: 4, present: 0, conflicts: []) },
-            notes: []
+    }
+
+    private func attach(_ id: UUID, _ continuation: AsyncStream<DaemonSignal>.Continuation) {
+        guard scenario != .notRunning else {
+            continuation.yield(.disconnected)
+            return
+        }
+        listeners[id] = continuation
+        continuation.yield(.connected)
+        continuation.yield(.event(event()))
+    }
+
+    private func detach(_ id: UUID) {
+        listeners[id] = nil
+    }
+
+    private func event() -> DaemonEvent {
+        DaemonEvent(seq: seq, library: 1, checking: false, downloads: downloads())
+    }
+
+    private func downloads() -> Downloads {
+        let running = jobs.filter { $0.phase == .downloading }
+        return Downloads(
+            governor: Governor(
+                connections: running.isEmpty ? 0 : 3,
+                window: running.isEmpty ? 4 : 6,
+                maxConnections: settings.maxConnections,
+                holdSeconds: 0,
+                speedLimit: settings.speedLimit,
+                budgets: [
+                    Budget(name: "api", quota: 500, remaining: 462, resetsIn: 212),
+                    Budget(name: "resolvers", quota: 3000, remaining: 2871, resetsIn: 212),
+                ]
+            ),
+            speed: running.map(\.speed).reduce(0, +),
+            jobs: jobs
         )
+    }
+
+    /// Tell everyone who follows that the queue changed.
+    private func changed() {
+        seq += 1
+        let signal = DaemonSignal.event(event())
+        for listener in listeners.values {
+            listener.yield(signal)
+        }
+    }
+
+    // MARK: - Status and library
+
+    func status(at address: String) async throws -> DaemonStatus {
+        try answering(address)
+        return FixtureData.status(jobs: jobs)
     }
 
     func scan(at address: String) async throws -> ScanResult {
-        if scenario == .notRunning {
-            throw ClientError.NotRunning(address: address)
-        }
+        try answering(address)
         return ScanResult(
-            forgotten: 0,
-            adopted: 2,
-            adoptedBytes: 4_920_000_000,
-            reclaimed: 2,
-            reclaimedBytes: 4_920_000_000,
-            archived: 2,
-            errors: []
+            forgotten: 0, adopted: 2, adoptedBytes: 4_920_000_000, reclaimed: 2,
+            reclaimedBytes: 4_920_000_000, archived: 2, errors: []
         )
     }
 
-    /// The status of a daemon that holds four models.
-    static func status(downloadingTotal: UInt64 = 0, downloadingDone: UInt64 = 0) -> DaemonStatus {
-        DaemonStatus(
-            version: "0.1.0",
-            home: "/Users/example/.dedupd",
-            endpoint: "https://huggingface.co",
-            archivePath: "/Volumes/Trunk/dedupd",
-            archiveAttached: true,
-            storeFiles: 61,
-            storeBytes: 290_040_000_000,
-            sharedBytes: 290_070_000_000,
-            downloadingTotal: downloadingTotal,
-            downloadingDone: downloadingDone,
-            apps: [
-                AppUsage(app: "bionic", files: 61, bytes: 290_070_000_000),
-                AppUsage(app: "hf", files: 8, bytes: 79_220_000),
-                AppUsage(app: "ollama", files: 4, bytes: 105_460_000),
-            ],
-            repositories: [
-                repository("lmstudio-community/DeepSeek-V4-Flash-0731-GGUF", bytes: 156_380_000_000, files: 4, commit: "e5d9d9689670"),
-                repository("lmstudio-community/Qwen3.8-27B-MLX-4bit", bytes: 16_080_000_000, files: 13, commit: "6067b15cf581"),
-                repository(
-                    "mlx-community/Nemotron-3-Super-120B-A12B-MLX-6bit",
-                    bytes: 98_160_000_000,
-                    files: 30,
-                    commit: "2405499bc926",
-                    unchecked: 2
-                ),
-                repository("mlx-community/SmolLM-135M-Instruct-4bit", bytes: 79_220_000, files: 0, stored: 8, commit: "642e06afe3fa"),
-            ],
-            daemon: DaemonInfo(
-                pid: 4242,
-                startedAt: 1_794_000_000,
-                listen: "127.0.0.1:8642",
-                executable: "/Users/example/.dedupd/bin/dedupd",
-                managedBy: "com.dedupd.daemon",
-                token: true,
-                tokenSource: "/Users/example/.cache/huggingface/token",
-                maxConnections: 8,
-                speedLimit: 0,
-                checking: false,
-                lastCheckAt: 1_793_900_000
+    func models(at address: String) async throws -> [LibraryModel] {
+        try answering(address)
+        return FixtureData.models
+    }
+
+    func model(_ repo: String, at address: String) async throws -> ModelDetail {
+        try answering(address)
+        guard let detail = FixtureData.detail(repo) else {
+            throw ClientError.Failed(message: "\(repo) is not in the archive")
+        }
+        return detail
+    }
+
+    func locations(at address: String) async throws -> Locations {
+        try answering(address)
+        return FixtureData.locations
+    }
+
+    // MARK: - Hugging Face
+
+    func search(_ query: SearchQuery, at address: String) async throws -> SearchPage {
+        try answering(address)
+        if query.cursor != nil {
+            return SearchPage(models: FixtureData.moreHits, next: nil)
+        }
+        let words = query.text.lowercased()
+        let hits = FixtureData.hits.filter { hit in
+            (words.isEmpty || hit.id.lowercased().contains(words))
+                && (query.format.isEmpty || hit.meta.formats.contains(query.format))
+        }
+        return SearchPage(models: hits, next: words.isEmpty && query.format.isEmpty ? "page-2" : nil)
+    }
+
+    func hubModel(_ repo: String, at address: String) async throws -> HubModel {
+        try answering(address)
+        return FixtureData.hubModel(repo, downloading: jobs.contains { $0.repo == repo && $0.phase.isActive })
+    }
+
+    // MARK: - Downloads
+
+    func download(_ id: Int64, at address: String) async throws -> JobDetail {
+        try answering(address)
+        guard let job = jobs.first(where: { $0.id == id }) else {
+            throw ClientError.Failed(message: "no download \(id)")
+        }
+        return FixtureData.jobDetail(job)
+    }
+
+    func enqueue(_ request: PullRequest, at address: String) async throws -> Enqueued {
+        try answering(address)
+        guard ModelSpec.isValid(request.model) else {
+            throw ClientError.Failed(
+                message: "\(request.model) is not a model name; use org/repo, org/repo:Q4_K_M or org/repo@revision"
             )
+        }
+        if let existing = jobs.first(where: { $0.model == request.model && !$0.phase.isFinished }) {
+            return Enqueued(id: existing.id, existing: true)
+        }
+        let id = nextID
+        nextID += 1
+        // What is already stored is placed at once; anything else waits its
+        // turn, as it would behind a running download.
+        let stored = FixtureData.models.contains { $0.repo == request.model.split(separator: ":").first.map(String.init) }
+        jobs.insert(FixtureData.job(id: id, request: request, state: stored ? .done : .queued), at: 0)
+        changed()
+        return Enqueued(id: id, existing: false)
+    }
+
+    func downloadAction(_ action: JobAction, id: Int64, at address: String) async throws {
+        try answering(address)
+        guard let index = jobs.firstIndex(where: { $0.id == id }) else {
+            throw ClientError.Failed(message: "no download \(id)")
+        }
+        switch action {
+        case .pause:
+            jobs[index].state = JobState.paused.rawValue
+            jobs[index].speed = 0
+        case .resume, .retry, .start:
+            jobs[index].state = JobState.downloading.rawValue
+            jobs[index].detail = nil
+            jobs[index].speed = 11_800_000
+        case .cancel:
+            jobs[index].state = JobState.cancelled.rawValue
+            jobs[index].speed = 0
+        case .remove:
+            jobs.remove(at: index)
+        }
+        changed()
+    }
+
+    func clearDownloads(at address: String) async throws -> UInt64 {
+        try answering(address)
+        let before = jobs.count
+        jobs.removeAll { $0.phase.isFinished }
+        changed()
+        return UInt64(before - jobs.count)
+    }
+
+    // MARK: - Models
+
+    func checkUpstream(_ repo: String, at address: String) async throws -> UpstreamCheck {
+        try answering(address)
+        let model = FixtureData.models.first { $0.repo == repo }
+        return UpstreamCheck(
+            upstream: model?.upstream ?? "ok", commit: model?.commit, latest: model?.commit, changed: false
         )
     }
 
-    private static func repository(
-        _ name: String,
-        bytes: UInt64,
-        files: UInt64,
-        stored: UInt64? = nil,
-        commit: String,
-        unchecked: UInt64 = 0
-    ) -> Repository {
-        Repository(
-            provider: "huggingface",
-            name: name,
-            commit: commit + String(repeating: "0", count: 28),
-            storedFiles: stored ?? files,
-            storedBytes: bytes,
-            files: files,
-            bytes: files == 0 ? 0 : bytes,
-            verified: files - unchecked,
-            mismatch: 0,
-            notUpstream: 0,
-            unchecked: unchecked
+    func forget(_ repo: String, at address: String) async throws {
+        try answering(address)
+        if let model = FixtureData.models.first(where: { $0.repo == repo }), !model.apps.isEmpty {
+            throw ClientError.Failed(message: "\(repo) still has files in \(model.appNames.joined(separator: ", "))")
+        }
+    }
+
+    func unplace(_ repo: String, app: String, apply: Bool, at address: String) async throws -> UnplacePlan {
+        try answering(address)
+        let files = FixtureData.detail(repo)?.placements.filter { $0.app == app } ?? []
+        return UnplacePlan(
+            repo: repo,
+            app: app,
+            remove: files.map { PlannedFile(path: $0.path, size: $0.size) },
+            links: app == "ollama" ? ["\(FixtureData.folder(of: app))/manifests/hf.co/\(repo)/Q4_K_M"] : [],
+            keep: [],
+            bytes: files.map(\.size).reduce(0, +),
+            removed: apply ? UInt64(files.count) : nil
         )
+    }
+
+    // MARK: - Storage
+
+    func gcPlan(offload: Bool, at address: String) async throws -> GcPlan {
+        try answering(address)
+        return FixtureData.gcPlan(offload: offload)
+    }
+
+    func gcApply(orphans: [String], offload: [String], at address: String) async throws -> GcPlan {
+        try answering(address)
+        let plan = FixtureData.gcPlan(offload: !offload.isEmpty)
+        return GcPlan(
+            orphans: [], offload: [], orphanBytes: 0, offloadBytes: 0, freed: plan.orphanBytes + plan.offloadBytes
+        )
+    }
+
+    func startStoreCheck(at address: String) async throws {
+        try answering(address)
+    }
+
+    func storeCheck(at address: String) async throws -> StoreCheck {
+        try answering(address)
+        return FixtureData.storeCheck
+    }
+
+    // MARK: - The daemon itself
+
+    func settings(at address: String) async throws -> DaemonSettings {
+        try answering(address)
+        return settings
+    }
+
+    func updateSettings(_ changes: [SettingChange], at address: String) async throws -> DaemonSettings {
+        try answering(address)
+        for change in changes {
+            switch (change.key, change.value) {
+            case let ("max_connections", .number(value)): settings.maxConnections = value
+            case let ("speed_limit", .number(value)): settings.speedLimit = value
+            case let ("verify_days", .number(value)): settings.verifyDays = value
+            case let ("scan_interval", .number(value)): settings.scanInterval = value
+            case let ("reclaim", .flag(value)): settings.reclaim = value
+            case let ("set_env", .flag(value)): settings.setEnv = value
+            case let ("archive", .text(value)): settings.archive = value
+            case ("archive", .unset): settings.archive = nil
+            case let ("listen", .text(value)):
+                settings.listen = value
+                settings.restartNeeded = true
+            default: settings.restartNeeded = true
+            }
+        }
+        changed()
+        return settings
+    }
+
+    func logTail(lines: UInt32, at address: String) async throws -> LogTail {
+        try answering(address)
+        return FixtureData.log
+    }
+
+    func restart(at address: String) async throws {
+        try answering(address)
+        settings.restartNeeded = false
     }
 }

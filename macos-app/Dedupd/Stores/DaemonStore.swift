@@ -2,29 +2,21 @@ import DedupdClient
 import Foundation
 import Observation
 
-/// What the app knows about the daemon, and the two things it can ask of it.
+/// What the app knows about the daemon as a whole: whether it answers, what
+/// it holds, and its download queue.
 ///
-/// The store asks the daemon for its status on a timer, because the menu bar
-/// icon shows the daemon's state also while the panel is closed.
+/// Nothing is polled. One connection follows the daemon and delivers its
+/// state whenever something changes; the status is read again only when the
+/// daemon says the library changed.
 @MainActor
 @Observable
 final class DaemonStore {
-    /// Whether the daemon answers, and what it said last.
     enum Connection: Equatable {
-        /// Nothing has been asked yet.
+        /// Nothing has been heard yet.
         case connecting
-        /// Nothing answered at the address.
-        case notRunning(address: String)
-        /// Something answered, but not with a status.
-        case failed(message: String)
-        case running(DaemonStatus)
-    }
-
-    enum PullActivity: Equatable {
-        case idle
-        case running(model: String)
-        case finished(PullResult)
-        case failed(model: String, message: String)
+        /// Nothing answers at the address.
+        case notRunning
+        case running
     }
 
     enum ScanActivity: Equatable {
@@ -35,51 +27,59 @@ final class DaemonStore {
     }
 
     private(set) var connection: Connection = .connecting
-    private(set) var pullActivity: PullActivity = .idle
+    /// The daemon's last status; kept while it is away, so the window does
+    /// not go blank during a restart.
+    private(set) var status: DaemonStatus?
+    /// The download queue and the rate governor, as of the last event.
+    private(set) var downloads: Downloads?
+    /// The daemon is hashing its store.
+    private(set) var checking = false
+    /// Changes whenever the library may have changed or the daemon came
+    /// back. Screens load their data again when it does.
+    private(set) var revision = 0
     private(set) var scanActivity: ScanActivity = .idle
-    /// When the daemon was last asked, whatever it answered.
-    private(set) var lastChecked: Date?
+    /// Something the owner asked for failed; shown until dismissed.
+    var problem: String?
 
-    /// Set by the panel while it is on screen; the store asks more often then.
-    var panelVisible = false
+    /// Called with the queue before and after each event, for notifications.
+    @ObservationIgnored var onJobsChanged: (([Job], [Job]) -> Void)?
 
-    @ObservationIgnored private let client: any DaemonClient
-    @ObservationIgnored private let settings: AppSettings
-    @ObservationIgnored private var pollTask: Task<Void, Never>?
+    @ObservationIgnored let client: any DaemonClient
+    @ObservationIgnored let settings: AppSettings
+    @ObservationIgnored private var follower: Task<Void, Never>?
+    @ObservationIgnored private var following = ""
+    @ObservationIgnored private var library: UInt64?
 
     init(client: any DaemonClient, settings: AppSettings) {
         self.client = client
         self.settings = settings
     }
 
+    var address: String { settings.address }
+
     // MARK: - Derived state
 
-    /// The daemon's last status, when it is running.
-    var status: DaemonStatus? {
-        if case let .running(status) = connection {
-            return status
-        }
-        return nil
-    }
+    var isRunning: Bool { connection == .running }
 
-    var isRunning: Bool { status != nil }
+    var jobs: [Job] { downloads?.jobs ?? [] }
 
-    var isPulling: Bool {
-        if case .running = pullActivity {
-            return true
-        }
-        return false
-    }
+    /// The downloads the daemon is working on or will get to.
+    var activeJobs: [Job] { jobs.filter { $0.phase.isActive } }
+
+    /// The downloads that wait for the owner.
+    var attentionJobs: [Job] { jobs.filter { $0.phase == .needsAttention } }
 
     var isScanning: Bool { scanActivity == .running }
 
     /// How far the downloads in flight have come, from 0 to 1; nil when
-    /// nothing is being downloaded.
+    /// nothing is being downloaded or no size is known yet.
     var downloadFraction: Double? {
-        guard let status, status.downloadingTotal > 0 else {
+        let active = activeJobs
+        let total = active.map(\.bytesTotal).reduce(0, +)
+        guard !active.isEmpty, total > 0 else {
             return nil
         }
-        return min(1, Double(status.downloadingDone) / Double(status.downloadingTotal))
+        return min(1, Double(active.map(\.bytesDone).reduce(0, +)) / Double(total))
     }
 
     /// The SF Symbol for the menu bar.
@@ -87,71 +87,149 @@ final class DaemonStore {
         switch connection {
         case .connecting:
             "square.stack.3d.up"
-        case .notRunning, .failed:
+        case .notRunning:
             "square.stack.3d.up.slash"
         case .running:
-            downloadFraction != nil || isPulling ? "arrow.down.circle" : "square.stack.3d.up.fill"
+            if !attentionJobs.isEmpty {
+                "exclamationmark.triangle"
+            } else if !activeJobs.isEmpty {
+                "arrow.down.circle"
+            } else {
+                "square.stack.3d.up.fill"
+            }
         }
     }
 
-    /// One line on the daemon's state, for the panel header and for VoiceOver.
+    /// One line on the daemon's state, for headers and for VoiceOver.
     var summary: String {
         switch connection {
         case .connecting:
             "Looking for the daemon…"
         case .notRunning:
             "The daemon is not running"
-        case .failed:
-            "The daemon did not answer as expected"
-        case let .running(status):
-            "Running, version \(status.version)"
+        case .running:
+            status.map { "Running, version \($0.version)" } ?? "Running"
         }
     }
 
-    /// How long to wait before asking again: often while something is being
-    /// downloaded, seldom while nobody is looking.
-    var pollInterval: Duration {
-        if downloadFraction != nil || isPulling || isScanning {
-            return .seconds(1)
+    /// One line on the downloads, for the menu bar panel; nil when the
+    /// queue is empty.
+    var downloadSummary: String? {
+        let active = activeJobs
+        if active.isEmpty {
+            let waiting = attentionJobs.count
+            return waiting == 0 ? nil : "\(waiting) download\(waiting == 1 ? "" : "s") need\(waiting == 1 ? "s" : "") attention"
         }
-        return panelVisible ? .seconds(5) : .seconds(15)
+        let speed = downloads?.speed ?? 0
+        let count = "\(active.count) download\(active.count == 1 ? "" : "s")"
+        return speed > 0 ? "\(count) · \(ByteFormat.speed(speed))" : count
+    }
+
+    // MARK: - Following the daemon
+
+    /// Start following the daemon at the address in the settings. Called
+    /// again after the address changed, it follows the new one.
+    func start() {
+        let address = settings.address
+        guard follower == nil || following != address else {
+            return
+        }
+        follower?.cancel()
+        following = address
+        connection = .connecting
+        status = nil
+        downloads = nil
+        library = nil
+        follower = Task { [weak self, client] in
+            for await signal in client.events(at: address) {
+                guard let self, !Task.isCancelled else {
+                    return
+                }
+                await self.receive(signal)
+            }
+        }
+    }
+
+    func stop() {
+        follower?.cancel()
+        follower = nil
+    }
+
+    /// Take in what the connection reports. Internal so tests can drive the
+    /// store without a stream.
+    func receive(_ signal: DaemonSignal) async {
+        switch signal {
+        case .connected:
+            await connected()
+        case .disconnected:
+            connection = .notRunning
+            downloads = nil
+            checking = false
+            library = nil
+        case let .event(event):
+            if connection != .running {
+                await connected()
+            }
+            let before = jobs
+            downloads = event.downloads
+            checking = event.checking
+            if before != event.downloads.jobs {
+                onJobsChanged?(before, event.downloads.jobs)
+            }
+            if library != event.library {
+                let first = library == nil
+                library = event.library
+                if !first {
+                    await refreshStatus()
+                    revision += 1
+                }
+            }
+        }
+    }
+
+    private func connected() async {
+        guard connection != .running else {
+            return
+        }
+        connection = .running
+        await refreshStatus()
+        revision += 1
+    }
+
+    /// Read the daemon's status now.
+    func refreshStatus() async {
+        let address = settings.address
+        guard let answer = try? await client.status(at: address), address == settings.address else {
+            return
+        }
+        status = answer
     }
 
     // MARK: - Asking the daemon
 
-    /// Ask the daemon for its status now.
-    func refresh() async {
-        let address = settings.address
-        let answer: Connection
+    /// Run something the owner asked for; a failure is shown to them.
+    @discardableResult
+    func attempt<T: Sendable>(_ work: (any DaemonClient, String) async throws -> T) async -> T? {
         do {
-            answer = .running(try await client.status(at: address))
-        } catch let ClientError.NotRunning(address) {
-            answer = .notRunning(address: address)
+            return try await work(client, settings.address)
         } catch {
-            answer = .failed(message: describe(error))
+            problem = describe(error)
+            return nil
         }
-        // The address may have been changed in Settings while this was on its
-        // way; an answer from the old address says nothing about the new one.
-        guard address == settings.address else {
-            return
-        }
-        connection = answer
-        lastChecked = Date()
     }
 
-    /// Fetch a model and place it into the chosen apps. Returns when the
-    /// daemon has finished; the timer shows the download's progress meanwhile.
-    func pull(_ request: PullRequest) async {
-        guard !isPulling else {
-            return
-        }
-        pullActivity = .running(model: request.model)
-        do {
-            pullActivity = .finished(try await client.pull(request, at: settings.address))
-        } catch {
-            pullActivity = .failed(model: request.model, message: describe(error))
-        }
-        await refresh()
+    /// Put a download in the queue. Returns whether the daemon took it.
+    @discardableResult
+    func enqueue(_ request: PullRequest) async -> Bool {
+        await attempt { client, address in try await client.enqueue(request, at: address) } != nil
+    }
+
+    func act(_ action: JobAction, on job: Job) async {
+        await attempt { client, address in try await client.downloadAction(action, id: job.id, at: address) }
+    }
+
+    func clearFinished() async {
+        await attempt { client, address in try await client.clearDownloads(at: address) }
     }
 
     /// Have the daemon look at the app folders now.
@@ -165,43 +243,19 @@ final class DaemonStore {
         } catch {
             scanActivity = .failed(message: describe(error))
         }
-        await refresh()
+        await refreshStatus()
+        revision += 1
     }
 
-    /// Clear the outcome of the last pull from the panel.
-    func dismissPull() {
-        if !isPulling {
-            pullActivity = .idle
-        }
-    }
-
-    /// Clear the outcome of the last scan from the panel.
+    /// Clear the outcome of the last scan.
     func dismissScan() {
         if !isScanning {
             scanActivity = .idle
         }
     }
 
-    // MARK: - Timer
-
-    /// Start asking the daemon for its status on a timer.
-    func startPolling() {
-        guard pollTask == nil else {
-            return
-        }
-        pollTask = Task { [weak self] in
-            while !Task.isCancelled {
-                guard let self else {
-                    return
-                }
-                await self.refresh()
-                try? await Task.sleep(for: self.pollInterval)
-            }
-        }
-    }
-
-    func stopPolling() {
-        pollTask?.cancel()
-        pollTask = nil
+    /// Ask the daemon to start again, for a changed setting to take effect.
+    func restart() async {
+        await attempt { client, address in try await client.restart(at: address) }
     }
 }

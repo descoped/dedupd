@@ -128,7 +128,11 @@ final class FixtureServer: @unchecked Sendable {
 
     private func answer(_ connection: NWConnection, _ request: Request) {
         lock.withLock { received.append(request) }
+        // A route may leave out the query, to answer whatever is asked of
+        // the path.
+        let plain = request.path.split(separator: "?", maxSplits: 1).first.map(String.init) ?? request.path
         let answer = routes["\(request.method) \(request.path)"]
+            ?? routes["\(request.method) \(plain)"]
             ?? Answer(status: 404, body: Data(#"{"error":"no such route"}"#.utf8))
         let head = "HTTP/1.1 \(answer.status) Fixture\r\n"
             + "Content-Type: application/json\r\n"

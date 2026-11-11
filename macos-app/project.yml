@@ -84,6 +84,10 @@ targets:
         basedOnDependencyAnalysis: false
     postBuildScripts:
       - script: |
+          sh "$SRCROOT/scripts/bundle-daemon.sh"
+        name: Put the dedupd command inside the app
+        basedOnDependencyAnalysis: false
+      - script: |
           PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
           if command -v swiftlint >/dev/null 2>&1; then
             swiftlint lint --config "$SRCROOT/.swiftlint.yml"

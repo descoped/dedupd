@@ -45,11 +45,69 @@ struct AppSettingsTests {
         #expect(LaunchOptions(arguments: ["Dedupd"]).fixture == nil)
     }
 
-    @Test("The panel is shown in a window under a fixture and when asked for")
+    @Test("The panel is shown in a window only when asked for")
     func panelWindow() {
-        #expect(LaunchOptions(arguments: ["Dedupd", "-uiTestFixture", "running"]).showsPanelWindow)
+        #expect(!LaunchOptions(arguments: ["Dedupd", "-uiTestFixture", "running"]).showsPanelWindow)
         #expect(LaunchOptions(arguments: ["Dedupd", "-panelWindow"]).showsPanelWindow)
         #expect(!LaunchOptions(arguments: ["Dedupd"]).showsPanelWindow)
+    }
+
+    @Test("A screen, a main window and a trial daemon can be asked for on the command line")
+    func otherArguments() {
+        let options = LaunchOptions(arguments: [
+            "Dedupd", "-mainWindow", "-pane", "downloads", "-daemonHome", "/tmp/home", "-agentLabel", "com.dedupd.trial",
+        ])
+        #expect(options.showsMainWindow)
+        #expect(options.pane == .downloads)
+        #expect(options.agentHome == "/tmp/home")
+        #expect(options.agentLabel == "com.dedupd.trial")
+        #expect(LaunchOptions(arguments: ["Dedupd", "-pane", "nonsense"]).pane == nil)
+        #expect(!LaunchOptions(arguments: ["Dedupd"]).showsMainWindow)
+    }
+
+    @Test("The row size and the notification choice are remembered")
+    func preferences() {
+        let suite = "io.descoped.dedupd.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let settings = AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642")
+        #expect(settings.isFirstLaunch)
+        #expect(settings.density == .compact)
+        #expect(settings.notifications)
+        settings.density = .comfortable
+        settings.notifications = false
+
+        let again = AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642")
+        #expect(!again.isFirstLaunch)
+        #expect(again.density == .comfortable)
+        #expect(!again.notifications)
+    }
+
+    @Test("Where a model goes is remembered for each kind of model")
+    func targets() {
+        let suite = "io.descoped.dedupd.tests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite) ?? .standard
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let settings = AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642")
+        #expect(settings.apps(for: .gguf) == [.bionic, .ollama], "the usual apps until the owner chooses")
+        #expect(settings.apps(for: .mlx) == [.bionic])
+
+        settings.setApp(.bionic, for: .gguf, to: false)
+        settings.setApp(.huggingFace, for: .mlx, to: true)
+
+        let again = AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642")
+        #expect(again.apps(for: .gguf) == [.ollama])
+        #expect(again.apps(for: .mlx) == [.bionic, .huggingFace])
+        #expect(again.apps(for: .splitGGUF) == [.bionic], "a kind the owner never touched keeps its usual apps")
+        // An app that cannot use a variant is left out, in the daemon's order.
+        #expect(again.apps(for: .mlx, usable: [.bionic, .huggingFace]) == [.bionic, .huggingFace])
+        #expect(again.apps(for: .gguf, usable: [.bionic, .huggingFace]).isEmpty)
+
+        again.setApp(.ollama, for: .gguf, to: false)
+        #expect(AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642").apps(for: .gguf).isEmpty,
+                "choosing no app is a choice too: the store only")
     }
 
     @Test("An address given on the command line is used for that run")
@@ -75,7 +133,7 @@ struct AppSettingsTests {
     func fixtures() async throws {
         let running = try await FixtureDaemonClient(scenario: .running).status(at: "a")
         #expect(running.downloadingTotal == 0)
-        #expect(running.repositories.count == 4)
+        #expect(try await FixtureDaemonClient(scenario: .running).models(at: "a").count == 5)
         let downloading = try await FixtureDaemonClient(scenario: .downloading).status(at: "a")
         #expect(downloading.downloadingTotal > downloading.downloadingDone)
         await #expect(throws: ClientError.NotRunning(address: "a")) {

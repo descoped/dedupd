@@ -22,6 +22,15 @@ struct ContractTests {
         return try Data(contentsOf: url)
     }
 
+    /// Run a blocking call of the Rust client off the test's own thread.
+    private static func blocking<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global().async {
+                continuation.resume(with: Result { try work() })
+            }
+        }
+    }
+
     private static func daemon(_ routes: [String: FixtureServer.Answer]) async throws -> FixtureServer {
         let server = try FixtureServer(routes: routes)
         try await server.start()
@@ -52,7 +61,8 @@ struct ContractTests {
         #expect(repo.storedFiles == 2)
         #expect(repo.files == 2)
         #expect(repo.verified == 2)
-        #expect(repo.health == .verified)
+        #expect(status.daemon.listen == "127.0.0.1:8642")
+        #expect(status.daemon.maxConnections == 8)
     }
 
     @Test("Pull: the request the daemon receives and the outcome the app gets")
@@ -61,7 +71,12 @@ struct ContractTests {
         defer { server.stop() }
 
         let request = PullRequest(model: "org/Repo-GGUF", apps: ["bionic"], include: ["*.gguf"], offline: true)
-        let result = try await LiveDaemonClient().pull(request, at: server.address)
+        let address = server.address
+        let result = try await Self.blocking {
+            try DedupdClient.pull(
+                address: address, model: request.model, apps: request.apps, include: request.include, offline: request.offline
+            )
+        }
 
         #expect(result.repo == "org/Repo-GGUF")
         #expect(result.files == 2)
@@ -93,13 +108,13 @@ struct ContractTests {
 
     @Test("A refusal carries the daemon's own words")
     func refusal() async throws {
-        let server = try await Self.daemon(["POST /dedupd/v1/pull": .init(status: 400, body: Self.recorded("error"))])
+        let server = try await Self.daemon(["POST /dedupd/v1/downloads": .init(status: 400, body: Self.recorded("error"))])
         defer { server.stop() }
 
         await #expect(throws: ClientError.Failed(
             message: "not a model is not a model name; use org/repo, org/repo:Q4_K_M or org/repo@revision"
         )) {
-            try await LiveDaemonClient().pull(PullRequest(model: "not a model", apps: []), at: server.address)
+            _ = try await LiveDaemonClient().enqueue(PullRequest(model: "not a model", apps: []), at: server.address)
         }
     }
 

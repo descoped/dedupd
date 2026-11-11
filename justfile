@@ -66,7 +66,7 @@ app-build: app-gen
 app-unit: app-gen
     cd macos-app && {{xcb}} -only-testing:DedupdTests test
 
-# Run the app's UI tests against canned daemons (takes over the screen briefly)
+# Run the app's UI tests against canned daemons (takes over the screen for a minute)
 app-uitest: app-gen
     cd macos-app && rm -rf build/UITestResults.xcresult && {{xcb}} -only-testing:DedupdUITests -resultBundlePath build/UITestResults.xcresult test
 
@@ -108,17 +108,17 @@ app-screenshots:
     PY
     echo "Screenshots saved to macos-app/$OUT_DIR"
 
-# End to end against a running daemon: the app pulls a model through it. Use a daemon with a scratch home.
+# End to end against a running daemon: the app finds a model, downloads it and lists it. Use a daemon with a scratch home.
 app-live address model="bartowski/SmolLM2-135M-Instruct-GGUF:Q4_K_M": app-gen
-    cd macos-app && rm -rf build/LiveResults.xcresult && TEST_RUNNER_DEDUPD_LIVE_ADDRESS={{address}} TEST_RUNNER_DEDUPD_LIVE_MODEL={{model}} {{xcb}} -only-testing:DedupdUITests/DedupdUITests/testLiveDaemonPullsAModel -resultBundlePath build/LiveResults.xcresult test
+    cd macos-app && rm -rf build/LiveResults.xcresult && TEST_RUNNER_DEDUPD_LIVE_ADDRESS={{address}} TEST_RUNNER_DEDUPD_LIVE_MODEL={{model}} {{xcb}} -only-testing:DedupdUITests/DedupdUITests/testLiveDaemonDownloadsAModel -resultBundlePath build/LiveResults.xcresult test
 
 # Build the app and start it; it appears in the menu bar
 app-run: app-build
     open macos-app/{{derived}}/Build/Products/Debug/Dedupd.app
 
-# Start the app with its panel in a window, on a canned daemon: running, downloading or notRunning
-app-preview fixture="running": app-build
-    open -n macos-app/{{derived}}/Build/Products/Debug/Dedupd.app --args -uiTestFixture {{fixture}}
+# Start the app's window on a canned daemon (running, downloading or notRunning), on one of its screens
+app-preview fixture="running" pane="library": app-build
+    open -n macos-app/{{derived}}/Build/Products/Debug/Dedupd.app --args -uiTestFixture {{fixture}} -pane {{pane}}
 
 # Archive the app for release (requires code signing)
 app-archive: app-gen
