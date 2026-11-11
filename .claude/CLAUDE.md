@@ -59,7 +59,7 @@ The command line works on the store and database directly, also while the daemon
 
 ## The macOS app
 
-`macos-app/` is a SwiftUI menu bar app (`LSUIElement`, macOS 15, Swift 6), set up like frinkel's `ios-app`: `project.yml` (XcodeGen) is the source of truth and the generated `Dedupd.xcodeproj` is committed; `Developer.xcconfig` carries the signing team and includes `Version.xcconfig` (synced from `Cargo.toml` at build time) and an optional gitignored `Local.xcconfig`; SwiftLint runs after every build. Conventions are in `.claude/rules/macos-app.md`.
+`macos-app/` is a SwiftUI menu bar app (`LSUIElement`, macOS 14 or later on Apple silicon, Swift 6), set up like frinkel's `ios-app`: `project.yml` (XcodeGen) is the source of truth and the generated `Dedupd.xcodeproj` is committed; `Developer.xcconfig` carries the signing team and includes `Version.xcconfig` (synced from `Cargo.toml` at build time) and an optional gitignored `Local.xcconfig`; SwiftLint runs after every build. Conventions are in `.claude/rules/macos-app.md`.
 
 - `DedupdClient/` — a static library target holding only what `scripts/build-rust-client.sh` generates from `crates/dedupd-client` (the Swift bindings and their C module, committed). The script runs before every Xcode build and also leaves `build/rust/libdedupd_client.a`, which the app links by path. Built for arm64 only.
 - `Dedupd/` — `App` (entry point, launch options, the app-wide objects), `Services` (`DaemonClient` protocol; `LiveDaemonClient` calls the Rust client off the main thread; `FixtureDaemonClient` answers from fixed data), `Stores` (`DaemonStore` polls the status and runs pull and scan; `AppSettings` holds the daemon address), `Models`, `Views` (the panel, Settings), `Utilities`.

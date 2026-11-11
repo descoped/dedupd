@@ -1,8 +1,9 @@
 name: Dedupd
 options:
   bundleIdPrefix: io.descoped.dedupd
+  # The oldest macOS that Ollama, LM Studio and MLX themselves support.
   deploymentTarget:
-    macOS: "15.0"
+    macOS: "14.0"
   # The Xcode this project was last checked against. Raise it after a new
   # Xcode offers "Update to recommended settings", and put any setting it
   # recommends below; do not let Xcode edit the generated project.
