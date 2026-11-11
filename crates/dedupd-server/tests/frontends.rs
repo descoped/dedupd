@@ -113,7 +113,7 @@ async fn fixture() -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let home = Home::new(dir.path().join("home"));
     let engine = common::engine(&home, &upstream.uri(), &dir.path().join("apps"), None);
-    let server = Server::new(engine, Config::default(), home);
+    let server = Server::new(engine, Config::default(), home).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(dedupd_server::serve(

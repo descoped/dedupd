@@ -4,12 +4,11 @@ use crate::{Call, Server, daemon, json, plain};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
 use dedupd_core::place::App;
-use dedupd_core::pull::{self, PullRequest};
+use dedupd_core::queue::State;
 use dedupd_core::{archive, status};
 use serde::Deserialize;
 use serde_json::json as j;
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -21,7 +20,10 @@ struct PullBody {
     include: Vec<String>,
     #[serde(default)]
     offline: bool,
-    jobs: Option<usize>,
+    /// Accepted from older clients; the daemon decides how many downloads
+    /// run at once.
+    #[serde(default, rename = "jobs")]
+    _jobs: Option<usize>,
 }
 
 fn error(status: StatusCode, e: impl std::fmt::Display) -> Response {
@@ -44,6 +46,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
             };
             let archive_home = server.config.archive_home();
+            let (total, done) = server.queue.totals();
             json(
                 StatusCode::OK,
                 &j!({
@@ -54,10 +57,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                         "path": a.root(),
                         "attached": archive::attached(a),
                     })),
-                    "downloading": {
-                        "total": server.progress.total.load(Ordering::Relaxed),
-                        "done": server.progress.done.load(Ordering::Relaxed),
-                    },
+                    "downloading": {"total": total, "done": done},
                     "status": s,
                 }),
             )
@@ -67,34 +67,25 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 Ok(b) => b,
                 Err(e) => return error(StatusCode::BAD_REQUEST, e),
             };
-            let req = match PullRequest::from_spec(
-                &body.model,
-                body.include,
-                body.apps,
-                body.offline,
-                body.jobs.unwrap_or(pull::DEFAULT_JOBS),
-            ) {
-                Ok(req) => req,
+            // A pull is a download like any other; this call waits for it,
+            // which is what the command line wants.
+            let id = match server
+                .queue
+                .add(&body.model, body.include, body.apps, body.offline)
+            {
+                Ok(id) => id,
                 Err(e) => return error(StatusCode::BAD_REQUEST, e),
             };
-            let pulled = {
-                let _running = server.begin_pull();
-                pull::pull(&server.engine, &req, &server.progress).await
-            };
-            match pulled {
-                Ok(out) => {
-                    // The daemon keeps the archive disk current after its
-                    // own pulls, as the command line does after its.
-                    let server = server.clone();
-                    tokio::spawn(async move {
-                        let _ = daemon::pass(&server).await;
-                    });
-                    json(
-                        StatusCode::OK,
-                        &serde_json::to_value(out).unwrap_or_default(),
-                    )
+            match server.queue.settled(id).await {
+                Ok(job) if job.state == State::Done => {
+                    json(StatusCode::OK, &job.outcome.unwrap_or_default())
                 }
-                Err(e) => error(StatusCode::BAD_GATEWAY, format!("{e:#}")),
+                Ok(job) => error(
+                    StatusCode::BAD_GATEWAY,
+                    job.detail
+                        .unwrap_or_else(|| format!("the download is {}", job.state.as_str())),
+                ),
+                Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
             }
         }
         (&Method::POST, ["scan"]) => match daemon::pass(server).await {

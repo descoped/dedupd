@@ -112,6 +112,23 @@ CREATE TABLE ollama_manifests (
 );
 "#;
 
+/// Added in schema version 3.
+const SCHEMA_V3: &str = r#"
+-- The daemon's download queue. A job is kept whole as JSON; `state` is
+-- repeated beside it so jobs can be picked without reading every one.
+CREATE TABLE downloads (
+    id          INTEGER PRIMARY KEY,
+    state       TEXT NOT NULL,
+    job_json    TEXT NOT NULL,
+    updated_at  INTEGER NOT NULL
+);
+
+-- What the provider said when it was last asked about the repository:
+-- 'ok', or 'gone' when it no longer has it or will not show it.
+ALTER TABLE repos ADD COLUMN upstream TEXT;
+ALTER TABLE repos ADD COLUMN checked_at INTEGER;
+"#;
+
 pub struct Db {
     conn: Connection,
 }
@@ -200,7 +217,7 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(30))?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 2 {
+        if version > 3 {
             anyhow::bail!(
                 "database schema version {version} is newer than this build of dedupd understands"
             );
@@ -213,11 +230,57 @@ impl Db {
                 "BEGIN; {SCHEMA_V2} PRAGMA user_version = 2; COMMIT;"
             ))?;
         }
+        if version < 3 {
+            conn.execute_batch(&format!(
+                "BEGIN; {SCHEMA_V3} PRAGMA user_version = 3; COMMIT;"
+            ))?;
+        }
         Ok(Self { conn })
     }
 
     pub fn conn(&self) -> &Connection {
         &self.conn
+    }
+
+    /// Add a job to the download queue and return its id.
+    pub fn insert_download(&self, state: &str) -> Result<i64> {
+        self.conn.execute(
+            "INSERT INTO downloads (state, job_json, updated_at) VALUES (?1, '{}', ?2)",
+            params![state, now()],
+        )?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn save_download(&self, id: i64, state: &str, job_json: &str) -> Result<()> {
+        self.conn.execute(
+            "UPDATE downloads SET state = ?2, job_json = ?3, updated_at = ?4 WHERE id = ?1",
+            params![id, state, job_json, now()],
+        )?;
+        Ok(())
+    }
+
+    /// Every job of the download queue as it was last saved, oldest first.
+    pub fn downloads(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT job_json FROM downloads ORDER BY id")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<String>>>()?)
+    }
+
+    pub fn delete_download(&self, id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM downloads WHERE id = ?1", [id])?;
+        Ok(())
+    }
+
+    /// Note what the provider said about `repo` when it was just asked.
+    pub fn set_upstream(&self, provider: &str, repo: &str, gone: bool) -> Result<()> {
+        self.conn.execute(
+            "UPDATE repos SET upstream = ?3, checked_at = ?4 WHERE provider = ?1 AND name = ?2",
+            params![provider, repo, if gone { "gone" } else { "ok" }, now()],
+        )?;
+        Ok(())
     }
 
     pub fn upsert_repo(&self, provider: &str, name: &str) -> Result<i64> {

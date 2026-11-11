@@ -10,7 +10,10 @@ pub async fn cmd_serve(o: &Opened, listen: Option<String>) -> Result<()> {
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("listening on {addr}"))?;
-    let server = Server::new(o.engine.clone(), o.config.clone(), o.home.clone());
+    // The daemon has no one waiting at a prompt: a download that meets a
+    // busy or unreachable server waits and goes on, however long it takes.
+    o.engine.fetcher.set_patient(true);
+    let server = Server::new(o.engine.clone(), o.config.clone(), o.home.clone())?;
     eprintln!(
         "dedupd listening on http://{addr} (store {}, upstream {})",
         o.home.store_dir().display(),

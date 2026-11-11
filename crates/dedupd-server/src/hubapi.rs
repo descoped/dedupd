@@ -11,6 +11,7 @@ use axum::http::{StatusCode, header};
 use axum::response::Response;
 use dedupd_core::adopt::PROVIDER_HF;
 use dedupd_core::db::is_commit;
+use dedupd_core::fetch::Unwatched;
 use dedupd_core::hub::{HubError, Snapshot, TreeEntry};
 use serde_json::Value;
 use std::sync::Arc;
@@ -399,7 +400,13 @@ async fn fetch_small(
     let engine = &server.engine;
     let fetched = engine
         .fetcher
-        .fetch(&engine.store, url, Some(entry.size), &entry.expect(), None)
+        .fetch(
+            &engine.store,
+            url,
+            Some(entry.size),
+            &entry.expect(),
+            &Unwatched,
+        )
         .await;
     match fetched {
         Ok(got) => {

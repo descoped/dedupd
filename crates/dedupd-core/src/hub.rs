@@ -2,8 +2,10 @@
 //! repository revision contains.
 
 use crate::fetch::Expect;
+use crate::governor::{self, Class, Governor};
 use serde::Deserialize;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 pub const DEFAULT_ENDPOINT: &str = "https://huggingface.co";
 
@@ -16,6 +18,9 @@ pub enum HubError {
     NotAvailable { repo: String, status: u16 },
     #[error("the Hub answered HTTP {status} for {url}")]
     Status { status: u16, url: String },
+    /// The Hub is busy or this caller has used up its requests for now.
+    #[error("the Hub asks to wait {seconds} seconds before the next request")]
+    Busy { seconds: u64 },
     #[error("could not reach the Hub: {0}")]
     Transport(#[from] reqwest::Error),
     #[error("unexpected answer from the Hub: {0}")]
@@ -79,6 +84,7 @@ pub struct HubClient {
     http: reqwest::Client,
     endpoint: String,
     token: Option<String>,
+    governor: Arc<Governor>,
 }
 
 impl HubClient {
@@ -92,7 +98,46 @@ impl HubClient {
             http,
             endpoint: endpoint.into().trim_end_matches('/').to_string(),
             token,
+            governor: Governor::new(governor::DEFAULT_CONNECTIONS, 0),
         })
+    }
+
+    /// Share `governor` with everything else that asks the provider.
+    pub fn with_governor(mut self, governor: Arc<Governor>) -> Self {
+        self.governor = governor;
+        self
+    }
+
+    pub fn endpoint(&self) -> &str {
+        &self.endpoint
+    }
+
+    /// Whether a token is sent with requests to the Hub.
+    pub fn has_token(&self) -> bool {
+        self.token.is_some()
+    }
+
+    /// Where `token_from_environment` would read the token from: the name
+    /// of the variable or the path of the file. `None` when there is none.
+    pub fn token_source() -> Option<String> {
+        if std::env::var("HF_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
+            return Some("HF_TOKEN".into());
+        }
+        let file = token_file()?;
+        let text = std::fs::read_to_string(&file).ok()?;
+        (!text.trim().is_empty()).then(|| file.to_string_lossy().into_owned())
+    }
+
+    /// A GET under the endpoint, for the parts of the Hub API this client
+    /// has no method of its own for. `what` names the thing asked about in
+    /// the error.
+    pub async fn api(
+        &self,
+        path_and_query: &str,
+        what: &str,
+    ) -> Result<reqwest::Response, HubError> {
+        let url = format!("{}{path_and_query}", self.endpoint);
+        self.get(&url, what, None).await
     }
 
     /// The token other Hugging Face tools use: `HF_TOKEN`, else the token file.
@@ -102,13 +147,7 @@ impl HubClient {
         {
             return Some(t.trim().to_string());
         }
-        let file = std::env::var_os("HF_TOKEN_PATH")
-            .map(PathBuf::from)
-            .or_else(|| std::env::var_os("HF_HOME").map(|h| PathBuf::from(h).join("token")))
-            .or_else(|| {
-                std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/huggingface/token"))
-            })?;
-        let t = std::fs::read_to_string(file).ok()?;
+        let t = std::fs::read_to_string(token_file()?).ok()?;
         (!t.trim().is_empty()).then(|| t.trim().to_string())
     }
 
@@ -132,10 +171,20 @@ impl HubClient {
         } else if let Some(t) = &self.token {
             req = req.bearer_auth(t);
         }
+        let _permit = self.governor.permit(Class::Api).await;
         let resp = req.send().await?;
+        self.governor.observe(resp.headers());
         let status = resp.status().as_u16();
         match status {
             200 => Ok(resp),
+            429 | 503 => {
+                let pause = governor::retry_after(resp.headers())
+                    .unwrap_or(std::time::Duration::from_secs(30));
+                let held = self.governor.congested(Some(pause));
+                Err(HubError::Busy {
+                    seconds: held.as_secs().max(1),
+                })
+            }
             401 | 403 | 404 | 410 => Err(HubError::NotAvailable {
                 repo: repo.to_string(),
                 status,
@@ -213,8 +262,18 @@ impl HubClient {
     }
 }
 
+/// The file Hugging Face's own tools keep the token in.
+fn token_file() -> Option<PathBuf> {
+    std::env::var_os("HF_TOKEN_PATH")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HF_HOME").map(|h| PathBuf::from(h).join("token")))
+        .or_else(|| {
+            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/huggingface/token"))
+        })
+}
+
 /// Pull the `rel="next"` target out of a `Link` header.
-fn next_link(header: &str) -> Option<String> {
+pub fn next_link(header: &str) -> Option<String> {
     header.split(',').find_map(|part| {
         let (target, params) = part.split_once(';')?;
         let is_next = params

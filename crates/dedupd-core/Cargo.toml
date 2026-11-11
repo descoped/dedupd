@@ -7,6 +7,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow = "1.0.104"
+futures-util = "0.3.34"
 hex = "0.4.3"
 libc = "0.2.191"
 reqwest = { version = "0.13.5", default-features = false, features = ["rustls", "json", "query", "http2"] }
@@ -22,6 +23,6 @@ walkdir = "2.5.0"
 
 [dev-dependencies]
 tempfile = "3.27.0"
-tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread", "test-util"] }
 walkdir = "2.5.0"
 wiremock = "0.6.5"

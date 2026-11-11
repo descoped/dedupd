@@ -4,7 +4,7 @@
 mod common;
 
 use common::{COMMIT, REPO, Ranged, engine, git_oid, sha256};
-use dedupd_core::fetch::{Expect, Fetcher, Progress};
+use dedupd_core::fetch::{Expect, Fetcher, Progress, Unwatched};
 use dedupd_core::place::{App, AppDirs};
 use dedupd_core::pull::{self, PullRequest};
 use dedupd_core::select::Selection;
@@ -187,7 +187,7 @@ async fn pull_places_into_three_apps_and_survives_upstream_removal() {
         .iter()
         .filter(|r| r.url.path().ends_with("model-Q4_K_M.gguf"))
         .count();
-    assert_eq!(weight_fetches, 1);
+    assert_eq!(weight_fetches, 4, "four parts, fetched once and not again");
 
     // Copy to the archive disk, then lose the local copy of the weights.
     let archive_home = Home::new(dir.path().join("trunk/dedupd"));
@@ -273,7 +273,7 @@ async fn interrupted_download_resumes_and_bad_content_is_refused() {
             &url,
             Some(up.weights.len() as u64),
             &Expect::Sha256(sha.clone()),
-            None,
+            &Unwatched,
         )
         .await
         .unwrap();
@@ -285,7 +285,13 @@ async fn interrupted_download_resumes_and_bad_content_is_refused() {
 
     let wrong = "a".repeat(64);
     let err = fetcher
-        .fetch(&store, &url, None, &Expect::Sha256(wrong.clone()), None)
+        .fetch(
+            &store,
+            &url,
+            None,
+            &Expect::Sha256(wrong.clone()),
+            &Unwatched,
+        )
         .await
         .unwrap_err();
     assert!(err.to_string().contains("expected content"));

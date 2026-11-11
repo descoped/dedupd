@@ -4,6 +4,7 @@ use dedupd_core::adopt::{self, Action, Event, Upstream, Verify};
 use dedupd_core::config::Config;
 use dedupd_core::db::Db;
 use dedupd_core::fetch::{Fetcher, Progress};
+use dedupd_core::governor::Governor;
 use dedupd_core::hub::{DEFAULT_ENDPOINT, HubClient};
 use dedupd_core::place::{App, AppDirs};
 use dedupd_core::pull::{self, Engine, PullRequest};
@@ -185,12 +186,14 @@ pub fn open(home: Option<PathBuf>, endpoint: Option<String>) -> Result<Opened> {
         .or_else(|| config.hf_endpoint.clone())
         .unwrap_or_else(|| DEFAULT_ENDPOINT.to_string());
     let token = HubClient::token_from_environment();
+    let governor = Governor::new(config.max_connections(), config.speed_limit());
     let engine = Engine {
         store: Store::open(&home)?.with_archive(config.archive_home()),
         db: Mutex::new(Db::open(&home.db_path())?),
-        hub: HubClient::new(endpoint.clone(), token.clone())?,
-        fetcher: Fetcher::new(endpoint, token)?,
+        hub: HubClient::new(endpoint.clone(), token.clone())?.with_governor(governor.clone()),
+        fetcher: Fetcher::new(endpoint, token)?.with_governor(governor.clone()),
         dirs: AppDirs::resolve(&config)?,
+        governor,
     };
     Ok(Opened {
         home,

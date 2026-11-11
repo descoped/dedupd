@@ -71,6 +71,24 @@ impl Store {
         self.archive.as_ref()
     }
 
+    /// Bytes free on the volume the store is on.
+    pub fn free_bytes(&self) -> Result<u64> {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = self.home.store_dir();
+        let path = std::ffi::CString::new(dir.as_os_str().as_bytes())?;
+        // SAFETY: `statvfs` is plain data, and `path` is a valid C string
+        // that outlives the call.
+        let stat = unsafe {
+            let mut stat: libc::statvfs = std::mem::zeroed();
+            if libc::statvfs(path.as_ptr(), &mut stat) != 0 {
+                return Err(std::io::Error::last_os_error())
+                    .with_context(|| format!("asking for the free space of {}", dir.display()));
+            }
+            stat
+        };
+        Ok(stat.f_bavail as u64 * stat.f_frsize as u64)
+    }
+
     /// A path in the store's own temp folder, on the store's volume.
     pub fn tmp_path(&self, name: &str) -> PathBuf {
         self.home.tmp_dir().join(name)

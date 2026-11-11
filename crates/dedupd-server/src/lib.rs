@@ -16,10 +16,9 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::Response;
 use dedupd_core::Home;
 use dedupd_core::config::Config;
-use dedupd_core::fetch::Progress;
 use dedupd_core::pull::Engine;
+use dedupd_core::queue::Queue;
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
@@ -32,30 +31,16 @@ pub struct Server {
     commits: Mutex<HashMap<(String, String), (String, Instant)>>,
     /// Large files being put together from what clients download through us.
     assemblies: Mutex<HashMap<String, Arc<files::Assembly>>>,
-    pub progress: Arc<Progress>,
-    /// Pulls running through the control API; see `begin_pull`.
-    pulls: Mutex<usize>,
+    /// The downloads the daemon is doing or has been asked to do.
+    pub queue: Arc<Queue>,
     /// What the background pass remembers between rounds.
     pub(crate) passes: daemon::PassState,
 }
 
-/// One pull running through the control API. `progress` starts again from
-/// zero when the last one ends, so a failed pull leaves nothing behind.
-pub(crate) struct PullGuard<'a>(&'a Server);
-
-impl Drop for PullGuard<'_> {
-    fn drop(&mut self) {
-        let mut pulls = self.0.pulls.lock().expect("lock");
-        *pulls -= 1;
-        if *pulls == 0 {
-            self.0.progress.total.store(0, Ordering::Relaxed);
-            self.0.progress.done.store(0, Ordering::Relaxed);
-        }
-    }
-}
-
 impl Server {
-    pub fn new(engine: Arc<Engine>, config: Config, home: Home) -> Arc<Self> {
+    /// Open the daemon's state. Downloads that were going when the daemon
+    /// last stopped continue from here, so this needs a running runtime.
+    pub fn new(engine: Arc<Engine>, config: Config, home: Home) -> anyhow::Result<Arc<Self>> {
         // Partly assembled files from an earlier run cannot be continued:
         // which ranges they hold was only known in memory.
         if let Ok(dir) = std::fs::read_dir(home.tmp_dir()) {
@@ -65,22 +50,28 @@ impl Server {
                 }
             }
         }
-        Arc::new(Self {
+        let queue = Queue::open(engine.clone())?;
+        let server = Arc::new(Self {
             engine,
             config,
             home,
             commits: Mutex::new(HashMap::new()),
             assemblies: Mutex::new(HashMap::new()),
-            progress: Arc::new(Progress::default()),
-            pulls: Mutex::new(0),
+            queue,
             passes: daemon::PassState::default(),
-        })
-    }
-
-    /// Count a pull as running until the returned guard is dropped.
-    pub(crate) fn begin_pull(&self) -> PullGuard<'_> {
-        *self.pulls.lock().expect("lock") += 1;
-        PullGuard(self)
+        });
+        // The daemon keeps the archive disk current after its own
+        // downloads, as the command line does after its.
+        let weak = Arc::downgrade(&server);
+        server.queue.on_done(move || {
+            if let Some(server) = weak.upgrade() {
+                tokio::spawn(async move {
+                    let _ = daemon::pass(&server).await;
+                });
+            }
+        });
+        server.queue.start();
+        Ok(server)
     }
 
     /// Forget which commits branch names were last seen at, so the next

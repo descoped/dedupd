@@ -5,6 +5,7 @@
 use dedupd_core::Home;
 use dedupd_core::db::Db;
 use dedupd_core::fetch::Fetcher;
+use dedupd_core::governor::Governor;
 use dedupd_core::hub::HubClient;
 use dedupd_core::place::AppDirs;
 use dedupd_core::pull::Engine;
@@ -13,10 +14,13 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use wiremock::{Request, Respond, ResponseTemplate};
 
 pub const COMMIT: &str = "0123456789abcdef0123456789abcdef01234567";
 pub const REPO: &str = "org/Repo-GGUF";
+/// The part size test engines download with.
+pub const PART_SIZE: u64 = 100_000;
 
 pub fn sha256(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
@@ -62,12 +66,21 @@ impl Respond for Ranged {
 /// An engine on `home` that asks `endpoint`, with scratch app folders under
 /// `apps`.
 pub fn engine(home: &Home, endpoint: &str, apps: &Path, archive: Option<Home>) -> Arc<Engine> {
+    // Small parts and short waits, so a test file of a few hundred kilobytes
+    // goes through the same paths as a model of many gigabytes.
+    let governor = Governor::new(8, 0);
     Arc::new(Engine {
         db: Mutex::new(Db::open(&home.db_path()).unwrap()),
         store: Store::open(home).unwrap().with_archive(archive),
-        hub: HubClient::new(endpoint, None).unwrap(),
-        fetcher: Fetcher::new(endpoint, None).unwrap(),
+        hub: HubClient::new(endpoint, None)
+            .unwrap()
+            .with_governor(governor.clone()),
+        fetcher: Fetcher::new(endpoint, None)
+            .unwrap()
+            .with_governor(governor.clone())
+            .with_tuning(PART_SIZE, Duration::from_millis(20)),
         dirs: AppDirs::under(apps),
+        governor,
     })
 }
 

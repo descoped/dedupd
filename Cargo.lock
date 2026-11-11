@@ -510,6 +510,7 @@ name = "dedupd-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "futures-util",
  "hex",
  "libc",
  "reqwest",

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 pub const DEFAULT_LISTEN: &str = "127.0.0.1:8642";
 
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Folder on another disk that holds the second copy of the store, for
@@ -31,6 +31,11 @@ pub struct Config {
     /// Seconds between the daemon's scans of the app folders when nothing
     /// was seen to change.
     pub scan_interval: Option<u64>,
+    /// The most downloads to run at once. How many actually run follows
+    /// what the provider can take.
+    pub max_connections: Option<usize>,
+    /// Bytes per second all downloads together may use; 0 is no limit.
+    pub speed_limit: Option<u64>,
 }
 
 impl Config {
@@ -52,6 +57,16 @@ impl Config {
 
     pub fn listen(&self) -> &str {
         self.listen.as_deref().unwrap_or(DEFAULT_LISTEN)
+    }
+
+    pub fn max_connections(&self) -> usize {
+        self.max_connections
+            .unwrap_or(crate::governor::DEFAULT_CONNECTIONS)
+            .max(1)
+    }
+
+    pub fn speed_limit(&self) -> u64 {
+        self.speed_limit.unwrap_or(0)
     }
 
     pub fn archive_home(&self) -> Option<Home> {
