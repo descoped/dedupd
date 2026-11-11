@@ -3,13 +3,21 @@ options:
   bundleIdPrefix: io.descoped.dedupd
   deploymentTarget:
     macOS: "15.0"
-  xcodeVersion: "26"
+  # The Xcode this project was last checked against. Raise it after a new
+  # Xcode offers "Update to recommended settings", and put any setting it
+  # recommends below; do not let Xcode edit the generated project.
+  xcodeVersion: "27.2"
   defaultConfig: Debug
 settings:
   base:
     SWIFT_VERSION: "6.0"
     # The Rust client is built for this Mac's architecture only.
     ARCHS: arm64
+    DEAD_CODE_STRIPPING: YES
+    STRING_CATALOG_GENERATE_SYMBOLS: YES
+    # The build scripts run cargo and write the generated bindings into the
+    # source tree, which a sandboxed script may not do.
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
     # Where the C module of the generated bindings lives; every target that
     # imports DedupdClient needs it.
     SWIFT_INCLUDE_PATHS: $(SRCROOT)/DedupdClient/Generated/FFI
