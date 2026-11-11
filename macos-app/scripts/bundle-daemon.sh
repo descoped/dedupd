@@ -34,5 +34,12 @@ cp "$target/release/dedupd" "$helpers/dedupd"
 # identity (a build with signing turned off) it gets an ad-hoc one.
 identity=${EXPANDED_CODE_SIGN_IDENTITY:-}
 [ -n "$identity" ] || identity=-
-codesign --force --sign "$identity" --options runtime --timestamp=none \
+
+# A release build also needs a signed time from Apple's server, or Apple
+# refuses to notarise it. Other builds skip it, so they work without a network.
+timestamp=--timestamp=none
+if [ "${CONFIGURATION:-}" = Release ] && [ "$identity" != - ]; then
+  timestamp=--timestamp
+fi
+codesign --force --sign "$identity" --options runtime "$timestamp" \
   --identifier io.descoped.dedupd.daemon "$helpers/dedupd"

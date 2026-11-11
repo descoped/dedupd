@@ -120,9 +120,13 @@ app-run: app-build
 app-preview fixture="running" pane="library": app-build
     open -n macos-app/{{derived}}/Build/Products/Debug/Dedupd.app --args -uiTestFixture {{fixture}} -pane {{pane}}
 
-# Archive the app for release (requires code signing)
-app-archive: app-gen
-    cd macos-app && xcodebuild -scheme Dedupd -destination 'generic/platform=macOS' -configuration Release -archivePath build/Dedupd.xcarchive archive
+# A release build signed with Developer ID, in a disk image, without sending it to Apple (to check a release before making it)
+app-package: app-gen
+    sh macos-app/scripts/release.sh --skip-notary
+
+# The release: sign with Developer ID, have Apple notarise it, and leave macos-app/build/release/dedupd-<version>.dmg
+app-release: app-gen
+    sh macos-app/scripts/release.sh
 
 # Redraw the app icon
 app-icon:

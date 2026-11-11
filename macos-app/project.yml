@@ -59,8 +59,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: io.descoped.dedupd.app
         INFOPLIST_FILE: Dedupd/Info.plist
-        CODE_SIGN_IDENTITY: "Apple Development"
-        CODE_SIGN_STYLE: Automatic
+        # The hardened runtime is on in every build: Apple notarises nothing
+        # without it, and a debug build should behave like the released one.
         ENABLE_HARDENED_RUNTIME: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
@@ -69,6 +69,21 @@ targets:
         # Named by path: the folder cargo builds into also holds a dynamic
         # library of the same name, which the linker would prefer.
         OTHER_LDFLAGS: $(SRCROOT)/build/rust/libdedupd_client.a
+      configs:
+        # A debug build runs on the developer's own Mac.
+        Debug:
+          CODE_SIGN_IDENTITY: "Apple Development"
+          CODE_SIGN_STYLE: Automatic
+        # A release build is what people download, outside the App Store. It
+        # is signed with the team's Developer ID certificate and carries a
+        # signed time from Apple, both of which notarisation requires, and it
+        # must not carry the entitlement that lets a debugger attach.
+        # `scripts/release.sh` makes the release from it.
+        Release:
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          CODE_SIGN_STYLE: Manual
+          OTHER_CODE_SIGN_FLAGS: --timestamp
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
     dependencies:
       - target: DedupdClient
     preBuildScripts:
