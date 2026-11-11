@@ -1,0 +1,6 @@
+// Local developer overrides — NOT checked into git.
+// Copy this file to Local.xcconfig to override the committed settings,
+// for example to sign with a different team.
+//
+// Find your Team ID: Xcode → Settings → Accounts → select team → Team ID
+// DEVELOPMENT_TEAM =

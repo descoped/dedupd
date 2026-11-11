@@ -1,0 +1,37 @@
+{
+  "archive": null,
+  "downloading": {
+    "done": 0,
+    "total": 0
+  },
+  "endpoint": "https://huggingface.co",
+  "home": "/Users/example/home",
+  "status": {
+    "apps": [
+      {
+        "app": "bionic",
+        "bytes": 300008,
+        "files": 2
+      }
+    ],
+    "repos": [
+      {
+        "bytes": 300008,
+        "commit": "0123456789abcdef0123456789abcdef01234567",
+        "files": 2,
+        "mismatch": 0,
+        "name": "org/Repo-GGUF",
+        "not_upstream": 0,
+        "provider": "hf",
+        "stored_bytes": 300008,
+        "stored_files": 2,
+        "unchecked": 0,
+        "verified": 2
+      }
+    ],
+    "shared_bytes": 300008,
+    "store_bytes": 300008,
+    "store_files": 2
+  },
+  "version": "0.0.0"
+}

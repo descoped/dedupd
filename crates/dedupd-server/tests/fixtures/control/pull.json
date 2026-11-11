@@ -1,0 +1,19 @@
+{
+  "bytes": 300008,
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "downloaded": 2,
+  "files": 2,
+  "from_archive": false,
+  "notes": [],
+  "placed": [
+    [
+      "bionic",
+      {
+        "cloned": 2,
+        "conflicts": [],
+        "present": 0
+      }
+    ]
+  ],
+  "repo": "org/Repo-GGUF"
+}

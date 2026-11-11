@@ -1,0 +1,10 @@
+// Version from Cargo.toml — auto-synced at build time
+#include "Version.xcconfig"
+
+// Apple developer team that signs the app. Not a secret: every signed binary
+// carries it. Committed so a clean clone builds without any setup.
+DEVELOPMENT_TEAM = 4348AJW8CG
+
+// Developer overrides — imports Local.xcconfig if it exists.
+// Local.xcconfig is gitignored; copy Local.xcconfig.example to create it.
+#include? "Local.xcconfig"

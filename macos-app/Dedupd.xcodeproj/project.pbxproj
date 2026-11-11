@@ -1,0 +1,918 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		09A82F26B3E014B9A9EBAD47 /* AppSettingsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3D5FC6ED10147AAC2AC8B02 /* AppSettingsTests.swift */; };
+		2332D003F1A3B63F850F0BCF /* libDedupdClient.a in Frameworks */ = {isa = PBXBuildFile; fileRef = 47154FFC00A98EEA33F16A24 /* libDedupdClient.a */; };
+		2B6F664956DD0C96C3135FCB /* DedupdApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76CC33F4082B1B7B0120941C /* DedupdApp.swift */; };
+		3337FE8AB35CEBAAAC8A10FB /* SummaryTiles.swift in Sources */ = {isa = PBXBuildFile; fileRef = B14E2EC5C3182BD4A58B22BA /* SummaryTiles.swift */; };
+		41A06DFAF3DFB77E7A2F6162 /* DaemonClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBAF6E2E67E61B1088FCFEBD /* DaemonClient.swift */; };
+		449528589E2D233EDBD70AB5 /* ByteFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D0B83263644996DDF22EDAD /* ByteFormatTests.swift */; };
+		46E123C274C09A97F7F5362F /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F950F5B39A63FE6371F68BBB /* SettingsView.swift */; };
+		47FE198D766C4B957664E172 /* PullForm.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3D65D3277962AD44147876D /* PullForm.swift */; };
+		49FE23781FCF76F8253A06B8 /* DaemonStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 529D77FFCA704C733E442B0C /* DaemonStore.swift */; };
+		6CA3A4A0C7623D56CE4B3142 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EF1D391E62A6369A837F8BEB /* Assets.xcassets */; };
+		6E504A5BDD7B3F70B68F40E1 /* FixtureDaemonClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = E560DD0C5E378629EB17ABC0 /* FixtureDaemonClient.swift */; };
+		72AE3DC29EEF642ABC85BF78 /* DisplayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4070E9EE36A2CB759E66A166 /* DisplayTests.swift */; };
+		7C5BFD402DCB9AC6D69BCFF9 /* dedupd_client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AFF74CF2A637B9A04EAE90A /* dedupd_client.swift */; };
+		852E8BFF75CF87037EEE7370 /* DedupdUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A74F3AE0140D67A7C7B9279C /* DedupdUITests.swift */; };
+		990F0DAD4986766D378A6759 /* PullSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 24B858436C14CAB9D575C12D /* PullSection.swift */; };
+		9F578AB274ACEE9059B604C1 /* FakeDaemonClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7885147F625FF62C587A8DE9 /* FakeDaemonClient.swift */; };
+		A0B0AFB37DF1534E16D19012 /* ContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 485343F149130DDDE1FFD3D4 /* ContractTests.swift */; };
+		A582FBC51E3BA26B922A8817 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 942965A9DC3D46A3BE8DB6EA /* AppEnvironment.swift */; };
+		AEC877EA68F6C97C7C341510 /* ModelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25B1DC4550E5D37D301B58D5 /* ModelApp.swift */; };
+		AF5B6D66166A15273837C3B6 /* control in Resources */ = {isa = PBXBuildFile; fileRef = 3E3A2969749C0A1640EF764D /* control */; };
+		B11BF4A989CDA041FC7C7E1E /* PullFormTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2A20FE3A56F6C08A2959EFB6 /* PullFormTests.swift */; };
+		B902F42BEE1E2743274F14F8 /* StatusPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = C56FA07812A77F7D4AD0937B /* StatusPanel.swift */; };
+		BB1DE94FBCEA0A5524146AD3 /* MenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2F7E93AEE384DEFB2882EC /* MenuBarLabel.swift */; };
+		CDA4CC5DBC16EED43287699D /* FixtureServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C91A87A4646E2134F103BFB /* FixtureServer.swift */; };
+		CF61A5B7B2462BEDD9A5F9DE /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80C2447C5E4050B482849954 /* AppSettings.swift */; };
+		D7E8C19A8A78038D3DC39445 /* NotRunningView.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1724E33596BF027ADCDD112 /* NotRunningView.swift */; };
+		D8612C3610B0CBDF5220EC79 /* ByteFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33DD97D2DB9E0D43DD3D8315 /* ByteFormat.swift */; };
+		D9CEA896B890CE262E55775D /* Repository+Display.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7A1461AE9F3F38CB22B9D8D9 /* Repository+Display.swift */; };
+		EF71F650869C4593E9411446 /* Sections.swift in Sources */ = {isa = PBXBuildFile; fileRef = 07855215807A93D8CE1AA870 /* Sections.swift */; };
+		F4C81C84750436332D54C304 /* DaemonStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C762101D553FCD327F8986B9 /* DaemonStoreTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		0A340512C155D25083F09081 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BE256F0F681921479F06D10B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D424CD3563BFE15929FE1DA5;
+			remoteInfo = Dedupd;
+		};
+		1CCE42EE65229D8AF5310F49 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BE256F0F681921479F06D10B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = CAD98FA8C05FCC94D7CB6C55;
+			remoteInfo = DedupdClient;
+		};
+		F3D7A0F26DCD6B717D173222 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = BE256F0F681921479F06D10B /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = D424CD3563BFE15929FE1DA5;
+			remoteInfo = Dedupd;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		07855215807A93D8CE1AA870 /* Sections.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Sections.swift; sourceTree = "<group>"; };
+		24B858436C14CAB9D575C12D /* PullSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PullSection.swift; sourceTree = "<group>"; };
+		25B1DC4550E5D37D301B58D5 /* ModelApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelApp.swift; sourceTree = "<group>"; };
+		2A20FE3A56F6C08A2959EFB6 /* PullFormTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PullFormTests.swift; sourceTree = "<group>"; };
+		33DD97D2DB9E0D43DD3D8315 /* ByteFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ByteFormat.swift; sourceTree = "<group>"; };
+		393B089D3714D2F21FAB6A54 /* DedupdUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DedupdUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		3AFF74CF2A637B9A04EAE90A /* dedupd_client.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = dedupd_client.swift; sourceTree = "<group>"; };
+		3E3A2969749C0A1640EF764D /* control */ = {isa = PBXFileReference; lastKnownFileType = folder; name = control; path = "../crates/dedupd-server/tests/fixtures/control"; sourceTree = SOURCE_ROOT; };
+		4070E9EE36A2CB759E66A166 /* DisplayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayTests.swift; sourceTree = "<group>"; };
+		47154FFC00A98EEA33F16A24 /* libDedupdClient.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libDedupdClient.a; sourceTree = BUILT_PRODUCTS_DIR; };
+		485343F149130DDDE1FFD3D4 /* ContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractTests.swift; sourceTree = "<group>"; };
+		4C855F026EBAE19EDE057932 /* Developer.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Developer.xcconfig; sourceTree = "<group>"; };
+		529D77FFCA704C733E442B0C /* DaemonStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonStore.swift; sourceTree = "<group>"; };
+		5716B0D1164BDDD0594525B7 /* Dedupd.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Dedupd.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		688891337580B00E6FFA11F5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		6D0B83263644996DDF22EDAD /* ByteFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ByteFormatTests.swift; sourceTree = "<group>"; };
+		76CC33F4082B1B7B0120941C /* DedupdApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DedupdApp.swift; sourceTree = "<group>"; };
+		7885147F625FF62C587A8DE9 /* FakeDaemonClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FakeDaemonClient.swift; sourceTree = "<group>"; };
+		7A1461AE9F3F38CB22B9D8D9 /* Repository+Display.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Repository+Display.swift"; sourceTree = "<group>"; };
+		80C2447C5E4050B482849954 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		84653B2D387E591DA027C137 /* DedupdTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DedupdTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8C91A87A4646E2134F103BFB /* FixtureServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureServer.swift; sourceTree = "<group>"; };
+		942965A9DC3D46A3BE8DB6EA /* AppEnvironment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppEnvironment.swift; sourceTree = "<group>"; };
+		A74F3AE0140D67A7C7B9279C /* DedupdUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DedupdUITests.swift; sourceTree = "<group>"; };
+		B14E2EC5C3182BD4A58B22BA /* SummaryTiles.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SummaryTiles.swift; sourceTree = "<group>"; };
+		B1724E33596BF027ADCDD112 /* NotRunningView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotRunningView.swift; sourceTree = "<group>"; };
+		B3D65D3277962AD44147876D /* PullForm.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PullForm.swift; sourceTree = "<group>"; };
+		C56FA07812A77F7D4AD0937B /* StatusPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusPanel.swift; sourceTree = "<group>"; };
+		C762101D553FCD327F8986B9 /* DaemonStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonStoreTests.swift; sourceTree = "<group>"; };
+		E560DD0C5E378629EB17ABC0 /* FixtureDaemonClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureDaemonClient.swift; sourceTree = "<group>"; };
+		EBAF6E2E67E61B1088FCFEBD /* DaemonClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonClient.swift; sourceTree = "<group>"; };
+		ED2F7E93AEE384DEFB2882EC /* MenuBarLabel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuBarLabel.swift; sourceTree = "<group>"; };
+		EF1D391E62A6369A837F8BEB /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		F3D5FC6ED10147AAC2AC8B02 /* AppSettingsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettingsTests.swift; sourceTree = "<group>"; };
+		F950F5B39A63FE6371F68BBB /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		C81986854EFDE01D538152C3 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2332D003F1A3B63F850F0BCF /* libDedupdClient.a in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		0E907E9C59F73276150D3F10 /* Support */ = {
+			isa = PBXGroup;
+			children = (
+				7885147F625FF62C587A8DE9 /* FakeDaemonClient.swift */,
+				8C91A87A4646E2134F103BFB /* FixtureServer.swift */,
+			);
+			path = Support;
+			sourceTree = "<group>";
+		};
+		1CB444F0E4B4925CA3A75151 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				942965A9DC3D46A3BE8DB6EA /* AppEnvironment.swift */,
+				76CC33F4082B1B7B0120941C /* DedupdApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		1DB03E56F1831C3D026EFCD2 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				EBAF6E2E67E61B1088FCFEBD /* DaemonClient.swift */,
+				E560DD0C5E378629EB17ABC0 /* FixtureDaemonClient.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		24B802A7391D642455C51066 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				ED2F7E93AEE384DEFB2882EC /* MenuBarLabel.swift */,
+				42B788527C9A12FFF8E1C99F /* Panel */,
+				EE06662998A2A4ADBBB68887 /* Settings */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		24EAB418FFB5202C79F25C6A /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				25B1DC4550E5D37D301B58D5 /* ModelApp.swift */,
+				B3D65D3277962AD44147876D /* PullForm.swift */,
+				7A1461AE9F3F38CB22B9D8D9 /* Repository+Display.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		42B788527C9A12FFF8E1C99F /* Panel */ = {
+			isa = PBXGroup;
+			children = (
+				B1724E33596BF027ADCDD112 /* NotRunningView.swift */,
+				24B858436C14CAB9D575C12D /* PullSection.swift */,
+				07855215807A93D8CE1AA870 /* Sections.swift */,
+				C56FA07812A77F7D4AD0937B /* StatusPanel.swift */,
+				B14E2EC5C3182BD4A58B22BA /* SummaryTiles.swift */,
+			);
+			path = Panel;
+			sourceTree = "<group>";
+		};
+		602B9822ED3B4EAA415902E3 /* DedupdUITests */ = {
+			isa = PBXGroup;
+			children = (
+				A74F3AE0140D67A7C7B9279C /* DedupdUITests.swift */,
+			);
+			path = DedupdUITests;
+			sourceTree = "<group>";
+		};
+		63E54C6356B7E145F5986E5C /* Utilities */ = {
+			isa = PBXGroup;
+			children = (
+				33DD97D2DB9E0D43DD3D8315 /* ByteFormat.swift */,
+			);
+			path = Utilities;
+			sourceTree = "<group>";
+		};
+		79C9C38A50D043BAD02CE4A7 /* Generated */ = {
+			isa = PBXGroup;
+			children = (
+				3AFF74CF2A637B9A04EAE90A /* dedupd_client.swift */,
+			);
+			path = Generated;
+			sourceTree = "<group>";
+		};
+		827A8E4FB52622182235A235 /* DedupdTests */ = {
+			isa = PBXGroup;
+			children = (
+				F3D5FC6ED10147AAC2AC8B02 /* AppSettingsTests.swift */,
+				6D0B83263644996DDF22EDAD /* ByteFormatTests.swift */,
+				485343F149130DDDE1FFD3D4 /* ContractTests.swift */,
+				C762101D553FCD327F8986B9 /* DaemonStoreTests.swift */,
+				4070E9EE36A2CB759E66A166 /* DisplayTests.swift */,
+				2A20FE3A56F6C08A2959EFB6 /* PullFormTests.swift */,
+				0E907E9C59F73276150D3F10 /* Support */,
+			);
+			path = DedupdTests;
+			sourceTree = "<group>";
+		};
+		886EC31F68271D4267287F5E /* macos-app */ = {
+			isa = PBXGroup;
+			children = (
+				4C855F026EBAE19EDE057932 /* Developer.xcconfig */,
+			);
+			name = "macos-app";
+			path = .;
+			sourceTree = "<group>";
+		};
+		B2114F9F1A27F9046D1425FB /* DedupdClient */ = {
+			isa = PBXGroup;
+			children = (
+				79C9C38A50D043BAD02CE4A7 /* Generated */,
+			);
+			path = DedupdClient;
+			sourceTree = "<group>";
+		};
+		B3DBC1C15F51378A18171796 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				5716B0D1164BDDD0594525B7 /* Dedupd.app */,
+				84653B2D387E591DA027C137 /* DedupdTests.xctest */,
+				393B089D3714D2F21FAB6A54 /* DedupdUITests.xctest */,
+				47154FFC00A98EEA33F16A24 /* libDedupdClient.a */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		B41611E64B8E82ED73551250 /* Dedupd */ = {
+			isa = PBXGroup;
+			children = (
+				EF1D391E62A6369A837F8BEB /* Assets.xcassets */,
+				688891337580B00E6FFA11F5 /* Info.plist */,
+				1CB444F0E4B4925CA3A75151 /* App */,
+				24EAB418FFB5202C79F25C6A /* Models */,
+				1DB03E56F1831C3D026EFCD2 /* Services */,
+				D28F4B964BA9C2A4E1632975 /* Stores */,
+				63E54C6356B7E145F5986E5C /* Utilities */,
+				24B802A7391D642455C51066 /* Views */,
+			);
+			path = Dedupd;
+			sourceTree = "<group>";
+		};
+		D28F4B964BA9C2A4E1632975 /* Stores */ = {
+			isa = PBXGroup;
+			children = (
+				80C2447C5E4050B482849954 /* AppSettings.swift */,
+				529D77FFCA704C733E442B0C /* DaemonStore.swift */,
+			);
+			path = Stores;
+			sourceTree = "<group>";
+		};
+		D348A605DED98D36EA296B87 = {
+			isa = PBXGroup;
+			children = (
+				3E3A2969749C0A1640EF764D /* control */,
+				B41611E64B8E82ED73551250 /* Dedupd */,
+				B2114F9F1A27F9046D1425FB /* DedupdClient */,
+				827A8E4FB52622182235A235 /* DedupdTests */,
+				602B9822ED3B4EAA415902E3 /* DedupdUITests */,
+				886EC31F68271D4267287F5E /* macos-app */,
+				B3DBC1C15F51378A18171796 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EE06662998A2A4ADBBB68887 /* Settings */ = {
+			isa = PBXGroup;
+			children = (
+				F950F5B39A63FE6371F68BBB /* SettingsView.swift */,
+			);
+			path = Settings;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		70EB4CF2CFD4BCC0D425B19B /* DedupdTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 71F51A61D20B6DCAFDD6952A /* Build configuration list for PBXNativeTarget "DedupdTests" */;
+			buildPhases = (
+				00E0AD691F4BC3BAEFB3D4EC /* Sources */,
+				3228BFC6BC490E81D6E70330 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				126F380720A306CC2E880151 /* PBXTargetDependency */,
+			);
+			name = DedupdTests;
+			packageProductDependencies = (
+			);
+			productName = DedupdTests;
+			productReference = 84653B2D387E591DA027C137 /* DedupdTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		B7BB56B7B835457D5F535117 /* DedupdUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 060B013776FA22728233AF60 /* Build configuration list for PBXNativeTarget "DedupdUITests" */;
+			buildPhases = (
+				1EDF328C3586597601BAB99E /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				29C3F8019A5DF9E04EAB311D /* PBXTargetDependency */,
+			);
+			name = DedupdUITests;
+			packageProductDependencies = (
+			);
+			productName = DedupdUITests;
+			productReference = 393B089D3714D2F21FAB6A54 /* DedupdUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		CAD98FA8C05FCC94D7CB6C55 /* DedupdClient */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 798D3F94CC017010A14D536A /* Build configuration list for PBXNativeTarget "DedupdClient" */;
+			buildPhases = (
+				F26C10A966CF7EAFD2E291E0 /* Build the Rust client and its Swift bindings */,
+				42CF4AC6591B6F42C9262710 /* Sources */,
+				34716F7521C670BC374868C4 /* Copy Swift Objective-C Interface Header */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = DedupdClient;
+			packageProductDependencies = (
+			);
+			productName = DedupdClient;
+			productReference = 47154FFC00A98EEA33F16A24 /* libDedupdClient.a */;
+			productType = "com.apple.product-type.library.static";
+		};
+		D424CD3563BFE15929FE1DA5 /* Dedupd */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BD23A8E23663A4F44667AB73 /* Build configuration list for PBXNativeTarget "Dedupd" */;
+			buildPhases = (
+				F39D874EDD7FB1D8B6B21117 /* Sync Version from Cargo.toml */,
+				909EE81415EC6927A7ED50D9 /* Sources */,
+				B3620337D675183A0676A635 /* Resources */,
+				C81986854EFDE01D538152C3 /* Frameworks */,
+				832DDD33527A870534A0BAF0 /* SwiftLint */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6BACFAC071F43A19A3CE597B /* PBXTargetDependency */,
+			);
+			name = Dedupd;
+			packageProductDependencies = (
+			);
+			productName = Dedupd;
+			productReference = 5716B0D1164BDDD0594525B7 /* Dedupd.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		BE256F0F681921479F06D10B /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 2600;
+				TargetAttributes = {
+					70EB4CF2CFD4BCC0D425B19B = {
+						DevelopmentTeam = 4348AJW8CG;
+					};
+					B7BB56B7B835457D5F535117 = {
+						DevelopmentTeam = 4348AJW8CG;
+						TestTargetID = D424CD3563BFE15929FE1DA5;
+					};
+					CAD98FA8C05FCC94D7CB6C55 = {
+						DevelopmentTeam = 4348AJW8CG;
+					};
+					D424CD3563BFE15929FE1DA5 = {
+						DevelopmentTeam = 4348AJW8CG;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = AEAB0A41FE4E6486B4503DC4 /* Build configuration list for PBXProject "Dedupd" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = D348A605DED98D36EA296B87;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = B3DBC1C15F51378A18171796 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				CAD98FA8C05FCC94D7CB6C55 /* DedupdClient */,
+				D424CD3563BFE15929FE1DA5 /* Dedupd */,
+				70EB4CF2CFD4BCC0D425B19B /* DedupdTests */,
+				B7BB56B7B835457D5F535117 /* DedupdUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		3228BFC6BC490E81D6E70330 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AF5B6D66166A15273837C3B6 /* control in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B3620337D675183A0676A635 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				6CA3A4A0C7623D56CE4B3142 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		34716F7521C670BC374868C4 /* Copy Swift Objective-C Interface Header */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(DERIVED_SOURCES_DIR)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			name = "Copy Swift Objective-C Interface Header";
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/include/$(PRODUCT_MODULE_NAME)/$(SWIFT_OBJC_INTERFACE_HEADER_NAME)",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "ditto \"${SCRIPT_INPUT_FILE_0}\" \"${SCRIPT_OUTPUT_FILE_0}\"\n";
+		};
+		832DDD33527A870534A0BAF0 /* SwiftLint */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = SwiftLint;
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\"\nif command -v swiftlint >/dev/null 2>&1; then\n  swiftlint lint --config \"$SRCROOT/.swiftlint.yml\"\nelse\n  echo \"warning: SwiftLint not installed — run 'brew install swiftlint'\"\nfi\n";
+		};
+		F26C10A966CF7EAFD2E291E0 /* Build the Rust client and its Swift bindings */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build the Rust client and its Swift bindings";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "sh \"$SRCROOT/scripts/build-rust-client.sh\"\n";
+		};
+		F39D874EDD7FB1D8B6B21117 /* Sync Version from Cargo.toml */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Sync Version from Cargo.toml";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "CARGO_TOML=\"$SRCROOT/../Cargo.toml\"\nXCCONFIG=\"$SRCROOT/Version.xcconfig\"\nif [ -f \"$CARGO_TOML\" ]; then\n  VERSION=$(grep '^version' \"$CARGO_TOML\" | head -1 | sed 's/.*\"\\(.*\\)\".*/\\1/')\n  NEW=$(printf '// Synced from Cargo.toml\\nMARKETING_VERSION = %s\\nCURRENT_PROJECT_VERSION = 1\\n' \"$VERSION\")\n  [ \"$NEW\" = \"$(cat \"$XCCONFIG\" 2>/dev/null)\" ] || printf '%s\\n' \"$NEW\" > \"$XCCONFIG\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		00E0AD691F4BC3BAEFB3D4EC /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				09A82F26B3E014B9A9EBAD47 /* AppSettingsTests.swift in Sources */,
+				449528589E2D233EDBD70AB5 /* ByteFormatTests.swift in Sources */,
+				A0B0AFB37DF1534E16D19012 /* ContractTests.swift in Sources */,
+				F4C81C84750436332D54C304 /* DaemonStoreTests.swift in Sources */,
+				72AE3DC29EEF642ABC85BF78 /* DisplayTests.swift in Sources */,
+				9F578AB274ACEE9059B604C1 /* FakeDaemonClient.swift in Sources */,
+				CDA4CC5DBC16EED43287699D /* FixtureServer.swift in Sources */,
+				B11BF4A989CDA041FC7C7E1E /* PullFormTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1EDF328C3586597601BAB99E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				852E8BFF75CF87037EEE7370 /* DedupdUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		42CF4AC6591B6F42C9262710 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				7C5BFD402DCB9AC6D69BCFF9 /* dedupd_client.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		909EE81415EC6927A7ED50D9 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				A582FBC51E3BA26B922A8817 /* AppEnvironment.swift in Sources */,
+				CF61A5B7B2462BEDD9A5F9DE /* AppSettings.swift in Sources */,
+				D8612C3610B0CBDF5220EC79 /* ByteFormat.swift in Sources */,
+				41A06DFAF3DFB77E7A2F6162 /* DaemonClient.swift in Sources */,
+				49FE23781FCF76F8253A06B8 /* DaemonStore.swift in Sources */,
+				2B6F664956DD0C96C3135FCB /* DedupdApp.swift in Sources */,
+				6E504A5BDD7B3F70B68F40E1 /* FixtureDaemonClient.swift in Sources */,
+				BB1DE94FBCEA0A5524146AD3 /* MenuBarLabel.swift in Sources */,
+				AEC877EA68F6C97C7C341510 /* ModelApp.swift in Sources */,
+				D7E8C19A8A78038D3DC39445 /* NotRunningView.swift in Sources */,
+				47FE198D766C4B957664E172 /* PullForm.swift in Sources */,
+				990F0DAD4986766D378A6759 /* PullSection.swift in Sources */,
+				D9CEA896B890CE262E55775D /* Repository+Display.swift in Sources */,
+				EF71F650869C4593E9411446 /* Sections.swift in Sources */,
+				46E123C274C09A97F7F5362F /* SettingsView.swift in Sources */,
+				B902F42BEE1E2743274F14F8 /* StatusPanel.swift in Sources */,
+				3337FE8AB35CEBAAAC8A10FB /* SummaryTiles.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		126F380720A306CC2E880151 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D424CD3563BFE15929FE1DA5 /* Dedupd */;
+			targetProxy = 0A340512C155D25083F09081 /* PBXContainerItemProxy */;
+		};
+		29C3F8019A5DF9E04EAB311D /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = D424CD3563BFE15929FE1DA5 /* Dedupd */;
+			targetProxy = F3D7A0F26DCD6B717D173222 /* PBXContainerItemProxy */;
+		};
+		6BACFAC071F43A19A3CE597B /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = CAD98FA8C05FCC94D7CB6C55 /* DedupdClient */;
+			targetProxy = 1CCE42EE65229D8AF5310F49 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		153806A53CE56ECE36A44F89 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C855F026EBAE19EDE057932 /* Developer.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.descoped.dedupd.app.tests;
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Dedupd.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Dedupd";
+			};
+			name = Debug;
+		};
+		1F931283BA55EABC4C013B4D /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C855F026EBAE19EDE057932 /* Developer.xcconfig */;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.descoped.dedupd.client;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_SUPPRESS_WARNINGS = YES;
+			};
+			name = Debug;
+		};
+		3D95E93D31FE0F39C52444CC /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/DedupdClient/Generated/FFI";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		41A4D464ACF8C98E21340BD0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C855F026EBAE19EDE057932 /* Developer.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = Dedupd/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(SRCROOT)/build/rust/libdedupd_client.a",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.descoped.dedupd.app;
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+			};
+			name = Debug;
+		};
+		53AE0B1B18655E0B50DF910B /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C855F026EBAE19EDE057932 /* Developer.xcconfig */;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				INFOPLIST_FILE = Dedupd/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				OTHER_LDFLAGS = (
+					"$(SRCROOT)/build/rust/libdedupd_client.a",
+					"-ObjC",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.descoped.dedupd.app;
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+			};
+			name = Release;
+		};
+		6B3E71133981D111BB8C593A /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ARCHS = arm64;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_INCLUDE_PATHS = "$(SRCROOT)/DedupdClient/Generated/FFI";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+		B28DA2B85794039FDB5187C1 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C855F026EBAE19EDE057932 /* Developer.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.descoped.dedupd.app.uitests;
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = Dedupd;
+			};
+			name = Release;
+		};
+		D95C7018C68918E4A71F7832 /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C855F026EBAE19EDE057932 /* Developer.xcconfig */;
+			buildSettings = {
+				COMBINE_HIDPI_IMAGES = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.descoped.dedupd.client;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				SWIFT_STRICT_CONCURRENCY = minimal;
+				SWIFT_SUPPRESS_WARNINGS = YES;
+			};
+			name = Release;
+		};
+		ED9F030B558128A9473D450F /* Debug */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C855F026EBAE19EDE057932 /* Developer.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.descoped.dedupd.app.uitests;
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = Dedupd;
+			};
+			name = Debug;
+		};
+		FF246513BE13111F48A843BE /* Release */ = {
+			isa = XCBuildConfiguration;
+			baseConfigurationReference = 4C855F026EBAE19EDE057932 /* Developer.xcconfig */;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = io.descoped.dedupd.app.tests;
+				SDKROOT = macosx;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Dedupd.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Dedupd";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		060B013776FA22728233AF60 /* Build configuration list for PBXNativeTarget "DedupdUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ED9F030B558128A9473D450F /* Debug */,
+				B28DA2B85794039FDB5187C1 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		71F51A61D20B6DCAFDD6952A /* Build configuration list for PBXNativeTarget "DedupdTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				153806A53CE56ECE36A44F89 /* Debug */,
+				FF246513BE13111F48A843BE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		798D3F94CC017010A14D536A /* Build configuration list for PBXNativeTarget "DedupdClient" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				1F931283BA55EABC4C013B4D /* Debug */,
+				D95C7018C68918E4A71F7832 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		AEAB0A41FE4E6486B4503DC4 /* Build configuration list for PBXProject "Dedupd" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3D95E93D31FE0F39C52444CC /* Debug */,
+				6B3E71133981D111BB8C593A /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BD23A8E23663A4F44667AB73 /* Build configuration list for PBXNativeTarget "Dedupd" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				41A4D464ACF8C98E21340BD0 /* Debug */,
+				53AE0B1B18655E0B50DF910B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = BE256F0F681921479F06D10B /* Project object */;
+}

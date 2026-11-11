@@ -552,3 +552,80 @@ async fn a_model_an_app_downloaded_itself_is_shared_by_the_next_pass() {
     assert_eq!(after.forgotten, 2);
     assert!(fx.server.engine.store.contains(&sha256(&fx.weights)));
 }
+
+/// The control API's answers, as the macOS app's tests decode them through
+/// the client. Paths, the upstream address and the version differ from run to
+/// run and are replaced, so the files change only when the answers do.
+///
+/// Re-record with `DEDUPD_UPDATE_FIXTURES=1 cargo test -p dedupd-server --test
+/// frontends control_api_answers_match_the_recorded_ones` (`just fixtures`).
+#[tokio::test]
+async fn control_api_answers_match_the_recorded_ones() {
+    let fx = fixture().await;
+    let root = fx._dir.path().to_string_lossy().into_owned();
+    let real = std::fs::canonicalize(fx._dir.path())
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let upstream = fx.upstream.uri();
+    let normalise = |body: String| -> String {
+        let body = body
+            .replace(&real, "/Users/example")
+            .replace(&root, "/Users/example")
+            .replace(&upstream, "https://huggingface.co");
+        let mut value: Value = serde_json::from_str(&body).unwrap();
+        if value.get("version").is_some() {
+            value["version"] = json!("0.0.0");
+        }
+        serde_json::to_string_pretty(&value).unwrap() + "\n"
+    };
+    let post = |path: &'static str, body: Value| {
+        let (http, base) = (fx.http.clone(), fx.base.clone());
+        async move {
+            http.post(format!("{base}/dedupd/v1/{path}"))
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    let pull = post("pull", json!({"model": REPO, "apps": ["bionic"]})).await;
+    let scan = post("scan", json!({})).await;
+    let error = post("pull", json!({"model": "not a model", "apps": []})).await;
+    let status = fx
+        .http
+        .get(format!("{}/dedupd/v1/status", fx.base))
+        .send()
+        .await
+        .unwrap()
+        .text()
+        .await
+        .unwrap();
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/control");
+    let update = std::env::var_os("DEDUPD_UPDATE_FIXTURES").is_some();
+    for (name, body) in [
+        ("status.json", status),
+        ("pull.json", pull),
+        ("scan.json", scan),
+        ("error.json", error),
+    ] {
+        let now = normalise(body);
+        let file = dir.join(name);
+        if update {
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(&file, &now).unwrap();
+            continue;
+        }
+        let recorded = std::fs::read_to_string(&file)
+            .unwrap_or_else(|_| panic!("{} is missing; record it", file.display()));
+        assert_eq!(
+            recorded, now,
+            "{name} changed; re-record with DEDUPD_UPDATE_FIXTURES=1 and check the app still reads it"
+        );
+    }
+}

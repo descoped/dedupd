@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phases 1 to 4 of the build order are implemented and committed one phase per commit: store and adoption, fetcher and placers, the HTTP front ends, and the daemon with its background work. The UniFFI client crate for the control API exists and generates Swift bindings. Not built: the Swift app itself, Bionic network interception, and Xet for the daemon's own downloads. `spikes/` holds three standalone Python scripts (standard library only, run with `python3`) that proved the protocol behaviour before the Rust code existed.
+Phases 1 to 4 of the build order are implemented and committed one phase per commit: store and adoption, fetcher and placers, the HTTP front ends, and the daemon with its background work. The macOS menu bar app (`macos-app/`) is started: it shows the daemon's status and can pull a model and start a scan, through the UniFFI client crate. Not built: Bionic network interception, and Xet for the daemon's own downloads. `spikes/` holds three standalone Python scripts (standard library only, run with `python3`) that proved the protocol behaviour before the Rust code existed.
 
 The full research and plan is the Claude Docs artifact "dedupd: research and implementation plan" (https://claude.ai/artifact/CYuT3GEgaBf9EgKLaMPoxd); read it with the Artifact/Claude Docs tools before making design changes, and update it when a decision changes.
 
@@ -18,11 +18,21 @@ cargo test -p dedupd-server --test frontends   # client request sequences agains
 cargo test -p dedupd-core hub::tests::parses_link_header   # a single test
 cargo clippy --workspace --all-targets -- -D warnings
 cargo fmt --all
+```
 
-# Swift bindings for the control API client
-cargo build --release -p dedupd-client
-cargo run --release -p dedupd-client --features bindgen --bin uniffi-bindgen -- \
-  generate --library target/release/libdedupd_client.dylib --language swift --out-dir <dir>
+`just` lists the recipes that wrap these and the app's (`just check` is the Rust gate).
+
+The macOS app (needs Xcode, `brew install xcodegen swiftlint just`):
+
+```sh
+just app-check        # SwiftLint strict, build, unit tests (the gate)
+just app-uitest       # drive the panel with canned daemons; takes pictures
+just app-screenshots  # export those pictures to macos-app/build/screenshots
+just app-run          # build and start the app (menu bar)
+just app-preview downloading   # the panel in a window, on a canned daemon
+just app-live 127.0.0.1:8643   # end to end: pull a model through a running scratch daemon
+just app-bindings     # rebuild the Rust client and regenerate the Swift bindings
+just fixtures         # re-record the control API answers the app's contract tests read
 ```
 
 Tests need macOS on APFS, because they create real clones in a temp directory. They use a mock Hugging Face (wiremock) and scratch app folders; they never touch the real app folders or `~/.dedupd`.
@@ -42,10 +52,19 @@ A Cargo workspace (Rust 2024):
   - All SQL lives in `db` (except the read-only queries in `status`); the one clone-then-rename is `clone::clone_into_place`; shared test support is `tests/common`, also used by the server tests.
   - `place` (the three placers), `pull` (resolve, fetch, place; also the `Engine` every caller shares), `archive` (second copy on another disk), `maintain` (reclaim, verify, gc, forget), `status`.
 - `crates/dedupd-server` — the daemon's HTTP side. `hubapi` (Hub API), `registry` (Ollama registry), `files` (Range serving, and assembling large files from what clients download through the daemon), `proxy` (pass-through and header cleaning), `control` (`/dedupd/v1`), `daemon` (the background pass, the folder watcher and the scheduled store check).
-- `crates/dedupd-client` — a small blocking client for the control API, exported through UniFFI (`status`, `pull`, `scan`). It does not depend on the core.
+- `crates/dedupd-client` — a small blocking client for the control API, exported through UniFFI (`status`, `pull`, `scan`, `default_address`). It does not depend on the core and links no TLS stack (the daemon is plain HTTP on loopback).
 - `crates/dedupd` — the `dedupd` binary: `main.rs` (the command list; pull, place, adopt, status, backup), `serve.rs` (serve, env), `maintenance.rs` (reclaim, verify, gc, forget) and `launchd.rs` (install, uninstall).
 
-The command line works on the store and database directly, also while the daemon runs; SQLite in WAL mode and atomic renames make that safe. `pull` and `place` are the exception: when a daemon with the same home answers on the configured address they are sent to it through `dedupd-client`, so one process does the downloading. The daemon's control API (`GET /dedupd/v1/status`, `POST /dedupd/v1/pull`, `POST /dedupd/v1/scan`) is what the future Swift app talks to, through `dedupd-client`. The app must not embed the core, because the daemon has to keep serving when the app is closed.
+The command line works on the store and database directly, also while the daemon runs; SQLite in WAL mode and atomic renames make that safe. `pull` and `place` are the exception: when a daemon with the same home answers on the configured address they are sent to it through `dedupd-client`, so one process does the downloading. The daemon's control API (`GET /dedupd/v1/status`, `POST /dedupd/v1/pull`, `POST /dedupd/v1/scan`) is what the macOS app talks to, through `dedupd-client`. The app must not embed the core, because the daemon has to keep serving when the app is closed.
+
+## The macOS app
+
+`macos-app/` is a SwiftUI menu bar app (`LSUIElement`, macOS 15, Swift 6), set up like frinkel's `ios-app`: `project.yml` (XcodeGen) is the source of truth and the generated `Dedupd.xcodeproj` is committed; `Developer.xcconfig` carries the signing team and includes `Version.xcconfig` (synced from `Cargo.toml` at build time) and an optional gitignored `Local.xcconfig`; SwiftLint runs after every build. Conventions are in `.claude/rules/macos-app.md`.
+
+- `DedupdClient/` — a static library target holding only what `scripts/build-rust-client.sh` generates from `crates/dedupd-client` (the Swift bindings and their C module, committed). The script runs before every Xcode build and also leaves `build/rust/libdedupd_client.a`, which the app links by path. Built for arm64 only.
+- `Dedupd/` — `App` (entry point, launch options, the app-wide objects), `Services` (`DaemonClient` protocol; `LiveDaemonClient` calls the Rust client off the main thread; `FixtureDaemonClient` answers from fixed data), `Stores` (`DaemonStore` polls the status and runs pull and scan; `AppSettings` holds the daemon address), `Models`, `Views` (the panel, Settings), `Utilities`.
+- `DedupdTests/` — Swift Testing. `ContractTests` run the real Rust client against a loopback server that replays the daemon's answers recorded in `crates/dedupd-server/tests/fixtures/control/`.
+- `DedupdUITests/` — XCUITest. The app started with `-uiTestFixture <name>` (or `-panelWindow` on the real daemon) also shows its panel in an ordinary window, because a menu bar panel cannot be driven or photographed reliably. `-daemonAddress host:port` overrides the address for one run.
 
 ## Two tiers of storage
 
@@ -144,4 +163,6 @@ Use a scratch `HF_HOME` and a tiny model (for example `bartowski/SmolLM2-135M-In
 4. Done. launchd agent, `env`, background pass, reclaim, `verify`, `backup`, `gc`, offline serving.
 5. Gated-repository auth for Ollama is done (the daemon adds its own Hugging Face token to registry requests that carry none). Not done: Bionic network interception (its downloads are picked up by the background pass instead) and Xet for the daemon's own upstream fetch (plain HTTP works; this would only be faster).
 
-Next: the Swift menu bar app on top of `dedupd-client`; ModelScope as a second provider (the `repos.provider` column exists for it).
+6. Started. The macOS menu bar app: status, pull and scan work end to end against a running daemon. Not done: starting or installing the daemon from the app, start at login, a model's details (files, verify, forget, gc), notifications, distribution (notarised build, Xcode Cloud).
+
+Next: the rest of the app; ModelScope as a second provider (the `repos.provider` column exists for it).

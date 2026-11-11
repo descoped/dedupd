@@ -1,0 +1,124 @@
+name: Dedupd
+options:
+  bundleIdPrefix: io.descoped.dedupd
+  deploymentTarget:
+    macOS: "15.0"
+  xcodeVersion: "26"
+  defaultConfig: Debug
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # The Rust client is built for this Mac's architecture only.
+    ARCHS: arm64
+    # Where the C module of the generated bindings lives; every target that
+    # imports DedupdClient needs it.
+    SWIFT_INCLUDE_PATHS: $(SRCROOT)/DedupdClient/Generated/FFI
+targets:
+  # The Swift bindings UniFFI generates from crates/dedupd-client. Kept in a
+  # target of its own so the generated code is neither linted nor held to the
+  # app's concurrency settings.
+  DedupdClient:
+    type: library.static
+    platform: macOS
+    sources:
+      - path: DedupdClient
+        excludes:
+          - "Generated/FFI/**"
+    configFiles:
+      Debug: Developer.xcconfig
+      Release: Developer.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.descoped.dedupd.client
+        SWIFT_STRICT_CONCURRENCY: minimal
+        SWIFT_SUPPRESS_WARNINGS: YES
+    preBuildScripts:
+      - script: |
+          sh "$SRCROOT/scripts/build-rust-client.sh"
+        name: Build the Rust client and its Swift bindings
+        basedOnDependencyAnalysis: false
+  Dedupd:
+    type: application
+    platform: macOS
+    sources:
+      - Dedupd
+    configFiles:
+      Debug: Developer.xcconfig
+      Release: Developer.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.descoped.dedupd.app
+        INFOPLIST_FILE: Dedupd/Info.plist
+        CODE_SIGN_IDENTITY: "Apple Development"
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_HARDENED_RUNTIME: YES
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        SWIFT_STRICT_CONCURRENCY: complete
+        # The static library the pre-build script of DedupdClient leaves here.
+        # Named by path: the folder cargo builds into also holds a dynamic
+        # library of the same name, which the linker would prefer.
+        OTHER_LDFLAGS: $(SRCROOT)/build/rust/libdedupd_client.a
+    dependencies:
+      - target: DedupdClient
+    preBuildScripts:
+      - script: |
+          CARGO_TOML="$SRCROOT/../Cargo.toml"
+          XCCONFIG="$SRCROOT/Version.xcconfig"
+          if [ -f "$CARGO_TOML" ]; then
+            VERSION=$(grep '^version' "$CARGO_TOML" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+            NEW=$(printf '// Synced from Cargo.toml\nMARKETING_VERSION = %s\nCURRENT_PROJECT_VERSION = 1\n' "$VERSION")
+            [ "$NEW" = "$(cat "$XCCONFIG" 2>/dev/null)" ] || printf '%s\n' "$NEW" > "$XCCONFIG"
+          fi
+        name: Sync Version from Cargo.toml
+        basedOnDependencyAnalysis: false
+    postBuildScripts:
+      - script: |
+          PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+          if command -v swiftlint >/dev/null 2>&1; then
+            swiftlint lint --config "$SRCROOT/.swiftlint.yml"
+          else
+            echo "warning: SwiftLint not installed — run 'brew install swiftlint'"
+          fi
+        name: SwiftLint
+        basedOnDependencyAnalysis: false
+    scheme:
+      testTargets:
+        - DedupdTests
+        - DedupdUITests
+  DedupdTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - DedupdTests
+      # The daemon's control API answers, recorded by the Rust integration
+      # suite (`just fixtures`); ContractTests reads them through the client.
+      - path: ../crates/dedupd-server/tests/fixtures/control
+        type: folder
+        buildPhase: resources
+    configFiles:
+      Debug: Developer.xcconfig
+      Release: Developer.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.descoped.dedupd.app.tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_STRICT_CONCURRENCY: complete
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Dedupd.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Dedupd"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+    dependencies:
+      - target: Dedupd
+  DedupdUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - DedupdUITests
+    configFiles:
+      Debug: Developer.xcconfig
+      Release: Developer.xcconfig
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.descoped.dedupd.app.uitests
+        GENERATE_INFOPLIST_FILE: YES
+    dependencies:
+      - target: Dedupd

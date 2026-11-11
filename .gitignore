@@ -1,3 +1,9 @@
 .DS_Store
 /target
 .claude/worktrees/
+
+# macOS app
+macos-app/build/
+macos-app/Local.xcconfig
+xcuserdata/
+*.xcuserstate

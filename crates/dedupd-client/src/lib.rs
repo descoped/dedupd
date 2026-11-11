@@ -9,6 +9,16 @@ use std::time::Duration;
 
 uniffi::setup_scaffolding!();
 
+/// Where the daemon listens unless `listen` in its `config.toml` says
+/// otherwise. The same value as the core library's default.
+pub const DEFAULT_ADDRESS: &str = "127.0.0.1:8642";
+
+/// The address to try when the user has not chosen one.
+#[uniffi::export]
+pub fn default_address() -> String {
+    DEFAULT_ADDRESS.to_string()
+}
+
 #[derive(Debug, thiserror::Error, uniffi::Error)]
 pub enum ClientError {
     /// Nothing answered at the address: the daemon is not running.

@@ -568,6 +568,20 @@ mod tests {
     use dedupd_core::place::{App, Placed};
     use dedupd_core::pull::PullOutcome;
 
+    /// The client cannot depend on the core, so it carries its own copy of
+    /// the default address; the two must not drift.
+    #[test]
+    fn the_client_and_the_daemon_agree_on_the_default_address() {
+        assert_eq!(
+            dedupd_client::DEFAULT_ADDRESS,
+            dedupd_core::config::DEFAULT_LISTEN
+        );
+        assert_eq!(
+            dedupd_client::default_address(),
+            dedupd_client::DEFAULT_ADDRESS
+        );
+    }
+
     #[test]
     fn a_local_pull_outcome_reads_as_the_daemon_would_send_it() {
         let out = PullOutcome {
