@@ -37,12 +37,6 @@ mkdir -p "$tmp"
 
 cd "$root"
 
-# The generator is a feature of the client crate. Run it first: the plain
-# build below then leaves the library without the generator's dependencies.
-cargo run --quiet --release -p dedupd-client --features bindgen --bin uniffi-bindgen -- \
-  generate --library "$target/release/libdedupd_client.dylib" --language swift --out-dir "$tmp"
-cargo build --quiet --release -p dedupd-client
-
 # Replace a file only when its content differs.
 install_if_changed() {
   if ! cmp -s "$1" "$2"; then
@@ -51,9 +45,19 @@ install_if_changed() {
   fi
 }
 
+# The library first, without the generator: the app links this one. The build
+# also leaves the dynamic library the generator reads the interface from;
+# running the generator alone does not.
+cargo build --quiet --release -p dedupd-client
+install_if_changed "$target/release/libdedupd_client.a" "$out/libdedupd_client.a"
+
+# The generator is a feature of the client crate, so that its dependencies
+# stay out of the library built above.
+cargo run --quiet --release -p dedupd-client --features bindgen --bin uniffi-bindgen -- \
+  generate --library "$target/release/libdedupd_client.dylib" --language swift --out-dir "$tmp"
+
 install_if_changed "$tmp/dedupd_client.swift" "$generated/dedupd_client.swift"
 install_if_changed "$tmp/dedupd_clientFFI.h" "$generated/FFI/dedupd_clientFFI.h"
 # clang finds a module map only under this name.
 install_if_changed "$tmp/dedupd_clientFFI.modulemap" "$generated/FFI/module.modulemap"
-install_if_changed "$target/release/libdedupd_client.a" "$out/libdedupd_client.a"
 rm -rf "$tmp"
