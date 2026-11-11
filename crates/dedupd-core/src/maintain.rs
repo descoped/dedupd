@@ -4,11 +4,12 @@
 use crate::clone::{clone_into_place, same_volume};
 use crate::db::{BlobRow, Db, PROVIDER_HF, lock};
 use crate::hash::hash_file;
+use crate::place::{App, AppDirs, hf_repo_dir};
 use crate::store::{Fingerprint, Store};
 use anyhow::{Context, Result, bail};
 use std::collections::HashSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, SystemTime};
@@ -254,4 +255,215 @@ pub fn forget(db: &Mutex<Db>, repo: &str) -> Result<()> {
         );
     }
     db.delete_repo(id)
+}
+
+/// What removing a repository from one app would do. Nothing in it is
+/// removed until `unplace_apply` is given the plan.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct UnplacePlan {
+    pub repo: String,
+    pub app: String,
+    /// The app's files that would be removed, as `(path, size)`. Each is
+    /// exactly as it was when it was hashed, and its content stays in the
+    /// store.
+    pub remove: Vec<(String, u64)>,
+    /// Links and manifests that go with them.
+    pub links: Vec<String>,
+    /// Files that would be left alone, as `(path, reason)`.
+    pub keep: Vec<(String, String)>,
+    pub bytes: u64,
+}
+
+/// Work out what removing `repo` from `app` would delete. The store keeps
+/// every file, so the model can be placed again later.
+pub fn unplace_plan(
+    db: &Mutex<Db>,
+    store: &Store,
+    dirs: &AppDirs,
+    repo: &str,
+    app: App,
+) -> Result<UnplacePlan> {
+    let mut plan = UnplacePlan {
+        repo: repo.to_string(),
+        app: app.as_str().to_string(),
+        ..Default::default()
+    };
+    let placed: Vec<_> = lock(db)
+        .placements()?
+        .into_iter()
+        .filter(|p| p.repo == repo && p.app == app.as_str())
+        .collect();
+    let archive = store.archive().filter(|a| crate::archive::attached(a));
+    // Ollama keeps one file per layer, and models share layers.
+    let (manifests, used_elsewhere) = match app {
+        App::Ollama => ollama_use(dirs, repo),
+        _ => Default::default(),
+    };
+    for p in placed {
+        let reason = match Fingerprint::of(Path::new(&p.path)) {
+            Err(_) => Some("it is no longer there"),
+            Ok(now) if now != p.fingerprint() => Some("it has changed since dedupd looked at it"),
+            Ok(_) if used_elsewhere.contains(&p.sha256) => Some("another Ollama model uses it"),
+            Ok(_)
+                if !store.contains(&p.sha256)
+                    && !archive.is_some_and(|a| a.blob_path(&p.sha256).is_file()) =>
+            {
+                Some("the store has no copy of it")
+            }
+            Ok(_) => None,
+        };
+        match reason {
+            Some(why) => plan.keep.push((p.path, why.to_string())),
+            None => {
+                plan.bytes += p.size;
+                plan.remove.push((p.path, p.size));
+            }
+        }
+    }
+    plan.links = match app {
+        App::Ollama => manifests,
+        App::Hf => {
+            let going: HashSet<&str> = plan.remove.iter().map(|(p, _)| p.as_str()).collect();
+            hf_links(&hf_repo_dir(dirs, repo), &going)
+        }
+        App::Bionic => Vec::new(),
+    };
+    Ok(plan)
+}
+
+/// The manifest files of `repo` in Ollama's folder, and the layers that
+/// other models' manifests name.
+fn ollama_use(dirs: &AppDirs, repo: &str) -> (Vec<String>, HashSet<String>) {
+    let mut own = Vec::new();
+    let mut elsewhere = HashSet::new();
+    for found in crate::sources::ollama::manifests(&dirs.ollama) {
+        if found.repo == repo {
+            let rel = match found.provider {
+                PROVIDER_HF => Path::new(crate::ollama::HOST).join(repo),
+                _ => PathBuf::from(repo),
+            }
+            .join(&found.tag);
+            for tree in ["manifests", "manifests-v2"] {
+                let path = dirs.ollama.join(tree).join(&rel);
+                if fs::symlink_metadata(&path).is_ok() {
+                    own.push(path.to_string_lossy().into_owned());
+                }
+            }
+        } else if let Ok(manifest) = crate::ollama::Manifest::parse(&found.body) {
+            elsewhere.extend(
+                manifest
+                    .all()
+                    .filter_map(|l| l.sha256().ok())
+                    .map(str::to_string),
+            );
+        }
+    }
+    (own, elsewhere)
+}
+
+/// The snapshot links in a Hugging Face cache folder that point at one of
+/// the blobs in `going`.
+fn hf_links(repo_dir: &Path, going: &HashSet<&str>) -> Vec<String> {
+    let blobs = repo_dir.join("blobs");
+    walkdir::WalkDir::new(repo_dir.join("snapshots"))
+        .sort_by_file_name()
+        .into_iter()
+        .flatten()
+        .filter(|e| e.path_is_symlink())
+        .filter(|e| {
+            fs::read_link(e.path())
+                .ok()
+                .and_then(|target| target.file_name().map(|name| blobs.join(name)))
+                .is_some_and(|blob| going.contains(blob.to_string_lossy().as_ref()))
+        })
+        .map(|e| e.path().to_string_lossy().into_owned())
+        .collect()
+}
+
+/// Carry out a plan made by `unplace_plan`. A file that has changed since
+/// the plan was made is left alone. Returns the files removed.
+pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Result<usize> {
+    let app: App = plan.app.parse()?;
+    let recorded: std::collections::HashMap<String, Fingerprint> = lock(db)
+        .placements()?
+        .into_iter()
+        .filter(|p| p.repo == plan.repo && p.app == plan.app)
+        .map(|p| (p.path.clone(), p.fingerprint()))
+        .collect();
+    let mut removed = 0;
+    for (path, _) in &plan.remove {
+        let unchanged = recorded
+            .get(path)
+            .is_some_and(|fp| Fingerprint::of(Path::new(path)).is_ok_and(|now| now == *fp));
+        if !unchanged {
+            continue;
+        }
+        fs::remove_file(path).with_context(|| format!("removing {path}"))?;
+        lock(db).delete_placement(path)?;
+        removed += 1;
+    }
+    for link in &plan.links {
+        let _ = fs::remove_file(link);
+    }
+    if app == App::Hf {
+        let repo_dir = hf_repo_dir(dirs, &plan.repo);
+        if repo_dir.is_dir() && is_empty_tree(&repo_dir.join("blobs")) {
+            // Only names are left: which commit a branch was at, and which
+            // files the provider said do not exist.
+            let _ = fs::remove_dir_all(&repo_dir);
+        }
+    }
+    // Leave no empty folders behind. The app's own folder stays, and so do
+    // the folders Ollama keeps directly in it.
+    let (stop, keep_top) = match app {
+        App::Bionic => (dirs.bionic.as_path(), false),
+        App::Hf => (dirs.hf_cache.as_path(), false),
+        App::Ollama => (dirs.ollama.as_path(), true),
+    };
+    let mut folders: Vec<PathBuf> = plan
+        .remove
+        .iter()
+        .map(|(p, _)| p)
+        .chain(&plan.links)
+        .filter_map(|p| Path::new(p).parent().map(Path::to_path_buf))
+        .collect();
+    folders.sort();
+    folders.dedup();
+    for folder in folders.iter().rev() {
+        let mut dir = folder.as_path();
+        while dir != stop && dir.starts_with(stop) {
+            if keep_top && dir.parent() == Some(stop) {
+                break;
+            }
+            if !remove_if_empty(dir) {
+                break;
+            }
+            match dir.parent() {
+                Some(parent) => dir = parent,
+                None => break,
+            }
+        }
+    }
+    Ok(removed)
+}
+
+/// Remove `dir` when nothing is in it but what Finder leaves behind.
+fn remove_if_empty(dir: &Path) -> bool {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return false;
+    };
+    let names: Vec<_> = entries.flatten().map(|e| e.file_name()).collect();
+    if names.iter().any(|n| n != ".DS_Store") {
+        return false;
+    }
+    let _ = fs::remove_file(dir.join(".DS_Store"));
+    fs::remove_dir(dir).is_ok()
+}
+
+/// No file anywhere under `dir`; also true when `dir` is not there.
+fn is_empty_tree(dir: &Path) -> bool {
+    !walkdir::WalkDir::new(dir)
+        .into_iter()
+        .flatten()
+        .any(|e| !e.file_type().is_dir())
 }

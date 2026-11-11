@@ -48,9 +48,20 @@ pub async fn cmd_serve(o: &Opened, listen: Option<String>) -> Result<()> {
             _ = term.recv() => {}
         }
     };
-    let result = dedupd_server::serve(server, listener, shutdown).await;
+    let result = dedupd_server::serve(server.clone(), listener, shutdown).await;
     background.abort();
     result?;
+    if server.restart_asked() {
+        // Become a new daemon in this process: launchd sees no change, and
+        // a daemon started by hand stays in its terminal.
+        use std::os::unix::process::CommandExt;
+        let exe = std::env::current_exe().context("finding the dedupd binary")?;
+        eprintln!("dedupd: starting again");
+        let failed = std::process::Command::new(&exe)
+            .args(std::env::args_os().skip(1))
+            .exec();
+        return Err(failed).with_context(|| format!("starting {}", exe.display()));
+    }
     Ok(())
 }
 

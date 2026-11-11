@@ -1,0 +1,43 @@
+{
+  "apps": [
+    {
+      "bytes": 300008,
+      "files": 2,
+      "id": "bionic",
+      "models": 1,
+      "path": "/Users/example/apps/lmstudio/models",
+      "present": true,
+      "shared_bytes": 300008
+    },
+    {
+      "bytes": 0,
+      "files": 0,
+      "id": "ollama",
+      "models": 0,
+      "path": "/Users/example/apps/ollama/models",
+      "present": false,
+      "shared_bytes": 0
+    },
+    {
+      "bytes": 300008,
+      "files": 2,
+      "id": "hf",
+      "models": 1,
+      "path": "/Users/example/apps/huggingface/hub",
+      "present": true,
+      "shared_bytes": 300008
+    }
+  ],
+  "archive": null,
+  "store": {
+    "bytes": 300008,
+    "files": 2,
+    "id": "store",
+    "models": 1,
+    "path": "/Users/example/home/store",
+    "present": true,
+    "shared_bytes": 0
+  },
+  "volume_free": 400000000000,
+  "volume_total": 1000000000000
+}

@@ -145,6 +145,24 @@ enum Command {
         #[arg(long, hide = true, default_value = launchd::LABEL)]
         label: String,
     },
+    /// Start the installed daemon again after `stop`
+    Start {
+        #[arg(long, hide = true, default_value = launchd::LABEL)]
+        label: String,
+    },
+    /// Stop the daemon until the next login or `start`; the agent stays installed
+    Stop {
+        #[arg(long, hide = true, default_value = launchd::LABEL)]
+        label: String,
+    },
+    /// Show whether the launchd agent is installed and running
+    Agent {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+        #[arg(long, hide = true, default_value = launchd::LABEL)]
+        label: String,
+    },
     /// Print the settings that point Hugging Face tools and Ollama at the daemon
     Env,
 }
@@ -540,6 +558,21 @@ fn cmd_backup(o: &Opened, dir: Option<PathBuf>) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+    // The agent is looked at and stopped without opening the store, so
+    // asking about a daemon that was never installed creates nothing.
+    match &cli.command {
+        Command::Uninstall { label } => return launchd::cmd_uninstall(label),
+        Command::Start { label } => return launchd::cmd_start(label),
+        Command::Stop { label } => return launchd::cmd_stop(label),
+        Command::Agent { json, label } => {
+            let root = cli
+                .home
+                .or_else(Home::default_root)
+                .context("HOME is not set; pass --home")?;
+            return launchd::cmd_agent(&root, label, *json);
+        }
+        _ => {}
+    }
     let o = open(cli.home, cli.endpoint)?;
 
     match cli.command {
@@ -561,7 +594,10 @@ async fn main() -> Result<()> {
         Command::Gc { offload, apply } => maintenance::cmd_gc(&o, offload, apply),
         Command::Forget { repo } => maintenance::cmd_forget(&o, &repo),
         Command::Install { env, label } => launchd::cmd_install(&o, env, &label),
-        Command::Uninstall { label } => launchd::cmd_uninstall(&label),
+        Command::Uninstall { .. }
+        | Command::Start { .. }
+        | Command::Stop { .. }
+        | Command::Agent { .. } => unreachable!("handled before the store was opened"),
         Command::Env => serve::cmd_env(&o),
     }
 }

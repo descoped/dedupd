@@ -9,7 +9,7 @@ use dedupd_core::place::{App, AppDirs};
 use dedupd_core::pull::{self, PullRequest};
 use dedupd_core::select::Selection;
 use dedupd_core::store::Store;
-use dedupd_core::{Home, archive};
+use dedupd_core::{Home, archive, library, maintain};
 use serde_json::json;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
@@ -225,6 +225,79 @@ async fn pull_places_into_three_apps_and_survives_upstream_removal() {
         .await
         .unwrap();
     assert_placed(&up, &e3.dirs);
+}
+
+#[tokio::test]
+async fn a_model_is_removed_from_an_app_and_placed_again() {
+    let up = upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let e = engine(&home, &up.server.uri(), &dir.path().join("apps"), None);
+    pull::pull(&e, &request(&App::ALL, false), &Arc::default())
+        .await
+        .unwrap();
+
+    // The library says where the model is and what it can be used as.
+    let detail = library::model(&e.db(), &e.store, REPO).unwrap().unwrap();
+    assert_eq!(detail.model.apps.len(), 3);
+    assert_eq!(detail.model.meta.formats, ["gguf"]);
+    let q4 = detail.variants.iter().find(|v| v.name == "Q4_K_M").unwrap();
+    assert_eq!(q4.spec, format!("{REPO}:Q4_K_M"));
+    assert_eq!(q4.placed_in, ["bionic", "ollama", "hf"]);
+    assert_eq!(q4.stored_bytes, q4.bytes);
+    let q8 = detail.variants.iter().find(|v| v.name == "Q8_0").unwrap();
+    assert!(q8.placed_in.is_empty());
+    assert_eq!(detail.revisions[0].refs, ["main"]);
+    let where_ = library::locations(&e.db(), &e.store, &e.dirs).unwrap();
+    assert!(where_.apps.iter().all(|a| a.present && a.models == 1));
+    assert!(where_.volume_free > 0 && where_.volume_total > where_.volume_free);
+
+    // Another Ollama model uses the same weights; they must stay for it.
+    let other = e.dirs.ollama.join("manifests/hf.co/org/Other/latest");
+    fs::create_dir_all(other.parent().unwrap()).unwrap();
+    fs::write(&other, &up.manifest).unwrap();
+    // The owner edited one of Bionic's files.
+    let edited = e.dirs.bionic.join(REPO).join("sub/config.json");
+    fs::write(&edited, b"my own edit").unwrap();
+
+    for app in App::ALL {
+        let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, REPO, app).unwrap();
+        // Planning removes nothing.
+        assert!(plan.remove.iter().all(|(p, _)| fs::metadata(p).is_ok()));
+        maintain::unplace_apply(&e.db, &e.dirs, &plan).unwrap();
+        match app {
+            App::Bionic => {
+                assert_eq!((plan.remove.len(), plan.keep.len()), (1, 1));
+                assert_eq!(fs::read(&edited).unwrap(), b"my own edit");
+                assert!(!e.dirs.bionic.join(REPO).join("model-Q4_K_M.gguf").exists());
+            }
+            App::Ollama => {
+                assert_eq!((plan.remove.len(), plan.keep.len()), (0, 3));
+                assert_eq!(plan.keep[0].1, "another Ollama model uses it");
+                assert_eq!(plan.links.len(), 1);
+                assert!(!e.dirs.ollama.join("manifests/hf.co").join(REPO).exists());
+                assert!(other.is_file());
+                assert_eq!(
+                    fs::read_dir(e.dirs.ollama.join("blobs")).unwrap().count(),
+                    3
+                );
+            }
+            App::Hf => {
+                assert_eq!((plan.remove.len(), plan.links.len()), (2, 2));
+                assert!(!e.dirs.hf_cache.join("models--org--Repo-GGUF").exists());
+                assert!(e.dirs.hf_cache.is_dir());
+            }
+        }
+    }
+    // The store still has everything, so the model goes back without the
+    // provider.
+    assert!(e.store.contains(&sha256(&up.weights)));
+    fs::remove_file(&edited).unwrap();
+    let e2 = engine(&home, "http://127.0.0.1:1", &dir.path().join("apps"), None);
+    pull::pull(&e2, &request(&App::ALL, true), &Arc::default())
+        .await
+        .unwrap();
+    assert_placed(&up, &e2.dirs);
 }
 
 #[tokio::test]

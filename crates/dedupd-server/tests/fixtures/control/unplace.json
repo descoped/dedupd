@@ -1,0 +1,18 @@
+{
+  "app": "bionic",
+  "bytes": 300008,
+  "keep": [],
+  "links": [],
+  "remove": [
+    {
+      "path": "/Users/example/apps/lmstudio/models/org/Repo-GGUF/model.gguf",
+      "size": 300000
+    },
+    {
+      "path": "/Users/example/apps/lmstudio/models/org/Repo-GGUF/sub/config.json",
+      "size": 8
+    }
+  ],
+  "removed": null,
+  "repo": "org/Repo-GGUF"
+}

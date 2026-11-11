@@ -87,7 +87,20 @@ struct FixtureDaemonClient: DaemonClient {
                     unchecked: 2
                 ),
                 repository("mlx-community/SmolLM-135M-Instruct-4bit", bytes: 79_220_000, files: 0, stored: 8, commit: "642e06afe3fa"),
-            ]
+            ],
+            daemon: DaemonInfo(
+                pid: 4242,
+                startedAt: 1_794_000_000,
+                listen: "127.0.0.1:8642",
+                executable: "/Users/example/.dedupd/bin/dedupd",
+                managedBy: "com.dedupd.daemon",
+                token: true,
+                tokenSource: "/Users/example/.cache/huggingface/token",
+                maxConnections: 8,
+                speedLimit: 0,
+                checking: false,
+                lastCheckAt: 1_793_900_000
+            )
         )
     }
 

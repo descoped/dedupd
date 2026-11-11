@@ -1,0 +1,68 @@
+{
+  "governor": {
+    "budgets": [
+      {
+        "name": "api",
+        "quota": 500,
+        "remaining": 495,
+        "resets_in": 100
+      }
+    ],
+    "connections": 0,
+    "hold_seconds": 0,
+    "max_connections": 8,
+    "speed_limit": 0,
+    "window": 2
+  },
+  "jobs": [
+    {
+      "apps": [
+        "bionic"
+      ],
+      "bytes_done": 300008,
+      "bytes_total": 300008,
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "created_at": 1700000000,
+      "detail": null,
+      "files_done": 2,
+      "files_total": 2,
+      "finished_at": 1700000000,
+      "id": 1,
+      "include": [],
+      "model": "org/Repo-GGUF",
+      "offline": false,
+      "quant": null,
+      "repo": "org/Repo-GGUF",
+      "revision": "main",
+      "speed": 0,
+      "state": "done",
+      "updated_at": 1700000000,
+      "wait_until": null
+    },
+    {
+      "apps": [
+        "hf"
+      ],
+      "bytes_done": 300008,
+      "bytes_total": 300008,
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "created_at": 1700000000,
+      "detail": null,
+      "files_done": 2,
+      "files_total": 2,
+      "finished_at": 1700000000,
+      "id": 2,
+      "include": [],
+      "model": "org/Repo-GGUF:model",
+      "offline": true,
+      "quant": "model",
+      "repo": "org/Repo-GGUF",
+      "revision": "main",
+      "speed": 0,
+      "state": "done",
+      "updated_at": 1700000000,
+      "wait_until": null
+    }
+  ],
+  "speed": 0
+}

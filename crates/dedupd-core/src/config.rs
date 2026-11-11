@@ -55,6 +55,50 @@ impl Config {
         }
     }
 
+    /// Change settings in the config file and read it again. `changes` maps
+    /// a setting's name to its new value; `null` removes the setting. The
+    /// rest of the file, comments included, stays as the owner wrote it.
+    /// Nothing is written when the result would not be a valid config.
+    pub fn update(
+        home: &Home,
+        changes: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<Self> {
+        let path = Self::path(home);
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+        };
+        let mut doc: toml_edit::DocumentMut = text
+            .parse()
+            .with_context(|| format!("reading {}", path.display()))?;
+        for (key, value) in changes {
+            let item = match value {
+                serde_json::Value::Null => None,
+                serde_json::Value::Bool(b) => Some(toml_edit::value(*b)),
+                serde_json::Value::String(s) => Some(toml_edit::value(s.as_str())),
+                serde_json::Value::Number(n) => match n.as_i64() {
+                    Some(i) => Some(toml_edit::value(i)),
+                    None => anyhow::bail!("{key} must be a whole number"),
+                },
+                _ => anyhow::bail!("{key} cannot be a list or a table"),
+            };
+            match item {
+                Some(item) => doc[key.as_str()] = item,
+                None => {
+                    doc.remove(key);
+                }
+            }
+        }
+        let text = doc.to_string();
+        let config: Self = toml::from_str(&text).context("the settings are not valid")?;
+        std::fs::create_dir_all(home.root())?;
+        let tmp = path.with_extension("toml.tmp");
+        std::fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
+        std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
+        Ok(config)
+    }
+
     pub fn listen(&self) -> &str {
         self.listen.as_deref().unwrap_or(DEFAULT_LISTEN)
     }
@@ -71,5 +115,41 @@ impl Config {
 
     pub fn archive_home(&self) -> Option<Home> {
         self.archive.clone().map(Home::new)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn update_keeps_the_rest_of_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        std::fs::write(
+            Config::path(&home),
+            "# where the second copy goes\narchive = \"/Volumes/Trunk/dedupd\"\nverify_days = 30\n",
+        )
+        .unwrap();
+        let changes = serde_json::json!({"max_connections": 4, "verify_days": null});
+        let config = Config::update(&home, changes.as_object().unwrap()).unwrap();
+        assert_eq!(
+            (config.max_connections, config.verify_days),
+            (Some(4), None)
+        );
+        assert_eq!(
+            std::fs::read_to_string(Config::path(&home)).unwrap(),
+            "# where the second copy goes\narchive = \"/Volumes/Trunk/dedupd\"\nmax_connections = 4\n"
+        );
+
+        // A setting that does not exist, or a value of the wrong kind,
+        // changes nothing.
+        for bad in [
+            serde_json::json!({"no_such_setting": 1}),
+            serde_json::json!({"max_connections": "many"}),
+        ] {
+            assert!(Config::update(&home, bad.as_object().unwrap()).is_err());
+        }
+        assert_eq!(Config::load(&home).unwrap().max_connections, Some(4));
     }
 }

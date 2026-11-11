@@ -1,0 +1,85 @@
+{
+  "apps": [
+    "hf"
+  ],
+  "bytes_done": 300008,
+  "bytes_total": 300008,
+  "commit": "0123456789abcdef0123456789abcdef01234567",
+  "created_at": 1700000000,
+  "detail": null,
+  "events": [
+    {
+      "at": 1700000000,
+      "text": "queued"
+    },
+    {
+      "at": 1700000000,
+      "text": "resolving"
+    },
+    {
+      "at": 1700000000,
+      "text": "settled on main@0123456789ab, 2 files, from the archive"
+    },
+    {
+      "at": 1700000000,
+      "text": "downloading"
+    },
+    {
+      "at": 1700000000,
+      "text": "placing"
+    },
+    {
+      "at": 1700000000,
+      "text": "done"
+    }
+  ],
+  "files": [
+    {
+      "done": 300000,
+      "git_oid": "pointer",
+      "path": "model.gguf",
+      "sha256": "565dbcf70c3f62f1b37108347d55f698417ddca8c31788432fc5a06b517a3cae",
+      "size": 300000,
+      "stage": "stored"
+    },
+    {
+      "done": 8,
+      "git_oid": "0187f3b09d66cef7911083ad49f890f5a6589589",
+      "path": "sub/config.json",
+      "sha256": null,
+      "size": 8,
+      "stage": "stored"
+    }
+  ],
+  "finished_at": 1700000000,
+  "id": 2,
+  "include": [],
+  "model": "org/Repo-GGUF:model",
+  "offline": true,
+  "outcome": {
+    "bytes": 300008,
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "downloaded": 0,
+    "files": 2,
+    "from_archive": true,
+    "notes": [],
+    "placed": [
+      [
+        "hf",
+        {
+          "cloned": 2,
+          "conflicts": [],
+          "present": 0
+        }
+      ]
+    ],
+    "repo": "org/Repo-GGUF"
+  },
+  "quant": "model",
+  "repo": "org/Repo-GGUF",
+  "revision": "main",
+  "speed": 0,
+  "state": "done",
+  "updated_at": 1700000000,
+  "wait_until": null
+}

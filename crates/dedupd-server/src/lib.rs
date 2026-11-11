@@ -4,6 +4,7 @@
 
 mod control;
 pub mod daemon;
+mod discover;
 mod files;
 mod hubapi;
 mod proxy;
@@ -19,8 +20,11 @@ use dedupd_core::config::Config;
 use dedupd_core::pull::Engine;
 use dedupd_core::queue::Queue;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
+use tokio::sync::watch;
+use tokio_util::sync::CancellationToken;
 
 pub struct Server {
     pub engine: Arc<Engine>,
@@ -35,6 +39,18 @@ pub struct Server {
     pub queue: Arc<Queue>,
     /// What the background pass remembers between rounds.
     pub(crate) passes: daemon::PassState,
+    /// The store check the owner asked for, or the scheduled one.
+    pub(crate) check: Mutex<daemon::CheckState>,
+    /// Counts up whenever what the store or the apps hold has changed.
+    library: watch::Sender<u64>,
+    /// Answers from the provider's search, kept for a few minutes.
+    pub(crate) searches: Mutex<HashMap<String, (Instant, serde_json::Value)>>,
+    /// Seconds since the epoch when this daemon started.
+    pub started_at: i64,
+    /// Cancelled when the daemon is stopping; ends the long-lived answers.
+    pub shutdown: CancellationToken,
+    /// Set when the daemon was asked to start again after stopping.
+    restart: AtomicBool,
 }
 
 impl Server {
@@ -59,6 +75,15 @@ impl Server {
             assemblies: Mutex::new(HashMap::new()),
             queue,
             passes: daemon::PassState::default(),
+            check: Mutex::new(daemon::CheckState::default()),
+            library: watch::Sender::new(0),
+            searches: Mutex::new(HashMap::new()),
+            started_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+            shutdown: CancellationToken::new(),
+            restart: AtomicBool::new(false),
         });
         // The daemon keeps the archive disk current after its own
         // downloads, as the command line does after its.
@@ -72,6 +97,27 @@ impl Server {
         });
         server.queue.start();
         Ok(server)
+    }
+
+    /// Say that what the store or the apps hold has changed, so whoever is
+    /// watching looks again.
+    pub fn touch(&self) {
+        self.library.send_modify(|v| *v += 1);
+    }
+
+    pub(crate) fn library_changes(&self) -> watch::Receiver<u64> {
+        self.library.subscribe()
+    }
+
+    /// Stop serving, and have the process start again afterwards.
+    pub fn ask_restart(&self) {
+        self.restart.store(true, Ordering::Relaxed);
+        self.shutdown.cancel();
+    }
+
+    /// Whether `ask_restart` was called.
+    pub fn restart_asked(&self) -> bool {
+        self.restart.load(Ordering::Relaxed)
     }
 
     /// Forget which commits branch names were last seen at, so the next
@@ -91,8 +137,17 @@ pub async fn serve(
     listener: tokio::net::TcpListener,
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
+    let stopping = server.shutdown.clone();
     axum::serve(listener, router(server))
-        .with_graceful_shutdown(shutdown)
+        .with_graceful_shutdown(async move {
+            tokio::select! {
+                _ = shutdown => {}
+                _ = stopping.cancelled() => {}
+            }
+            // The event streams end here; without that the server would
+            // wait for them for ever.
+            stopping.cancel();
+        })
         .await?;
     Ok(())
 }
@@ -125,6 +180,11 @@ impl Call {
         }
     }
 
+    /// The first value given for `name` in the query string, decoded.
+    pub fn param(&self, name: &str) -> Option<String> {
+        self.query_params(name).next().map(percent_decode)
+    }
+
     /// The values given for `name` in the query string, undecoded.
     pub fn query_params<'a>(&'a self, name: &'a str) -> impl Iterator<Item = &'a str> {
         let pairs = self.query.as_deref().unwrap_or("").split('&');
@@ -139,6 +199,40 @@ impl Call {
             body.into()
         }
     }
+}
+
+/// Undo the percent-encoding of a query value; `+` is a space.
+pub(crate) fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let hex = |i: usize| bytes.get(i).and_then(|b| (*b as char).to_digit(16));
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match (bytes[i], hex(i + 1), hex(i + 2)) {
+            (b'%', Some(high), Some(low)) => {
+                out.push((high * 16 + low) as u8);
+                i += 2;
+            }
+            (b'+', _, _) => out.push(b' '),
+            (b, _, _) => out.push(b),
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Percent-encode a value for a query string.
+pub(crate) fn percent_encode(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for b in text.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 pub(crate) fn plain(status: StatusCode, text: impl Into<String>) -> Response {
@@ -179,6 +273,7 @@ async fn handle(State(server): State<Arc<Server>>, req: Request) -> Response {
 
     let segments: Vec<&str> = call.path.split('/').filter(|s| !s.is_empty()).collect();
     match segments.as_slice() {
+        ["dedupd", "v1", "hub", rest @ ..] => discover::handle(&server, &call, rest).await,
         ["dedupd", "v1", rest @ ..] => control::handle(&server, &call, rest).await,
         ["dedupd", "blob", digest] => registry::blob_direct(&server, &call, digest).await,
         ["v2"] => json(StatusCode::OK, &serde_json::json!({})),

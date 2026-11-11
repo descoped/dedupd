@@ -115,9 +115,11 @@ CREATE TABLE ollama_manifests (
 /// Added in schema version 3.
 const SCHEMA_V3: &str = r#"
 -- The daemon's download queue. A job is kept whole as JSON; `state` is
--- repeated beside it so jobs can be picked without reading every one.
+-- repeated beside it so jobs can be picked without reading every one. A
+-- number is never used twice, so a removed job cannot be mistaken for a
+-- later one.
 CREATE TABLE downloads (
-    id          INTEGER PRIMARY KEY,
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
     state       TEXT NOT NULL,
     job_json    TEXT NOT NULL,
     updated_at  INTEGER NOT NULL

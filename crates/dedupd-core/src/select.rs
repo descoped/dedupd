@@ -64,6 +64,101 @@ fn gguf_group(path: &str) -> String {
     }
 }
 
+/// The quantization in a GGUF's name, for example `Q4_K_M` in
+/// `Model-Q4_K_M`. The whole name when it does not say.
+pub fn quant_label(group: &str) -> String {
+    let name = file_name(group);
+    let looks_like_one = |token: &str| {
+        let t = token.to_lowercase();
+        let digit_after = |prefix: &str| {
+            t.strip_prefix(prefix)
+                .and_then(|rest| rest.bytes().next())
+                .is_some_and(|b| b.is_ascii_digit())
+        };
+        ["iq", "q", "bf", "fp", "f", "mxfp"]
+            .iter()
+            .any(|p| digit_after(p))
+    };
+    name.rsplit(['-', '.'])
+        .find(|token| looks_like_one(token))
+        .unwrap_or(name)
+        .to_string()
+}
+
+/// One thing a repository can be downloaded as: a quantization of a GGUF
+/// repository, or all the files of any other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Variant {
+    /// `gguf`, or `files` for a repository that is taken whole.
+    pub kind: String,
+    /// The quantization, or `all files`.
+    pub name: String,
+    /// What to write after `org/repo:` to get this variant. `None` for a
+    /// repository that is taken whole.
+    pub quant: Option<String>,
+    /// The weight files. More than one for a split GGUF.
+    pub weights: Vec<String>,
+    /// Every file of the variant, the small ones included.
+    pub files: Vec<TreeEntry>,
+    pub bytes: u64,
+}
+
+impl Variant {
+    /// A GGUF in several parts, which Ollama cannot use.
+    pub fn is_split(&self) -> bool {
+        self.kind == "gguf" && self.weights.len() > 1
+    }
+}
+
+/// What the repository can be downloaded as, smallest first.
+pub fn variants(entries: &[TreeEntry]) -> Vec<Variant> {
+    let ggufs = weights(entries);
+    if ggufs.is_empty() {
+        return vec![Variant {
+            kind: "files".into(),
+            name: "all files".into(),
+            quant: None,
+            weights: entries
+                .iter()
+                .filter(|e| e.lfs_sha256.is_some())
+                .map(|e| e.path.clone())
+                .collect(),
+            bytes: entries.iter().map(|e| e.size).sum(),
+            files: entries.to_vec(),
+        }];
+    }
+    let shared: Vec<&TreeEntry> = entries
+        .iter()
+        .filter(|e| !is_gguf(&e.path) || is_projector(&e.path))
+        .collect();
+    let mut groups: BTreeMap<String, Vec<&TreeEntry>> = BTreeMap::new();
+    for e in ggufs {
+        groups.entry(gguf_group(&e.path)).or_default().push(e);
+    }
+    let mut out: Vec<Variant> = groups
+        .iter()
+        .map(|(group, parts)| {
+            let mut files: Vec<TreeEntry> = shared
+                .iter()
+                .chain(parts.iter())
+                .map(|e| (*e).clone())
+                .collect();
+            files.sort_by(|a, b| a.path.cmp(&b.path));
+            let label = quant_label(group);
+            Variant {
+                kind: "gguf".into(),
+                name: label.clone(),
+                quant: Some(label),
+                weights: parts.iter().map(|e| e.path.clone()).collect(),
+                bytes: files.iter().map(|e| e.size).sum(),
+                files,
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| a.bytes.cmp(&b.bytes).then_with(|| a.name.cmp(&b.name)));
+    out
+}
+
 /// The weight files (GGUF, not projectors) among `entries`.
 pub fn weights(entries: &[TreeEntry]) -> Vec<&TreeEntry> {
     entries
@@ -106,8 +201,17 @@ pub fn select(entries: &[TreeEntry], sel: &Selection) -> Result<Vec<TreeEntry>> 
     for e in ggufs {
         groups.entry(gguf_group(&e.path)).or_default().push(e);
     }
+    // A name that is exactly one file's quantization wins over names that
+    // merely contain it: `Q4_K` is not `Q4_K_M`.
     let wanted = |q: &str| -> Vec<&String> {
         let q = q.to_lowercase();
+        let exact: Vec<&String> = groups
+            .keys()
+            .filter(|g| quant_label(g).to_lowercase() == q)
+            .collect();
+        if exact.len() == 1 {
+            return exact;
+        }
         groups
             .keys()
             .filter(|g| file_name(g).to_lowercase().contains(&q))
@@ -235,6 +339,44 @@ mod tests {
         let e = [entry("m-Q5_K_M.gguf"), entry("m-Q8_0.gguf")];
         let err = select(&e, &Selection::default()).unwrap_err().to_string();
         assert!(err.contains("m-Q5_K_M") && err.contains("m-Q8_0"));
+    }
+
+    #[test]
+    fn an_exact_quantization_name_is_not_ambiguous() {
+        let e = [entry("m-Q4_K.gguf"), entry("m-Q4_K_M.gguf")];
+        let sel = Selection {
+            quant: Some("Q4_K".into()),
+            include: vec![],
+        };
+        assert_eq!(paths(&select(&e, &sel).unwrap()), ["m-Q4_K.gguf"]);
+    }
+
+    #[test]
+    fn variants_list_what_can_be_downloaded() {
+        let e = [
+            entry("README.md"),
+            entry("Model-Q4_K_M.gguf"),
+            entry("Model-IQ3_M.gguf"),
+            entry("Model.f16-00001-of-00002.gguf"),
+            entry("Model.f16-00002-of-00002.gguf"),
+            entry("mmproj-f16.gguf"),
+        ];
+        let v = variants(&e);
+        let names: Vec<&str> = v.iter().map(|v| v.name.as_str()).collect();
+        assert_eq!(names, ["IQ3_M", "Q4_K_M", "f16"]);
+        assert!(v[2].is_split() && !v[0].is_split());
+        // Each variant selects exactly its own files.
+        for variant in &v {
+            let sel = Selection {
+                quant: variant.quant.clone(),
+                include: vec![],
+            };
+            assert_eq!(select(&e, &sel).unwrap(), variant.files);
+        }
+
+        let whole = variants(&[entry("config.json"), entry("model.safetensors")]);
+        assert_eq!((whole.len(), whole[0].kind.as_str()), (1, "files"));
+        assert_eq!(whole[0].quant, None);
     }
 
     #[test]

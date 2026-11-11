@@ -1,5 +1,18 @@
 {
   "archive": null,
+  "daemon": {
+    "checking": false,
+    "executable": "/Users/example/bin/dedupd",
+    "last_check_at": null,
+    "listen": "127.0.0.1:8642",
+    "managed_by": null,
+    "max_connections": 8,
+    "pid": 1,
+    "speed_limit": 0,
+    "started_at": 1700000000,
+    "token": false,
+    "token_source": null
+  },
   "downloading": {
     "done": 0,
     "total": 0

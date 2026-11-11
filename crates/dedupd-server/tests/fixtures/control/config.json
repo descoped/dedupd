@@ -1,0 +1,16 @@
+{
+  "archive": null,
+  "bionic_models": "/Users/example/apps/lmstudio/models",
+  "hf_cache": "/Users/example/apps/huggingface/hub",
+  "hf_endpoint": "https://huggingface.co",
+  "listen": "127.0.0.1:8642",
+  "max_connections": 8,
+  "ollama_models": "/Users/example/apps/ollama/models",
+  "path": "/Users/example/home/config.toml",
+  "reclaim": true,
+  "restart_needed": false,
+  "scan_interval": 300,
+  "set_env": false,
+  "speed_limit": 0,
+  "verify_days": 7
+}

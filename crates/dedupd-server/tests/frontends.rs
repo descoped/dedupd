@@ -37,7 +37,19 @@ async fn fixture() -> Fixture {
     let manifest = common::ollama_manifest(&ollama_config, &weights, &template);
 
     let upstream = MockServer::start().await;
-    let info = json!({"sha": COMMIT, "id": REPO, "gated": false, "private": false});
+    let info = json!({
+        "sha": COMMIT, "id": REPO, "gated": false, "private": false,
+        "pipeline_tag": "text-generation",
+        "tags": ["gguf", "text-generation", "license:apache-2.0", "base_model:org/Base"],
+        "downloads": 1200, "likes": 7,
+        "lastModified": "2026-01-02T03:04:05.000Z",
+        "gguf": {"total": 134515008u64, "architecture": "llama", "context_length": 8192},
+        "siblings": [
+            {"rfilename": "model.gguf", "blobId": "pointer", "size": weights.len(),
+             "lfs": {"sha256": sha256(&weights), "size": weights.len(), "pointerSize": 134}},
+            {"rfilename": "sub/config.json", "blobId": git_oid(&config), "size": config.len()}
+        ]
+    });
     for p in [
         format!("/api/models/{REPO}/revision/main"),
         format!("/api/models/{REPO}"),
@@ -553,6 +565,475 @@ async fn a_model_an_app_downloaded_itself_is_shared_by_the_next_pass() {
     assert!(fx.server.engine.store.contains(&sha256(&fx.weights)));
 }
 
+/// Ask the control API and read the answer as JSON.
+async fn control(fx: &Fixture, verb: &str, path: &str, body: Option<Value>) -> (u16, Value) {
+    let url = format!("{}/dedupd/v1/{path}", fx.base);
+    let req = match verb {
+        "GET" => fx.http.get(url),
+        "PUT" => fx.http.put(url),
+        _ => fx.http.post(url),
+    };
+    let req = match body {
+        Some(body) => req.json(&body),
+        None => req,
+    };
+    let resp = req.send().await.unwrap();
+    let status = resp.status().as_u16();
+    let text = resp.text().await.unwrap();
+    let value = serde_json::from_str(&text).unwrap_or(Value::String(text));
+    (status, value)
+}
+
+/// Queue a download through the control API and wait until it has ended.
+async fn download(fx: &Fixture, body: Value) -> Value {
+    let (status, queued) = control(fx, "POST", "downloads", Some(body)).await;
+    assert_eq!(status, 200, "{queued}");
+    let id = queued["id"].as_i64().unwrap();
+    for _ in 0..500 {
+        let (_, job) = control(fx, "GET", &format!("downloads/{id}"), None).await;
+        if matches!(job["state"].as_str(), Some("done" | "needs_attention")) {
+            return job;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("download {id} never ended");
+}
+
+/// The provider's search and the model the fixture serves, as search results.
+async fn mount_search(fx: &Fixture) {
+    let hit = |id: &str, tags: Value| {
+        json!({"id": id, "author": id.split('/').next().unwrap(), "downloads": 1200, "likes": 7,
+               "gated": false, "tags": tags, "pipeline_tag": "text-generation",
+               "lastModified": "2026-01-02T03:04:05.000Z", "createdAt": "2025-12-01T00:00:00.000Z"})
+    };
+    Mock::given(method("GET"))
+        .and(path("/api/models"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header(
+                    "link",
+                    format!(
+                        r#"<{}/api/models?search=repo&limit=40&cursor=abc%3D>; rel="next""#,
+                        fx.upstream.uri()
+                    )
+                    .as_str(),
+                )
+                .insert_header("ratelimit", r#""api";r=498;t=120"#)
+                .insert_header("ratelimit-policy", r#""fixed window";"api";q=500;w=300"#)
+                .set_body_json(json!([
+                    hit(
+                        REPO,
+                        json!(["gguf", "license:apache-2.0", "base_model:org/Base"])
+                    ),
+                    hit(
+                        "mlx-community/Repo-4bit",
+                        json!([
+                            "mlx",
+                            "safetensors",
+                            "license:apache-2.0",
+                            "base_model:org/Base"
+                        ])
+                    ),
+                ])),
+        )
+        .mount(&fx.upstream)
+        .await;
+}
+
+#[tokio::test]
+async fn the_app_downloads_looks_removes_and_cleans_up() {
+    let fx = fixture().await;
+    let job = download(&fx, json!({"model": REPO, "apps": ["bionic", "hf"]})).await;
+    assert_eq!(job["state"], "done", "{job}");
+    assert_eq!(job["files"].as_array().unwrap().len(), 2);
+    assert_eq!(job["bytes_done"], job["bytes_total"]);
+    // Asking for the same thing again starts nothing new once it is done,
+    // and names the running download while it is not.
+    let (_, list) = control(&fx, "GET", "downloads", None).await;
+    assert_eq!(list["jobs"].as_array().unwrap().len(), 1);
+    assert_eq!(list["jobs"][0]["files_done"], 2);
+    assert!(list["jobs"][0].get("files").is_none());
+    assert_eq!(list["governor"]["max_connections"], 8);
+
+    let (_, models) = control(&fx, "GET", "models", None).await;
+    let model = &models["models"][0];
+    assert_eq!(model["repo"], REPO);
+    assert_eq!(model["meta"]["formats"], json!(["gguf"]));
+    assert_eq!(model["meta"]["license"], "apache-2.0");
+    assert_eq!(model["upstream"], "ok");
+    assert_eq!(model["apps"].as_array().unwrap().len(), 2);
+
+    let (status, detail) = control(&fx, "GET", &format!("models/{REPO}"), None).await;
+    assert_eq!(status, 200);
+    assert_eq!(detail["variants"][0]["spec"], format!("{REPO}:model"));
+    assert_eq!(detail["variants"][0]["placed_in"], json!(["bionic", "hf"]));
+    assert_eq!(
+        detail["variants"][0]["usable_by"],
+        json!(["bionic", "ollama", "hf"])
+    );
+    assert_eq!(
+        detail["revisions"][0]["files"][0]["apps"],
+        json!(["bionic", "hf"])
+    );
+    assert_eq!(detail["placements"].as_array().unwrap().len(), 4);
+    let (status, _) = control(&fx, "GET", "models/org/Nothing", None).await;
+    assert_eq!(status, 404);
+
+    let (_, places) = control(&fx, "GET", "locations", None).await;
+    assert_eq!(places["store"]["files"], 2);
+    assert_eq!(places["apps"][0]["id"], "bionic");
+    assert_eq!(places["apps"][0]["models"], 1);
+    assert_eq!(places["apps"][1]["models"], 0);
+
+    // Removing from an app: first what would go, then exactly that.
+    let ask = json!({"repo": REPO, "app": "bionic"});
+    let (_, plan) = control(&fx, "POST", "unplace", Some(ask.clone())).await;
+    assert_eq!(plan["remove"].as_array().unwrap().len(), 2);
+    assert_eq!(plan["removed"], Value::Null);
+    let bionic = fx.server.engine.dirs.bionic.join(REPO);
+    assert!(bionic.join("model.gguf").is_file());
+    let agreed = json!({"repo": REPO, "app": "bionic", "apply": true,
+                        "paths": [plan["remove"][0]["path"]]});
+    let (_, done) = control(&fx, "POST", "unplace", Some(agreed)).await;
+    assert_eq!(done["removed"], 1);
+    assert!(!bionic.join("model.gguf").exists());
+    assert!(bionic.join("sub/config.json").is_file());
+
+    // A model that apps still hold cannot be forgotten.
+    let (status, refused) = control(&fx, "POST", "forget", Some(json!({"repo": REPO}))).await;
+    assert_eq!(status, 409, "{refused}");
+    for app in ["bionic", "hf"] {
+        let all = json!({"repo": REPO, "app": app, "apply": true});
+        control(&fx, "POST", "unplace", Some(all)).await;
+    }
+    let (_, nothing) = control(&fx, "GET", "gc", None).await;
+    assert_eq!(nothing["orphans"], json!([]));
+    let (status, _) = control(&fx, "POST", "forget", Some(json!({"repo": REPO}))).await;
+    assert_eq!(status, 200);
+    let (_, plan) = control(&fx, "GET", "gc", None).await;
+    let orphans: Vec<Value> = plan["orphans"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|b| b["sha256"].clone())
+        .collect();
+    assert_eq!(orphans.len(), 2);
+    // Only what was agreed to is removed.
+    let (_, freed) = control(&fx, "POST", "gc", Some(json!({"orphans": [orphans[0]]}))).await;
+    assert_eq!(freed["orphans"].as_array().unwrap().len(), 1);
+    let (_, left) = control(&fx, "GET", "gc", None).await;
+    assert_eq!(left["orphans"].as_array().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_event_stream_follows_a_download() {
+    use futures_util::StreamExt;
+    let fx = fixture().await;
+    let resp = fx
+        .http
+        .get(format!("{}/dedupd/v1/events", fx.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.headers()["content-type"], "application/x-ndjson");
+    let mut bytes = resp.bytes_stream();
+    let mut pending = String::new();
+    let mut lines: Vec<Value> = Vec::new();
+    let mut started = false;
+    let seen_done = |lines: &[Value]| {
+        lines
+            .iter()
+            .any(|l| l["downloads"]["jobs"][0]["state"] == "done")
+    };
+    while !seen_done(&lines) {
+        let chunk = tokio::time::timeout(Duration::from_secs(10), bytes.next())
+            .await
+            .expect("the stream went quiet")
+            .expect("the stream ended")
+            .unwrap();
+        pending.push_str(std::str::from_utf8(&chunk).unwrap());
+        while let Some(end) = pending.find('\n') {
+            lines.push(serde_json::from_str(&pending[..end]).unwrap());
+            pending.drain(..=end);
+        }
+        // The first line arrives at once and says nothing is going on.
+        if !started {
+            assert_eq!(lines[0]["seq"], 1);
+            assert_eq!(lines[0]["downloads"]["jobs"], json!([]));
+            control(
+                &fx,
+                "POST",
+                "downloads",
+                Some(json!({"model": REPO, "apps": []})),
+            )
+            .await;
+            started = true;
+        }
+    }
+    let seqs: Vec<u64> = lines.iter().map(|l| l["seq"].as_u64().unwrap()).collect();
+    assert!(seqs.windows(2).all(|w| w[1] == w[0] + 1), "{seqs:?}");
+    // The stream ends when the daemon stops, so stopping does not hang.
+    fx.server.shutdown.cancel();
+    let ended = tokio::time::timeout(Duration::from_secs(5), async {
+        while let Some(Ok(_)) = bytes.next().await {}
+    })
+    .await;
+    assert!(ended.is_ok(), "the stream outlived the daemon");
+}
+
+#[tokio::test]
+async fn search_and_model_info_say_what_is_already_here() {
+    let fx = fixture().await;
+    mount_search(&fx).await;
+    let find = "hub/search?q=repo&format=gguf&license=apache-2.0&sort=likes";
+    let (status, found) = control(&fx, "GET", find, None).await;
+    assert_eq!(status, 200, "{found}");
+    assert_eq!(found["next"], "abc=");
+    assert_eq!(found["models"][0]["id"], REPO);
+    assert_eq!(found["models"][0]["archived"], false);
+    assert_eq!(
+        found["models"][1]["meta"]["formats"],
+        json!(["mlx", "safetensors"])
+    );
+    let asked = fx.upstream.received_requests().await.unwrap();
+    let query = asked.last().unwrap().url.query().unwrap().to_string();
+    for part in [
+        "search=repo",
+        "filter=gguf",
+        "filter=license%3Aapache-2.0",
+        "sort=likes",
+        "expand[]=downloads",
+    ] {
+        assert!(query.contains(part), "{part} is not in {query}");
+    }
+    // The provider's limits are followed for searches too.
+    let (_, list) = control(&fx, "GET", "downloads", None).await;
+    assert_eq!(list["governor"]["budgets"][0]["remaining"], 498);
+
+    let (status, info) = control(&fx, "GET", &format!("hub/models/{REPO}"), None).await;
+    assert_eq!(status, 200, "{info}");
+    assert_eq!(info["commit"], COMMIT);
+    assert_eq!(info["meta"]["context_length"], 8192);
+    assert_eq!(info["files"].as_array().unwrap().len(), 2);
+    assert_eq!(info["variants"][0]["stored_bytes"], 0);
+    assert_eq!(info["related"][0]["id"], "mlx-community/Repo-4bit");
+    assert_eq!(info["archived"], false);
+
+    // Once it is downloaded, both say so; the search answer is reused.
+    download(&fx, json!({"model": REPO, "apps": ["ollama"]})).await;
+    let before = fx.upstream.received_requests().await.unwrap().len();
+    let (_, found) = control(&fx, "GET", find, None).await;
+    assert_eq!(fx.upstream.received_requests().await.unwrap().len(), before);
+    assert_eq!(found["models"][0]["archived"], true);
+    assert_eq!(found["models"][0]["apps"], json!(["ollama"]));
+    let (_, info) = control(&fx, "GET", &format!("hub/models/{REPO}"), None).await;
+    assert_eq!(info["variants"][0]["placed_in"], json!(["ollama"]));
+    assert_eq!(info["files"][0]["stored"], true);
+
+    // With the provider gone, what is archived still answers.
+    remove_upstream(&fx).await;
+    let (status, info) = control(&fx, "GET", &format!("hub/models/{REPO}"), None).await;
+    assert_eq!(status, 200, "{info}");
+    assert_eq!(info["from_archive"], true);
+    assert_eq!(info["files"].as_array().unwrap().len(), 2);
+    let (status, _) = control(&fx, "GET", "hub/models/org/Unknown", None).await;
+    assert_eq!(status, 404);
+    let (_, checked) = control(&fx, "POST", "check", Some(json!({"repo": REPO}))).await;
+    assert_eq!(checked["upstream"], "gone");
+    let (_, models) = control(&fx, "GET", "models", None).await;
+    assert_eq!(models["models"][0]["upstream"], "gone");
+}
+
+#[tokio::test]
+async fn settings_are_changed_through_the_daemon() {
+    let fx = fixture().await;
+    let (_, before) = control(&fx, "GET", "config", None).await;
+    assert_eq!(before["max_connections"], 8);
+    assert_eq!(before["restart_needed"], false);
+    // The download limits apply at once.
+    let change = json!({"max_connections": 3, "speed_limit": 1_000_000});
+    let (status, after) = control(&fx, "PUT", "config", Some(change)).await;
+    assert_eq!(status, 200, "{after}");
+    assert_eq!(after["restart_needed"], false);
+    let (_, state) = control(&fx, "GET", "status", None).await;
+    assert_eq!(state["daemon"]["max_connections"], 3);
+    assert_eq!(state["daemon"]["speed_limit"], 1_000_000);
+    // Other settings wait for the next start.
+    let (_, after) = control(&fx, "PUT", "config", Some(json!({"verify_days": 30}))).await;
+    assert_eq!(
+        (&after["verify_days"], &after["restart_needed"]),
+        (&json!(30), &json!(true))
+    );
+    let (status, refused) = control(&fx, "PUT", "config", Some(json!({"nonsense": 1}))).await;
+    assert_eq!(status, 400, "{refused}");
+
+    // A check of the store runs in the background and leaves its result.
+    control(&fx, "POST", "verify", None).await;
+    for _ in 0..200 {
+        let (_, check) = control(&fx, "GET", "verify", None).await;
+        if check["running"] == false && check["finished_at"].is_number() {
+            assert_eq!(check["damaged"], json!([]));
+            let (_, log) = control(&fx, "GET", "log?lines=5", None).await;
+            assert_eq!(log["lines"], json!([]));
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the store check never finished");
+}
+
+/// Everything the app does, through the client it links: each call reads
+/// what the daemon really sends.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_client_reads_everything_the_daemon_sends() {
+    use dedupd_client as client;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Seen {
+        events: Mutex<Vec<client::DaemonEvent>>,
+        connections: Mutex<Vec<bool>>,
+    }
+    impl client::EventListener for Seen {
+        fn on_event(&self, event: client::DaemonEvent) {
+            self.events.lock().unwrap().push(event);
+        }
+        fn on_connection(&self, connected: bool) {
+            self.connections.lock().unwrap().push(connected);
+        }
+    }
+
+    let fx = fixture().await;
+    mount_search(&fx).await;
+    let address = fx.base.trim_start_matches("http://").to_string();
+    let seen = Arc::new(Seen::default());
+    let subscription = client::subscribe(address.clone(), seen.clone());
+
+    let a = address.clone();
+    let done = tokio::task::spawn_blocking(move || -> Result<(), client::ClientError> {
+        let query = client::SearchQuery {
+            text: "repo".into(),
+            format: "gguf".into(),
+            sort: "likes".into(),
+            ..Default::default()
+        };
+        let page = client::search(a.clone(), query)?;
+        assert_eq!(page.next.as_deref(), Some("abc="));
+        assert_eq!(page.models[1].meta.formats, ["mlx", "safetensors"]);
+        let hub = client::hub_model(a.clone(), REPO.into())?;
+        assert_eq!(hub.variants[0].usable_by, ["bionic", "ollama", "hf"]);
+        assert_eq!(hub.related.len(), 1);
+
+        let spec = hub.variants[0].spec.clone();
+        let queued = client::enqueue(a.clone(), spec, vec!["bionic".into()], vec![], false)?;
+        assert!(!queued.existing);
+        let job = loop {
+            let job = client::download(a.clone(), queued.id)?;
+            if job.job.state == "done" {
+                break job;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!((job.job.files_total, job.job.files_done), (2, 2));
+        assert_eq!(job.files[0].stage, "stored");
+        assert!(job.events.iter().any(|e| e.text == "done"));
+        assert_eq!(client::downloads(a.clone())?.jobs.len(), 1);
+
+        let library = client::models(a.clone())?;
+        assert_eq!(library[0].apps[0].app, "bionic");
+        let detail = client::model(a.clone(), REPO.into())?;
+        assert_eq!(detail.placements.len(), 2);
+        assert_eq!(detail.revisions[0].files.len(), 2);
+        let places = client::locations(a.clone())?;
+        assert_eq!(places.store.files, 2);
+        assert!(places.volume_free > 0);
+        assert_eq!(
+            client::check_upstream(a.clone(), REPO.into())?.upstream,
+            "ok"
+        );
+        let status = client::status(a.clone())?;
+        assert_eq!(status.daemon.pid, std::process::id());
+        assert!(!status.daemon.token);
+
+        let plan = client::unplace(a.clone(), REPO.into(), "bionic".into(), false, None)?;
+        assert_eq!((plan.remove.len(), plan.removed), (2, None));
+        let gone = client::unplace(a.clone(), REPO.into(), "bionic".into(), true, None)?;
+        assert_eq!(gone.removed, Some(2));
+        client::forget(a.clone(), REPO.into())?;
+        let plan = client::gc_plan(a.clone(), false)?;
+        assert_eq!(plan.orphans.len(), 2);
+        let shas = plan.orphans.iter().map(|b| b.sha256.clone()).collect();
+        let freed = client::gc_apply(a.clone(), shas, vec![])?;
+        assert_eq!(freed.freed, Some(300_008));
+
+        let change = client::SettingChange {
+            key: "speed_limit".into(),
+            value: client::SettingValue::Number { value: 5_000_000 },
+        };
+        let settings = client::update_settings(a.clone(), vec![change])?;
+        assert_eq!(settings.speed_limit, 5_000_000);
+        assert!(!client::settings(a.clone())?.restart_needed);
+        client::start_store_check(a.clone())?;
+        while client::store_check(a.clone())?.finished_at.is_none() {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(client::log_tail(a.clone(), 10)?.lines.is_empty());
+        let refused = client::download_action(a, 99, "pause".into());
+        assert!(matches!(refused, Err(client::ClientError::Failed { .. })));
+        Ok(())
+    })
+    .await
+    .unwrap();
+    done.unwrap();
+
+    // The subscription was told how the download ended and that what the
+    // library holds has changed. Quick changes arrive as one event.
+    let finished = |e: &client::DaemonEvent| {
+        e.library > 0 && e.downloads.jobs.first().is_some_and(|j| j.state == "done")
+    };
+    for _ in 0..300 {
+        if seen.events.lock().unwrap().last().is_some_and(finished) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    {
+        let events = seen.events.lock().unwrap();
+        assert_eq!(events[0].seq, 1);
+        assert!(events.last().is_some_and(finished), "{events:?}");
+        assert_eq!(*seen.connections.lock().unwrap(), [true]);
+    }
+    let a = address.clone();
+    let cleared = tokio::task::spawn_blocking(move || client::clear_downloads(a))
+        .await
+        .unwrap();
+    assert_eq!(cleared.unwrap(), 1);
+    for _ in 0..300 {
+        let emptied = |e: &client::DaemonEvent| e.downloads.jobs.is_empty() && e.seq > 1;
+        if seen.events.lock().unwrap().last().is_some_and(emptied) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(
+        seen.events
+            .lock()
+            .unwrap()
+            .last()
+            .is_some_and(|e| e.downloads.jobs.is_empty())
+    );
+    // When the daemon goes away the listener is told, once.
+    fx.server.shutdown.cancel();
+    for _ in 0..300 {
+        if seen.connections.lock().unwrap().len() == 2 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(*seen.connections.lock().unwrap(), [true, false]);
+    subscription.cancel();
+}
+
 /// The control API's answers, as the macOS app's tests decode them through
 /// the client. Paths, the upstream address and the version differ from run to
 /// run and are replaced, so the files change only when the answers do.
@@ -562,49 +1043,95 @@ async fn a_model_an_app_downloaded_itself_is_shared_by_the_next_pass() {
 #[tokio::test]
 async fn control_api_answers_match_the_recorded_ones() {
     let fx = fixture().await;
+    mount_search(&fx).await;
     let root = fx._dir.path().to_string_lossy().into_owned();
     let real = std::fs::canonicalize(fx._dir.path())
         .unwrap()
         .to_string_lossy()
         .into_owned();
     let upstream = fx.upstream.uri();
-    let normalise = |body: String| -> String {
-        let body = body
+    // What differs from run to run gets a fixed value.
+    fn steady(value: &mut Value) {
+        match value {
+            Value::Array(items) => items.iter_mut().for_each(steady),
+            Value::Object(fields) => {
+                for (key, field) in fields.iter_mut() {
+                    let fixed = match key.as_str() {
+                        "version" => json!("0.0.0"),
+                        "executable" => json!("/Users/example/bin/dedupd"),
+                        "pid" => json!(1),
+                        "volume_total" => json!(1_000_000_000_000u64),
+                        "volume_free" => json!(400_000_000_000u64),
+                        "speed" => json!(0),
+                        "resets_in" => json!(100),
+                        "window" => json!(2),
+                        "started_at" | "created_at" | "updated_at" | "finished_at"
+                        | "fetched_at" | "checked_at" | "at"
+                            if field.is_number() =>
+                        {
+                            json!(1_700_000_000)
+                        }
+                        _ => {
+                            steady(field);
+                            continue;
+                        }
+                    };
+                    *field = fixed;
+                }
+            }
+            _ => {}
+        }
+    }
+    let normalise = |value: &Value| -> String {
+        let body = value
+            .to_string()
             .replace(&real, "/Users/example")
             .replace(&root, "/Users/example")
             .replace(&upstream, "https://huggingface.co");
         let mut value: Value = serde_json::from_str(&body).unwrap();
-        if value.get("version").is_some() {
-            value["version"] = json!("0.0.0");
-        }
+        steady(&mut value);
         serde_json::to_string_pretty(&value).unwrap() + "\n"
     };
-    let post = |path: &'static str, body: Value| {
-        let (http, base) = (fx.http.clone(), fx.base.clone());
-        async move {
-            http.post(format!("{base}/dedupd/v1/{path}"))
-                .json(&body)
-                .send()
-                .await
-                .unwrap()
-                .text()
-                .await
-                .unwrap()
-        }
-    };
 
-    let pull = post("pull", json!({"model": REPO, "apps": ["bionic"]})).await;
-    let scan = post("scan", json!({})).await;
-    let error = post("pull", json!({"model": "not a model", "apps": []})).await;
-    let status = fx
-        .http
-        .get(format!("{}/dedupd/v1/status", fx.base))
-        .send()
-        .await
-        .unwrap()
-        .text()
-        .await
-        .unwrap();
+    let first_event = {
+        use futures_util::StreamExt;
+        let resp = fx
+            .http
+            .get(format!("{}/dedupd/v1/events", fx.base))
+            .send()
+            .await
+            .unwrap();
+        let chunk = resp.bytes_stream().next().await.unwrap().unwrap();
+        serde_json::from_slice::<Value>(&chunk).unwrap()
+    };
+    let (_, search) = control(&fx, "GET", "hub/search?q=repo", None).await;
+    let (_, hub_model) = control(&fx, "GET", &format!("hub/models/{REPO}"), None).await;
+    let (_, pull) = control(
+        &fx,
+        "POST",
+        "pull",
+        Some(json!({"model": REPO, "apps": ["bionic"]})),
+    )
+    .await;
+    let (_, scan) = control(&fx, "POST", "scan", Some(json!({}))).await;
+    let bad = json!({"model": "not a model", "apps": []});
+    let (_, error) = control(&fx, "POST", "pull", Some(bad)).await;
+    let (_, status) = control(&fx, "GET", "status", None).await;
+    let again = json!({"model": format!("{REPO}:model"), "apps": ["hf"], "offline": true});
+    let (_, enqueue) = control(&fx, "POST", "downloads", Some(again.clone())).await;
+    download(&fx, again).await;
+    let (_, downloads) = control(&fx, "GET", "downloads", None).await;
+    let (_, job) = control(&fx, "GET", "downloads/2", None).await;
+    let (_, models) = control(&fx, "GET", "models", None).await;
+    let (_, model) = control(&fx, "GET", &format!("models/{REPO}"), None).await;
+    let (_, locations) = control(&fx, "GET", "locations", None).await;
+    let (_, config) = control(&fx, "GET", "config", None).await;
+    let (_, check) = control(&fx, "POST", "check", Some(json!({"repo": REPO}))).await;
+    let ask = json!({"repo": REPO, "app": "bionic"});
+    let (_, unplace) = control(&fx, "POST", "unplace", Some(ask)).await;
+    let (_, gc) = control(&fx, "GET", "gc?offload=true", None).await;
+    let (_, verify) = control(&fx, "GET", "verify", None).await;
+    let (_, log) = control(&fx, "GET", "log", None).await;
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/control");
     let update = std::env::var_os("DEDUPD_UPDATE_FIXTURES").is_some();
@@ -613,8 +1140,23 @@ async fn control_api_answers_match_the_recorded_ones() {
         ("pull.json", pull),
         ("scan.json", scan),
         ("error.json", error),
+        ("event.json", first_event),
+        ("search.json", search),
+        ("hub-model.json", hub_model),
+        ("enqueue.json", enqueue),
+        ("downloads.json", downloads),
+        ("download.json", job),
+        ("models.json", models),
+        ("model.json", model),
+        ("locations.json", locations),
+        ("config.json", config),
+        ("check.json", check),
+        ("unplace.json", unplace),
+        ("gc.json", gc),
+        ("verify.json", verify),
+        ("log.json", log),
     ] {
-        let now = normalise(body);
+        let now = normalise(&body);
         let file = dir.join(name);
         if update {
             std::fs::create_dir_all(&dir).unwrap();

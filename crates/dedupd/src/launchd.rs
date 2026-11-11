@@ -2,7 +2,7 @@
 
 use crate::Opened;
 use anyhow::{Context, Result, bail};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command as Process;
 
 /// The launchd label of the daemon.
@@ -135,6 +135,96 @@ pub fn cmd_uninstall(label: &str) -> Result<()> {
     match std::fs::remove_file(&path) {
         Ok(()) => println!("Stopped the daemon and removed {}.", path.display()),
         Err(_) => println!("No agent was installed at {}.", path.display()),
+    }
+    Ok(())
+}
+
+fn loaded(label: &str) -> bool {
+    launchctl(&["print", &format!("gui/{}/{label}", uid())]).is_ok_and(|out| out.status.success())
+}
+
+/// Start the installed agent's daemon.
+pub fn cmd_start(label: &str) -> Result<()> {
+    let path = plist_path(label)?;
+    if !path.is_file() {
+        bail!("no agent is installed; run `dedupd install` first");
+    }
+    if loaded(label) {
+        println!("The daemon is already running.");
+        return Ok(());
+    }
+    let out = launchctl(&[
+        "bootstrap",
+        &format!("gui/{}", uid()),
+        &path.to_string_lossy(),
+    ])?;
+    if !out.status.success() {
+        bail!(
+            "launchctl could not start the agent: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    println!("Started the daemon.");
+    Ok(())
+}
+
+/// Stop the daemon and leave the agent installed, so it starts again at the
+/// next login.
+pub fn cmd_stop(label: &str) -> Result<()> {
+    if !loaded(label) {
+        println!("The daemon is not running.");
+        return Ok(());
+    }
+    let out = launchctl(&["bootout", &format!("gui/{}/{label}", uid())])?;
+    if !out.status.success() {
+        bail!(
+            "launchctl could not stop the agent: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        );
+    }
+    println!("Stopped the daemon. It starts again at the next login, or with `dedupd start`.");
+    Ok(())
+}
+
+/// The version an installed copy of dedupd reports.
+fn version_of(exe: &Path) -> Option<String> {
+    let out = Process::new(exe).arg("--version").output().ok()?;
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.split_whitespace().last().map(str::to_string)
+}
+
+/// Say whether the agent is installed and running, and which dedupd it runs.
+pub fn cmd_agent(home: &Path, label: &str, json: bool) -> Result<()> {
+    let plist = plist_path(label)?;
+    let program = home.join("bin/dedupd");
+    let installed = plist.is_file();
+    let running = loaded(label);
+    let installed_version = program.is_file().then(|| version_of(&program)).flatten();
+    if json {
+        let state = serde_json::json!({
+            "label": label,
+            "plist": plist,
+            "installed": installed,
+            "running": running,
+            "home": home,
+            "program": program,
+            "installed_version": installed_version,
+            "version": env!("CARGO_PKG_VERSION"),
+            "log": home.join("daemon.log"),
+        });
+        println!("{}", serde_json::to_string_pretty(&state)?);
+        return Ok(());
+    }
+    match (installed, running) {
+        (true, true) => println!("The agent is installed and the daemon is running."),
+        (true, false) => println!("The agent is installed; the daemon is stopped."),
+        (false, true) => println!("The daemon is running, but its agent file is gone."),
+        (false, false) => println!("No agent is installed."),
+    }
+    println!("  agent    {}", plist.display());
+    match installed_version {
+        Some(v) => println!("  program  {} (version {v})", program.display()),
+        None => println!("  program  {} (not there)", program.display()),
     }
     Ok(())
 }

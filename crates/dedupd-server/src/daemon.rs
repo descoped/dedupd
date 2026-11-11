@@ -42,6 +42,24 @@ pub(crate) struct PassState {
     lock: tokio::sync::Mutex<()>,
 }
 
+/// The check of the whole store: whether one is running, and what the last
+/// one found.
+#[derive(Debug, Default, Clone, serde::Serialize)]
+pub struct CheckState {
+    pub running: bool,
+    /// Seconds since the epoch.
+    pub started_at: Option<i64>,
+    pub finished_at: Option<i64>,
+    pub checked: u64,
+    pub bytes: u64,
+    /// sha256 of the files whose content no longer matches their name.
+    pub damaged: Vec<String>,
+    /// sha256 of the files that are in neither the store nor the archive.
+    pub missing: Vec<String>,
+    pub only_in_archive: u64,
+    pub error: Option<String>,
+}
+
 /// App files by path, as they looked when they were scanned.
 type Seen = HashMap<String, Fingerprint>;
 
@@ -78,6 +96,9 @@ pub async fn pass_with(
         reclaim_duplicates(server, reclaim_age, &mut report).await?;
     }
     update_archive(server, &mut report).await?;
+    if report.forgotten + report.adopted + report.reclaimed + report.archived > 0 {
+        server.touch();
+    }
     Ok(report)
 }
 
@@ -232,37 +253,89 @@ fn watch(
     (watching > 0).then_some((watcher, rx))
 }
 
-/// Hash the whole store once the last check is older than the configured
-/// number of days, and write the result where the owner can read it.
+fn epoch() -> i64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// Hash the whole store and write the result where the owner can read it.
+/// Does nothing when a check is already running.
+pub async fn check_store(server: Arc<Server>) {
+    {
+        let mut check = server.check.lock().expect("lock");
+        if check.running {
+            return;
+        }
+        *check = CheckState {
+            running: true,
+            started_at: Some(epoch()),
+            ..CheckState::default()
+        };
+    }
+    server.touch();
+    let engine = server.engine.clone();
+    let done =
+        tokio::task::spawn_blocking(move || maintain::verify(&engine.db, &engine.store, false, 2))
+            .await;
+    {
+        let mut check = server.check.lock().expect("lock");
+        check.running = false;
+        check.finished_at = Some(epoch());
+        match done {
+            Ok(Ok(r)) => {
+                let summary = format!(
+                    "checked {} files: {} damaged, {} missing\n{}",
+                    r.checked,
+                    r.damaged.len(),
+                    r.missing.len(),
+                    r.damaged
+                        .iter()
+                        .map(|s| format!("DAMAGED {s}\n"))
+                        .chain(r.missing.iter().map(|s| format!("MISSING {s}\n")))
+                        .collect::<String>()
+                );
+                eprintln!(
+                    "dedupd: store check: {}",
+                    summary.lines().next().unwrap_or("")
+                );
+                let _ = std::fs::write(server.home.root().join("last-verify.txt"), summary);
+                check.checked = r.checked as u64;
+                check.bytes = r.bytes;
+                check.only_in_archive = r.only_in_archive as u64;
+                check.damaged = r.damaged;
+                check.missing = r.missing;
+            }
+            Ok(Err(e)) => check.error = Some(format!("{e:#}")),
+            Err(e) => check.error = Some(e.to_string()),
+        }
+    }
+    server.touch();
+}
+
+/// When the store was last checked, from the note the check leaves.
+pub fn last_check(server: &Server) -> Option<i64> {
+    let modified = std::fs::metadata(server.home.root().join("last-verify.txt"))
+        .and_then(|m| m.modified())
+        .ok()?;
+    Some(
+        modified
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .ok()?
+            .as_secs() as i64,
+    )
+}
+
+/// Check the store once the last check is older than the configured number
+/// of days.
 async fn scheduled_verify(server: Arc<Server>) {
     let days = server.config.verify_days.unwrap_or(7);
     let marker = server.home.root().join("last-verify.txt");
     let due =
         days > 0 && file_age(&marker).is_none_or(|age| age >= Duration::from_secs(days * 86_400));
-    if !due {
-        return;
-    }
-    let engine = server.engine.clone();
-    let done =
-        tokio::task::spawn_blocking(move || maintain::verify(&engine.db, &engine.store, false, 2))
-            .await;
-    if let Ok(Ok(r)) = done {
-        let summary = format!(
-            "checked {} files: {} damaged, {} missing\n{}",
-            r.checked,
-            r.damaged.len(),
-            r.missing.len(),
-            r.damaged
-                .iter()
-                .map(|s| format!("DAMAGED {s}\n"))
-                .chain(r.missing.iter().map(|s| format!("MISSING {s}\n")))
-                .collect::<String>()
-        );
-        eprintln!(
-            "dedupd: store check: {}",
-            summary.lines().next().unwrap_or("")
-        );
-        let _ = std::fs::write(&marker, summary);
+    if due {
+        check_store(server).await;
     }
 }
 

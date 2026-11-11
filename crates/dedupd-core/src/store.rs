@@ -73,6 +73,11 @@ impl Store {
 
     /// Bytes free on the volume the store is on.
     pub fn free_bytes(&self) -> Result<u64> {
+        Ok(self.volume()?.1)
+    }
+
+    /// The size of the volume the store is on and the bytes free on it.
+    pub fn volume(&self) -> Result<(u64, u64)> {
         use std::os::unix::ffi::OsStrExt;
         let dir = self.home.store_dir();
         let path = std::ffi::CString::new(dir.as_os_str().as_bytes())?;
@@ -86,7 +91,8 @@ impl Store {
             }
             stat
         };
-        Ok(stat.f_bavail as u64 * stat.f_frsize as u64)
+        let block = stat.f_frsize as u64;
+        Ok((stat.f_blocks as u64 * block, stat.f_bavail as u64 * block))
     }
 
     /// A path in the store's own temp folder, on the store's volume.

@@ -10,6 +10,7 @@ pub mod fetch;
 pub mod governor;
 pub mod hash;
 pub mod hub;
+pub mod library;
 pub mod maintain;
 pub mod ollama;
 pub mod paths;

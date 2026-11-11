@@ -1,0 +1,71 @@
+{
+  "models": [
+    {
+      "apps": [],
+      "archived": false,
+      "downloading": false,
+      "id": "org/Repo-GGUF",
+      "meta": {
+        "architecture": null,
+        "author": "org",
+        "base_model": "org/Base",
+        "context_length": null,
+        "created_at": "2025-12-01T00:00:00.000Z",
+        "downloads": 1200,
+        "formats": [
+          "gguf"
+        ],
+        "gated": false,
+        "languages": [],
+        "last_modified": "2026-01-02T03:04:05.000Z",
+        "library_name": null,
+        "license": "apache-2.0",
+        "likes": 7,
+        "parameters": null,
+        "pipeline_tag": "text-generation",
+        "private": false,
+        "tags": [
+          "gguf",
+          "license:apache-2.0",
+          "base_model:org/Base"
+        ],
+        "used_storage": null
+      }
+    },
+    {
+      "apps": [],
+      "archived": false,
+      "downloading": false,
+      "id": "mlx-community/Repo-4bit",
+      "meta": {
+        "architecture": null,
+        "author": "mlx-community",
+        "base_model": "org/Base",
+        "context_length": null,
+        "created_at": "2025-12-01T00:00:00.000Z",
+        "downloads": 1200,
+        "formats": [
+          "mlx",
+          "safetensors"
+        ],
+        "gated": false,
+        "languages": [],
+        "last_modified": "2026-01-02T03:04:05.000Z",
+        "library_name": null,
+        "license": "apache-2.0",
+        "likes": 7,
+        "parameters": null,
+        "pipeline_tag": "text-generation",
+        "private": false,
+        "tags": [
+          "mlx",
+          "safetensors",
+          "license:apache-2.0",
+          "base_model:org/Base"
+        ],
+        "used_storage": null
+      }
+    }
+  ],
+  "next": "abc="
+}

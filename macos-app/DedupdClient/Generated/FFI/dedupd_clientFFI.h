@@ -243,10 +243,144 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureRes
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_EVENT_LISTENER_METHOD0
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_EVENT_LISTENER_METHOD0
+typedef void (*UniffiCallbackInterfaceEventListenerMethod0)(uint64_t, RustBuffer, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_EVENT_LISTENER_METHOD1
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_EVENT_LISTENER_METHOD1
+typedef void (*UniffiCallbackInterfaceEventListenerMethod1)(uint64_t, int8_t, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
+#ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_EVENT_LISTENER
+#define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_EVENT_LISTENER
+typedef struct UniffiVTableCallbackInterfaceEventListener {
+    UniffiCallbackInterfaceFree _Nonnull uniffiFree;
+    UniffiCallbackInterfaceClone _Nonnull uniffiClone;
+    UniffiCallbackInterfaceEventListenerMethod0 _Nonnull onEvent;
+    UniffiCallbackInterfaceEventListenerMethod1 _Nonnull onConnection;
+} UniffiVTableCallbackInterfaceEventListener;
+
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_CLONE_EVENTLISTENER
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_CLONE_EVENTLISTENER
+uint64_t uniffi_dedupd_client_fn_clone_eventlistener(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FREE_EVENTLISTENER
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FREE_EVENTLISTENER
+void uniffi_dedupd_client_fn_free_eventlistener(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_INIT_CALLBACK_VTABLE_EVENTLISTENER
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_INIT_CALLBACK_VTABLE_EVENTLISTENER
+void uniffi_dedupd_client_fn_init_callback_vtable_eventlistener(const UniffiVTableCallbackInterfaceEventListener* _Nonnull vtable
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_METHOD_EVENTLISTENER_ON_EVENT
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_METHOD_EVENTLISTENER_ON_EVENT
+void uniffi_dedupd_client_fn_method_eventlistener_on_event(uint64_t ptr, RustBuffer event, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_METHOD_EVENTLISTENER_ON_CONNECTION
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_METHOD_EVENTLISTENER_ON_CONNECTION
+void uniffi_dedupd_client_fn_method_eventlistener_on_connection(uint64_t ptr, int8_t connected, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_CLONE_EVENTSUBSCRIPTION
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_CLONE_EVENTSUBSCRIPTION
+uint64_t uniffi_dedupd_client_fn_clone_eventsubscription(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FREE_EVENTSUBSCRIPTION
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FREE_EVENTSUBSCRIPTION
+void uniffi_dedupd_client_fn_free_eventsubscription(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_METHOD_EVENTSUBSCRIPTION_CANCEL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_METHOD_EVENTSUBSCRIPTION_CANCEL
+void uniffi_dedupd_client_fn_method_eventsubscription_cancel(uint64_t ptr, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_CHECK_UPSTREAM
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_CHECK_UPSTREAM
+RustBuffer uniffi_dedupd_client_fn_func_check_upstream(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_CLEAR_DOWNLOADS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_CLEAR_DOWNLOADS
+uint64_t uniffi_dedupd_client_fn_func_clear_downloads(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_DEFAULT_ADDRESS
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_DEFAULT_ADDRESS
 RustBuffer uniffi_dedupd_client_fn_func_default_address(RustCallStatus *_Nonnull out_status
     
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_DOWNLOAD
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_DOWNLOAD
+RustBuffer uniffi_dedupd_client_fn_func_download(RustBuffer address, int64_t id, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_DOWNLOAD_ACTION
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_DOWNLOAD_ACTION
+void uniffi_dedupd_client_fn_func_download_action(RustBuffer address, int64_t id, RustBuffer action, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_DOWNLOADS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_DOWNLOADS
+RustBuffer uniffi_dedupd_client_fn_func_downloads(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ENQUEUE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ENQUEUE
+RustBuffer uniffi_dedupd_client_fn_func_enqueue(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_FORGET
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_FORGET
+void uniffi_dedupd_client_fn_func_forget(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_GC_APPLY
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_GC_APPLY
+RustBuffer uniffi_dedupd_client_fn_func_gc_apply(RustBuffer address, RustBuffer orphans, RustBuffer offload, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_GC_PLAN
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_GC_PLAN
+RustBuffer uniffi_dedupd_client_fn_func_gc_plan(RustBuffer address, int8_t offload, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_HUB_MODEL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_HUB_MODEL
+RustBuffer uniffi_dedupd_client_fn_func_hub_model(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_LOCATIONS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_LOCATIONS
+RustBuffer uniffi_dedupd_client_fn_func_locations(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_LOG_TAIL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_LOG_TAIL
+RustBuffer uniffi_dedupd_client_fn_func_log_tail(RustBuffer address, uint32_t lines, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_MODEL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_MODEL
+RustBuffer uniffi_dedupd_client_fn_func_model(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_MODELS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_MODELS
+RustBuffer uniffi_dedupd_client_fn_func_models(RustBuffer address, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_PULL
@@ -254,14 +388,54 @@ RustBuffer uniffi_dedupd_client_fn_func_default_address(RustCallStatus *_Nonnull
 RustBuffer uniffi_dedupd_client_fn_func_pull(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTART
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTART
+void uniffi_dedupd_client_fn_func_restart(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SCAN
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SCAN
 RustBuffer uniffi_dedupd_client_fn_func_scan(RustBuffer address, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SEARCH
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SEARCH
+RustBuffer uniffi_dedupd_client_fn_func_search(RustBuffer address, RustBuffer query, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SETTINGS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SETTINGS
+RustBuffer uniffi_dedupd_client_fn_func_settings(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_START_STORE_CHECK
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_START_STORE_CHECK
+void uniffi_dedupd_client_fn_func_start_store_check(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_STATUS
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_STATUS
 RustBuffer uniffi_dedupd_client_fn_func_status(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_STORE_CHECK
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_STORE_CHECK
+RustBuffer uniffi_dedupd_client_fn_func_store_check(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_UNPLACE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_UNPLACE
+RustBuffer uniffi_dedupd_client_fn_func_unplace(RustBuffer address, RustBuffer repo, RustBuffer app, int8_t apply, RustBuffer paths, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_UPDATE_SETTINGS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_UPDATE_SETTINGS
+RustBuffer uniffi_dedupd_client_fn_func_update_settings(RustBuffer address, RustBuffer changes, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SUBSCRIBE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SUBSCRIBE
+uint64_t uniffi_dedupd_client_fn_func_subscribe(RustBuffer address, uint64_t listener, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_FFI_DEDUPD_CLIENT_RUSTBUFFER_ALLOC
@@ -524,9 +698,93 @@ void ffi_dedupd_client_rust_future_free_void(uint64_t handle
 void ffi_dedupd_client_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_CHECK_UPSTREAM
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_CHECK_UPSTREAM
+uint16_t uniffi_dedupd_client_checksum_func_check_upstream(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_CLEAR_DOWNLOADS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_CLEAR_DOWNLOADS
+uint16_t uniffi_dedupd_client_checksum_func_clear_downloads(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_DEFAULT_ADDRESS
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_DEFAULT_ADDRESS
 uint16_t uniffi_dedupd_client_checksum_func_default_address(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_DOWNLOAD
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_DOWNLOAD
+uint16_t uniffi_dedupd_client_checksum_func_download(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_DOWNLOAD_ACTION
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_DOWNLOAD_ACTION
+uint16_t uniffi_dedupd_client_checksum_func_download_action(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_DOWNLOADS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_DOWNLOADS
+uint16_t uniffi_dedupd_client_checksum_func_downloads(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ENQUEUE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ENQUEUE
+uint16_t uniffi_dedupd_client_checksum_func_enqueue(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_FORGET
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_FORGET
+uint16_t uniffi_dedupd_client_checksum_func_forget(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_GC_APPLY
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_GC_APPLY
+uint16_t uniffi_dedupd_client_checksum_func_gc_apply(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_GC_PLAN
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_GC_PLAN
+uint16_t uniffi_dedupd_client_checksum_func_gc_plan(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_HUB_MODEL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_HUB_MODEL
+uint16_t uniffi_dedupd_client_checksum_func_hub_model(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_LOCATIONS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_LOCATIONS
+uint16_t uniffi_dedupd_client_checksum_func_locations(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_LOG_TAIL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_LOG_TAIL
+uint16_t uniffi_dedupd_client_checksum_func_log_tail(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_MODEL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_MODEL
+uint16_t uniffi_dedupd_client_checksum_func_model(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_MODELS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_MODELS
+uint16_t uniffi_dedupd_client_checksum_func_models(void
     
 );
 #endif
@@ -536,15 +794,81 @@ uint16_t uniffi_dedupd_client_checksum_func_pull(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_RESTART
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_RESTART
+uint16_t uniffi_dedupd_client_checksum_func_restart(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SCAN
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SCAN
 uint16_t uniffi_dedupd_client_checksum_func_scan(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SEARCH
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SEARCH
+uint16_t uniffi_dedupd_client_checksum_func_search(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SETTINGS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SETTINGS
+uint16_t uniffi_dedupd_client_checksum_func_settings(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_START_STORE_CHECK
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_START_STORE_CHECK
+uint16_t uniffi_dedupd_client_checksum_func_start_store_check(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_STATUS
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_STATUS
 uint16_t uniffi_dedupd_client_checksum_func_status(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_STORE_CHECK
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_STORE_CHECK
+uint16_t uniffi_dedupd_client_checksum_func_store_check(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_UNPLACE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_UNPLACE
+uint16_t uniffi_dedupd_client_checksum_func_unplace(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_UPDATE_SETTINGS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_UPDATE_SETTINGS
+uint16_t uniffi_dedupd_client_checksum_func_update_settings(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SUBSCRIBE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SUBSCRIBE
+uint16_t uniffi_dedupd_client_checksum_func_subscribe(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_METHOD_EVENTLISTENER_ON_EVENT
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_METHOD_EVENTLISTENER_ON_EVENT
+uint16_t uniffi_dedupd_client_checksum_method_eventlistener_on_event(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_METHOD_EVENTLISTENER_ON_CONNECTION
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_METHOD_EVENTLISTENER_ON_CONNECTION
+uint16_t uniffi_dedupd_client_checksum_method_eventlistener_on_connection(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_METHOD_EVENTSUBSCRIPTION_CANCEL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_METHOD_EVENTSUBSCRIPTION_CANCEL
+uint16_t uniffi_dedupd_client_checksum_method_eventsubscription_cancel(void
     
 );
 #endif

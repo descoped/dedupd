@@ -1,0 +1,160 @@
+{
+  "info_json": "{\"downloads\":1200,\"gated\":false,\"gguf\":{\"architecture\":\"llama\",\"context_length\":8192,\"total\":134515008},\"id\":\"org/Repo-GGUF\",\"lastModified\":\"2026-01-02T03:04:05.000Z\",\"likes\":7,\"pipeline_tag\":\"text-generation\",\"private\":false,\"sha\":\"0123456789abcdef0123456789abcdef01234567\",\"siblings\":[{\"blobId\":\"pointer\",\"lfs\":{\"pointerSize\":134,\"sha256\":\"565dbcf70c3f62f1b37108347d55f698417ddca8c31788432fc5a06b517a3cae\",\"size\":300000},\"rfilename\":\"model.gguf\",\"size\":300000},{\"blobId\":\"0187f3b09d66cef7911083ad49f890f5a6589589\",\"rfilename\":\"sub/config.json\",\"size\":8}],\"tags\":[\"gguf\",\"text-generation\",\"license:apache-2.0\",\"base_model:org/Base\"]}",
+  "model": {
+    "apps": [
+      {
+        "app": "bionic",
+        "bytes": 300008,
+        "files": 2,
+        "shared_bytes": 300008
+      },
+      {
+        "app": "hf",
+        "bytes": 300008,
+        "files": 2,
+        "shared_bytes": 300008
+      }
+    ],
+    "checked_at": 1700000000,
+    "commit": "0123456789abcdef0123456789abcdef01234567",
+    "fetched_at": 1700000000,
+    "meta": {
+      "architecture": "llama",
+      "author": "org",
+      "base_model": "org/Base",
+      "context_length": 8192,
+      "created_at": null,
+      "downloads": 1200,
+      "formats": [
+        "gguf"
+      ],
+      "gated": false,
+      "languages": [],
+      "last_modified": "2026-01-02T03:04:05.000Z",
+      "library_name": null,
+      "license": "apache-2.0",
+      "likes": 7,
+      "parameters": 134515008,
+      "pipeline_tag": "text-generation",
+      "private": false,
+      "tags": [
+        "gguf",
+        "text-generation",
+        "license:apache-2.0",
+        "base_model:org/Base"
+      ],
+      "used_storage": null
+    },
+    "mismatch": 0,
+    "not_upstream": 0,
+    "ollama_tags": [],
+    "provider": "hf",
+    "repo": "org/Repo-GGUF",
+    "revisions": 1,
+    "stored_bytes": 300008,
+    "stored_files": 2,
+    "unchecked": 0,
+    "upstream": "ok",
+    "verified": 4
+  },
+  "placements": [
+    {
+      "app": "bionic",
+      "origin": "placed",
+      "path": "/Users/example/apps/lmstudio/models/org/Repo-GGUF/model.gguf",
+      "rel_path": "model.gguf",
+      "sha256": "565dbcf70c3f62f1b37108347d55f698417ddca8c31788432fc5a06b517a3cae",
+      "shared": true,
+      "size": 300000,
+      "verify_state": "verified"
+    },
+    {
+      "app": "bionic",
+      "origin": "placed",
+      "path": "/Users/example/apps/lmstudio/models/org/Repo-GGUF/sub/config.json",
+      "rel_path": "sub/config.json",
+      "sha256": "e346432021b04179518d9614f3560ccd71354a4ee101ddcb893d6959a9d6301c",
+      "shared": true,
+      "size": 8,
+      "verify_state": "verified"
+    },
+    {
+      "app": "hf",
+      "origin": "placed",
+      "path": "/Users/example/apps/huggingface/hub/models--org--Repo-GGUF/blobs/565dbcf70c3f62f1b37108347d55f698417ddca8c31788432fc5a06b517a3cae",
+      "rel_path": "model.gguf",
+      "sha256": "565dbcf70c3f62f1b37108347d55f698417ddca8c31788432fc5a06b517a3cae",
+      "shared": true,
+      "size": 300000,
+      "verify_state": "verified"
+    },
+    {
+      "app": "hf",
+      "origin": "placed",
+      "path": "/Users/example/apps/huggingface/hub/models--org--Repo-GGUF/blobs/0187f3b09d66cef7911083ad49f890f5a6589589",
+      "rel_path": "sub/config.json",
+      "sha256": "e346432021b04179518d9614f3560ccd71354a4ee101ddcb893d6959a9d6301c",
+      "shared": true,
+      "size": 8,
+      "verify_state": "verified"
+    }
+  ],
+  "readme": null,
+  "revisions": [
+    {
+      "bytes": 300008,
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "fetched_at": 1700000000,
+      "files": [
+        {
+          "apps": [
+            "bionic",
+            "hf"
+          ],
+          "archived": false,
+          "git_oid": "pointer",
+          "lfs": true,
+          "path": "model.gguf",
+          "sha256": "565dbcf70c3f62f1b37108347d55f698417ddca8c31788432fc5a06b517a3cae",
+          "size": 300000,
+          "stored": true
+        },
+        {
+          "apps": [
+            "bionic",
+            "hf"
+          ],
+          "archived": false,
+          "git_oid": "0187f3b09d66cef7911083ad49f890f5a6589589",
+          "lfs": false,
+          "path": "sub/config.json",
+          "sha256": "e346432021b04179518d9614f3560ccd71354a4ee101ddcb893d6959a9d6301c",
+          "size": 8,
+          "stored": true
+        }
+      ],
+      "refs": [
+        "main"
+      ]
+    }
+  ],
+  "variants": [
+    {
+      "bytes": 300008,
+      "files": 2,
+      "kind": "gguf",
+      "name": "model",
+      "placed_in": [
+        "bionic",
+        "hf"
+      ],
+      "spec": "org/Repo-GGUF:model",
+      "stored_bytes": 300008,
+      "usable_by": [
+        "bionic",
+        "ollama",
+        "hf"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "checking": false,
+  "downloads": {
+    "governor": {
+      "budgets": [],
+      "connections": 0,
+      "hold_seconds": 0,
+      "max_connections": 8,
+      "speed_limit": 0,
+      "window": 2
+    },
+    "jobs": [],
+    "speed": 0
+  },
+  "library": 0,
+  "seq": 1
+}
