@@ -23,8 +23,9 @@ pub trait EventListener: Send + Sync {
     /// The daemon's state as of now. The first one arrives as soon as the
     /// connection is made.
     fn on_event(&self, event: DaemonEvent);
-    /// The connection was made (`true`) or lost (`false`). After a loss the
-    /// subscription keeps trying; `on_event` follows when it succeeds.
+    /// The connection was made (`true`), or it was lost or could not be made
+    /// (`false`). After that the subscription keeps trying; `on_event`
+    /// follows when it succeeds.
     fn on_connection(&self, connected: bool);
 }
 
@@ -67,7 +68,9 @@ pub fn subscribe(address: String, listener: Arc<dyn EventListener>) -> Arc<Event
 
 fn follow(address: &str, listener: &dyn EventListener, stopped: &AtomicBool) {
     let done = || stopped.load(Ordering::Relaxed);
-    let mut connected = false;
+    // What the listener was told last; nothing yet, so that a daemon that
+    // is away from the start is reported too.
+    let mut connected: Option<bool> = None;
     let mut backoff = Duration::from_millis(250);
     while !done() {
         if let Some(lines) = open(address) {
@@ -85,8 +88,8 @@ fn follow(address: &str, listener: &dyn EventListener, stopped: &AtomicBool) {
                 let Ok(event) = serde_json::from_str::<DaemonEvent>(&line) else {
                     continue;
                 };
-                if !connected {
-                    connected = true;
+                if connected != Some(true) {
+                    connected = Some(true);
                     listener.on_connection(true);
                 }
                 backoff = Duration::from_millis(250);
@@ -96,8 +99,8 @@ fn follow(address: &str, listener: &dyn EventListener, stopped: &AtomicBool) {
         if done() {
             return;
         }
-        if connected {
-            connected = false;
+        if connected != Some(false) {
+            connected = Some(false);
             listener.on_connection(false);
         }
         // Wait in short steps, so a cancel does not have to wait it out.

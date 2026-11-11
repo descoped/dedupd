@@ -601,8 +601,9 @@ public protocol EventListener: AnyObject, Sendable {
     func onEvent(event: DaemonEvent) 
     
     /**
-     * The connection was made (`true`) or lost (`false`). After a loss the
-     * subscription keeps trying; `on_event` follows when it succeeds.
+     * The connection was made (`true`), or it was lost or could not be made
+     * (`false`). After that the subscription keeps trying; `on_event`
+     * follows when it succeeds.
      */
     func onConnection(connected: Bool) 
     
@@ -677,8 +678,9 @@ open func onEvent(event: DaemonEvent)  {try! rustCall() {
 }
     
     /**
-     * The connection was made (`true`) or lost (`false`). After a loss the
-     * subscription keeps trying; `on_event` follows when it succeeds.
+     * The connection was made (`true`), or it was lost or could not be made
+     * (`false`). After that the subscription keeps trying; `on_event`
+     * follows when it succeeds.
      */
 open func onConnection(connected: Bool)  {try! rustCall() {
         uniffiCallStatus in
@@ -5598,7 +5600,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_method_eventlistener_on_event() != 62438) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_method_eventlistener_on_connection() != 45559) {
+    if (uniffi_dedupd_client_checksum_method_eventlistener_on_connection() != 4620) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_method_eventsubscription_cancel() != 31300) {
