@@ -5,8 +5,15 @@ use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 use std::process::Command as Process;
 
-/// The launchd label of the daemon.
-pub const LABEL: &str = "com.dedupd.daemon";
+/// The launchd label of the daemon. The same name as the signature of the
+/// `dedupd` inside the app.
+pub const LABEL: &str = "io.descoped.dedupd.daemon";
+
+/// The macOS app's bundle identifier. The agent names it, so that System
+/// Settings › General › Login Items lists the daemon under the app's name and
+/// icon. Without it macOS shows the name of whoever signed the binary. It has
+/// no effect on a Mac that does not have the app.
+const APP_BUNDLE_ID: &str = "io.descoped.dedupd.app";
 
 pub fn launchctl(args: &[&str]) -> Result<std::process::Output> {
     Process::new("/bin/launchctl")
@@ -61,6 +68,8 @@ fn plist(label: &str, exe: &str, home: &str, log: &str) -> String {
     <true/>
     <key>ProcessType</key>
     <string>Background</string>
+    <key>AssociatedBundleIdentifiers</key>
+    <string>{}</string>
     <key>StandardOutPath</key>
     <string>{}</string>
     <key>StandardErrorPath</key>
@@ -71,6 +80,7 @@ fn plist(label: &str, exe: &str, home: &str, log: &str) -> String {
         xml(label),
         xml(exe),
         xml(home),
+        xml(APP_BUNDLE_ID),
         xml(log),
         xml(log)
     )
@@ -239,5 +249,29 @@ mod tests {
         assert!(p.contains("<string>/a&amp;b/dedupd</string>"));
         assert!(p.contains("<string>/h&lt;ome</string>"));
         assert!(p.contains("<string>serve</string>"));
+    }
+
+    #[test]
+    fn plist_ties_the_agent_to_the_app_and_is_well_formed() {
+        let p = plist(LABEL, "/h/bin/dedupd", "/h", "/h/daemon.log");
+        assert!(p.contains(
+            "<key>AssociatedBundleIdentifiers</key>\n    <string>io.descoped.dedupd.app</string>"
+        ));
+        assert!(p.contains("<string>/h/daemon.log</string>"));
+        // The log path fills both log keys, and nothing else.
+        assert_eq!(p.matches("/h/daemon.log").count(), 2);
+        let file = std::env::temp_dir().join(format!("dedupd-plist-{}.plist", std::process::id()));
+        std::fs::write(&file, &p).unwrap();
+        let lint = Process::new("/usr/bin/plutil")
+            .arg("-lint")
+            .arg(&file)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&file);
+        assert!(
+            lint.status.success(),
+            "{}",
+            String::from_utf8_lossy(&lint.stdout)
+        );
     }
 }

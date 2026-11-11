@@ -56,12 +56,12 @@ struct AppSettingsTests {
     @Test("A screen, a main window and a trial daemon can be asked for on the command line")
     func otherArguments() {
         let options = LaunchOptions(arguments: [
-            "Dedupd", "-mainWindow", "YES", "-pane", "downloads", "-daemonHome", "/tmp/home", "-agentLabel", "com.dedupd.trial",
+            "Dedupd", "-mainWindow", "YES", "-pane", "downloads", "-daemonHome", "/tmp/home", "-agentLabel", "io.descoped.dedupd.trial",
         ])
         #expect(options.showsMainWindow)
         #expect(options.pane == .downloads)
         #expect(options.agentHome == "/tmp/home")
-        #expect(options.agentLabel == "com.dedupd.trial")
+        #expect(options.agentLabel == "io.descoped.dedupd.trial")
         #expect(LaunchOptions(arguments: ["Dedupd", "-pane", "nonsense"]).pane == nil)
         #expect(!LaunchOptions(arguments: ["Dedupd"]).showsMainWindow)
     }

@@ -155,8 +155,8 @@ struct FixtureAgent: AgentControl {
 
     func state() async throws -> AgentState {
         AgentState(
-            label: "com.dedupd.daemon",
-            plist: "/Users/example/Library/LaunchAgents/com.dedupd.daemon.plist",
+            label: "io.descoped.dedupd.daemon",
+            plist: "/Users/example/Library/LaunchAgents/io.descoped.dedupd.daemon.plist",
             installed: installed,
             running: installed,
             home: "/Users/example/.dedupd",

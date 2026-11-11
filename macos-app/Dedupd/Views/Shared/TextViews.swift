@@ -158,6 +158,20 @@ enum Finder {
     }
 }
 
+enum SystemSettings {
+    /// Where macOS lists what opens at login and what runs in the background.
+    static let loginItems = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
+
+    /// Open System Settings › General › Login Items & Extensions, where the
+    /// owner can see the daemon and this app and switch either off.
+    @MainActor
+    static func openLoginItems() {
+        if let loginItems {
+            NSWorkspace.shared.open(loginItems)
+        }
+    }
+}
+
 /// What a screen shows instead of its content while the daemon is away.
 struct DaemonAwayView: View {
     @Environment(DaemonStore.self) private var daemon

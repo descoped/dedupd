@@ -37,7 +37,7 @@ enum FixtureData {
                 startedAt: 1_794_000_000,
                 listen: address,
                 executable: "/Users/example/.dedupd/bin/dedupd",
-                managedBy: "com.dedupd.daemon",
+                managedBy: "io.descoped.dedupd.daemon",
                 token: true,
                 tokenSource: "/Users/example/.cache/huggingface/token",
                 maxConnections: 8,

@@ -214,7 +214,7 @@ struct DisplayTests {
     @Test("The agent's state is read from what the command prints")
     func agentState() throws {
         let json = """
-        {"label": "com.dedupd.daemon", "plist": "/p.plist", "installed": true, "running": false, "home": "/h",
+        {"label": "io.descoped.dedupd.daemon", "plist": "/p.plist", "installed": true, "running": false, "home": "/h",
          "program": "/h/bin/dedupd", "installed_version": "0.0.9", "version": "0.1.0", "log": "/h/daemon.log"}
         """
         let state = try JSONDecoder().decode(AgentState.self, from: Data(json.utf8))
@@ -234,8 +234,8 @@ struct DisplayTests {
     func agentArguments() {
         #expect(BundledAgent().arguments(["agent", "--json"]) == ["agent", "--json"])
         #expect(
-            BundledAgent(home: "/tmp/home", label: "com.dedupd.trial").arguments(["install", "--env"])
-                == ["--home", "/tmp/home", "install", "--env", "--label", "com.dedupd.trial"]
+            BundledAgent(home: "/tmp/home", label: "io.descoped.dedupd.trial").arguments(["install", "--env"])
+                == ["--home", "/tmp/home", "install", "--env", "--label", "io.descoped.dedupd.trial"]
         )
     }
 }

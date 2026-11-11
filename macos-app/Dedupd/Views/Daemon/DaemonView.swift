@@ -94,7 +94,8 @@ private struct AgentCard: View {
         Card(
             title: "Background service",
             note: "A launchd agent starts the daemon at login and keeps it running, also when this app is closed. "
-                + "macOS lists it under System Settings › General › Login Items & Extensions."
+                + "macOS lists it as dedupd under System Settings › General › Login Items & Extensions, "
+                + "where it can also be switched off."
         ) {
             switch service.agent {
             case let .ready(agent):
@@ -113,9 +114,18 @@ private struct AgentCard: View {
                     .accessibilityIdentifier("agent-output")
             }
             Divider()
-            Toggle("Open this app at login", isOn: startsAtLogin)
-                .help("Shows the menu bar icon after login. The daemon does not need the app to run.")
-                .accessibilityIdentifier("start-at-login")
+            HStack {
+                Toggle("Open this app at login", isOn: startsAtLogin)
+                    .help("Shows the menu bar icon after login. The daemon does not need the app to run.")
+                    .accessibilityIdentifier("start-at-login")
+                Spacer()
+                Button("Login Items in System Settings…") {
+                    SystemSettings.openLoginItems()
+                }
+                .controlSize(.small)
+                .help("Where macOS lists the daemon and this app, and lets you switch either off")
+                .accessibilityIdentifier("open-login-items")
+            }
         }
         .confirmationDialog("Uninstall the background service?", isPresented: $confirmsUninstall) {
             Button("Uninstall", role: .destructive) {
