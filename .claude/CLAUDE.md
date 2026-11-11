@@ -62,7 +62,7 @@ The command line works on the store and database directly, also while the daemon
 
 ## The macOS app
 
-`macos-app/` is a SwiftUI app that lives in the menu bar (`LSUIElement`, macOS 26 or later on Apple silicon, Swift 6), set up like frinkel's `ios-app`: `project.yml` (XcodeGen) is the source of truth and the generated `Dedupd.xcodeproj` is committed; `Developer.xcconfig` carries the signing team and includes `Version.xcconfig` (synced from `Cargo.toml` at build time) and an optional gitignored `Local.xcconfig`; SwiftLint runs after every build. Conventions are in `.claude/rules/macos-app.md`. The design and the decisions behind it are on the page "dedupd App Design" (https://claude.ai/artifact/XEhjuDrTZ1NVNBQ8RuSas2).
+`macos-app/` is a SwiftUI app that lives in the menu bar (`LSUIElement`, macOS 26 or later on Apple silicon, Swift 6): `project.yml` (XcodeGen) is the source of truth and the generated `Dedupd.xcodeproj` is committed; `Developer.xcconfig` carries the signing team and includes `Version.xcconfig` (synced from `Cargo.toml` at build time) and an optional gitignored `Local.xcconfig`; SwiftLint runs after every build. Conventions are in `.claude/rules/macos-app.md`. The design and the decisions behind it are on the page "dedupd App Design" (https://claude.ai/artifact/XEhjuDrTZ1NVNBQ8RuSas2).
 
 What it is: the menu bar icon opens a small panel (state at a glance, a scan, "Open dedupd"); the main window has a sidebar, a list and an inspector. Closing the window leaves the icon and takes the app out of the Dock; quitting the app leaves the daemon.
 
