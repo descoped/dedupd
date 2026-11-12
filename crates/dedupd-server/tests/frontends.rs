@@ -816,6 +816,84 @@ async fn the_event_stream_follows_a_download() {
     assert!(ended.is_ok(), "the stream outlived the daemon");
 }
 
+/// The library number the event stream gives right now.
+async fn library_number(fx: &Fixture) -> u64 {
+    use futures_util::StreamExt;
+    let resp = fx
+        .http
+        .get(format!("{}/dedupd/v1/events", fx.base))
+        .send()
+        .await
+        .unwrap();
+    let mut bytes = resp.bytes_stream();
+    let mut pending = String::new();
+    loop {
+        let chunk = tokio::time::timeout(Duration::from_secs(10), bytes.next())
+            .await
+            .expect("the stream went quiet")
+            .expect("the stream ended")
+            .unwrap();
+        pending.push_str(std::str::from_utf8(&chunk).unwrap());
+        if let Some(end) = pending.find('\n') {
+            let line: Value = serde_json::from_str(&pending[..end]).unwrap();
+            return line["library"].as_u64().unwrap();
+        }
+    }
+}
+
+/// Ask for a model in these apps and wait until the job is done.
+async fn activated(fx: &Fixture, apps: Value) {
+    let (_, job) = control(
+        fx,
+        "POST",
+        "downloads",
+        Some(json!({"model": REPO, "apps": apps})),
+    )
+    .await;
+    let id = job["id"].as_i64().unwrap();
+    for _ in 0..500 {
+        let (_, queue) = control(fx, "GET", "downloads", None).await;
+        let done = queue["jobs"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|j| j["id"] == id && j["state"] == "done");
+        if done {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the job never finished");
+}
+
+/// A model that is stored is deactivated in an app and activated again:
+/// nothing is downloaded, adopted or copied, and whoever follows the daemon
+/// is still told that the library changed, so the app shows the new state.
+#[tokio::test]
+async fn activating_a_stored_model_says_the_library_changed() {
+    let fx = fixture().await;
+    activated(&fx, json!(["bionic"])).await;
+    let all = json!({"repo": REPO, "app": "bionic", "apply": true});
+    let (status, _) = control(&fx, "POST", "unplace", Some(all)).await;
+    assert_eq!(status, 200);
+    // Let what the first job and the deactivation announced arrive first.
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    let before = library_number(&fx).await;
+
+    activated(&fx, json!(["bionic"])).await;
+    let (_, model) = control(&fx, "GET", &format!("models/{REPO}"), None).await;
+    assert_eq!(model["model"]["apps"][0]["app"], "bionic", "{model}");
+    let mut after = before;
+    for _ in 0..300 {
+        after = library_number(&fx).await;
+        if after > before {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(after > before, "the library number stayed at {before}");
+}
+
 #[tokio::test]
 async fn search_and_model_info_say_what_is_already_here() {
     let fx = fixture().await;

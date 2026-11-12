@@ -89,11 +89,16 @@ impl Server {
             shutdown: CancellationToken::new(),
             restart: AtomicBool::new(false),
         });
-        // The daemon keeps the archive disk current after its own
-        // downloads, as the command line does after its.
+        // A finished job put files into apps, so whoever follows the daemon
+        // is told at once: the pass below says so only when it finds
+        // something to do itself, and after activating a model that is
+        // already stored it finds nothing. The daemon also keeps the archive
+        // disk current after its own downloads, as the command line does
+        // after its.
         let weak = Arc::downgrade(&server);
         server.queue.on_done(move || {
             if let Some(server) = weak.upgrade() {
+                server.touch();
                 tokio::spawn(async move {
                     let _ = daemon::pass(&server).await;
                 });
