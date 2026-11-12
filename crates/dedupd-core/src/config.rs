@@ -152,4 +152,27 @@ mod tests {
         }
         assert_eq!(Config::load(&home).unwrap().max_connections, Some(4));
     }
+
+    /// What `dedupd install --env` does: a `set_env = false` line, or a
+    /// comment that names the setting, does not keep it off.
+    #[test]
+    fn update_turns_set_env_on_over_a_false_line_and_a_comment() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let changes = serde_json::json!({"set_env": true});
+        for text in [
+            "# set_env = true\nset_env = false\n",
+            "# set_env = true\n",
+            "",
+        ] {
+            std::fs::write(Config::path(&home), text).unwrap();
+            let config = Config::update(&home, changes.as_object().unwrap()).unwrap();
+            assert_eq!(config.set_env, Some(true), "from {text:?}");
+            let written = std::fs::read_to_string(Config::path(&home)).unwrap();
+            assert_eq!(
+                written.matches("set_env = true").count(),
+                if text.is_empty() { 1 } else { 2 }
+            );
+        }
+    }
 }

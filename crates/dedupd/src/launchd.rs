@@ -111,15 +111,11 @@ pub fn cmd_install(o: &Opened, env: bool, label: &str) -> Result<()> {
     )
     .with_context(|| format!("writing {}", path.display()))?;
     if env {
-        let config = dedupd_core::config::Config::path(&o.home);
-        let mut text = std::fs::read_to_string(&config).unwrap_or_default();
-        if !text.contains("set_env") {
-            if !text.is_empty() && !text.ends_with('\n') {
-                text.push('\n');
-            }
-            text.push_str("set_env = true\n");
-            std::fs::write(&config, text)?;
-        }
+        // Asked for in so many words, so an existing `set_env = false` is
+        // changed too; the rest of the file stays as it is.
+        let mut changes = serde_json::Map::new();
+        changes.insert("set_env".into(), serde_json::Value::Bool(true));
+        dedupd_core::config::Config::update(&o.home, &changes)?;
     }
     let domain = format!("gui/{}", uid());
     let _ = launchctl(&["bootout", &format!("{domain}/{label}")]);

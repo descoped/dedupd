@@ -102,9 +102,8 @@ listen = "127.0.0.1:8642"
 hf_endpoint = "https://huggingface.co"
 
 # Set HF_ENDPOINT to the daemon's address for apps started from the Dock or Finder,
-# through launchctl setenv when the daemon starts. Default false. `dedupd install --env` adds
-# set_env = true, but only when the file has no set_env line yet.
-# set_env = true
+# through launchctl setenv when the daemon starts. Default false; `dedupd install --env` sets it to true.
+set_env = false
 
 # The app folders, when they are not in the usual place.
 bionic_models = "/Users/you/.lmstudio/models"
