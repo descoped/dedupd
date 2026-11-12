@@ -72,6 +72,14 @@ struct DaemonStoreTests {
         #expect(daemon.revision == 1, "a download's progress is not a change to the library")
         await daemon.receive(.event(event([], library: 5, seq: 3)))
         #expect(daemon.revision == 2)
+        // A job that is done put files into an app: the screens look again
+        // even when the daemon does not say the library changed.
+        await daemon.receive(.event(event([job(2, .placing)], library: 5, seq: 4)))
+        #expect(daemon.revision == 2)
+        await daemon.receive(.event(event([job(2, .done)], library: 5, seq: 5)))
+        #expect(daemon.revision == 3)
+        await daemon.receive(.event(event([job(2, .done)], library: 5, seq: 6)))
+        #expect(daemon.revision == 3, "a job that was already done is not news")
     }
 
     @Test("A daemon that comes back makes the screens load again")

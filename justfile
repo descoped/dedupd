@@ -116,6 +116,10 @@ app-live address model="bartowski/SmolLM2-135M-Instruct-GGUF:Q4_K_M": app-gen
 app-run: app-build
     open macos-app/{{derived}}/Build/Products/Debug/Dedupd.app
 
+# A fast round trip: build, put the app into /Applications, bring the installed daemon to the same build, open the app
+app-install: app-build
+    sh macos-app/scripts/dev-install.sh macos-app/{{derived}}/Build/Products/Debug/Dedupd.app
+
 # Start the app's window on a canned daemon (running, downloading or notRunning), on one of its screens
 app-preview fixture="running" pane="library": app-build
     open -n macos-app/{{derived}}/Build/Products/Debug/Dedupd.app --args -uiTestFixture {{fixture}} -pane {{pane}}

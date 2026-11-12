@@ -123,7 +123,18 @@ pub fn cmd_install(o: &Opened, env: bool, label: &str) -> Result<()> {
     }
     let domain = format!("gui/{}", uid());
     let _ = launchctl(&["bootout", &format!("{domain}/{label}")]);
-    let out = launchctl(&["bootstrap", &domain, &path.to_string_lossy()])?;
+    // `bootout` returns before launchd has let go of a daemon that was
+    // running, and a `bootstrap` in that moment fails ("Bootstrap failed: 5:
+    // Input/output error"). So it is tried again for a few seconds.
+    let bootstrap = || launchctl(&["bootstrap", &domain, &path.to_string_lossy()]);
+    let mut out = bootstrap()?;
+    for _ in 0..40 {
+        if out.status.success() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        out = bootstrap()?;
+    }
     if !out.status.success() {
         bail!(
             "launchctl could not start the agent: {}",
@@ -204,12 +215,28 @@ fn version_of(exe: &Path) -> Option<String> {
 }
 
 /// Say whether the agent is installed and running, and which dedupd it runs.
+/// Whether two files hold the same bytes. False when either cannot be read.
+fn same_file(a: &Path, b: &Path) -> bool {
+    let size = |p: &Path| std::fs::metadata(p).map(|m| m.len()).ok();
+    match (size(a), size(b)) {
+        (Some(x), Some(y)) if x == y => match (std::fs::read(a), std::fs::read(b)) {
+            (Ok(x), Ok(y)) => x == y,
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
 pub fn cmd_agent(home: &Path, label: &str, json: bool) -> Result<()> {
     let plist = plist_path(label)?;
     let program = home.join("bin/dedupd");
     let installed = plist.is_file();
     let running = loaded(label);
     let installed_version = program.is_file().then(|| version_of(&program)).flatten();
+    // Two builds can carry one version number, so the files are compared.
+    let same_build = std::env::current_exe()
+        .ok()
+        .is_some_and(|me| same_file(&me, &program));
     if json {
         let state = serde_json::json!({
             "label": label,
@@ -219,6 +246,7 @@ pub fn cmd_agent(home: &Path, label: &str, json: bool) -> Result<()> {
             "home": home,
             "program": program,
             "installed_version": installed_version,
+            "same_build": same_build,
             "version": env!("CARGO_PKG_VERSION"),
             "log": home.join("daemon.log"),
         });
@@ -242,6 +270,20 @@ pub fn cmd_agent(home: &Path, label: &str, json: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn same_file_compares_the_bytes() {
+        let dir = std::env::temp_dir().join(format!("dedupd-same-file-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (a, b, c) = (dir.join("a"), dir.join("b"), dir.join("c"));
+        std::fs::write(&a, b"one build").unwrap();
+        std::fs::write(&b, b"one build").unwrap();
+        std::fs::write(&c, b"two build").unwrap();
+        assert!(same_file(&a, &b));
+        assert!(!same_file(&a, &c));
+        assert!(!same_file(&a, &dir.join("missing")));
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
 
     #[test]
     fn plist_escapes_and_names_the_program() {

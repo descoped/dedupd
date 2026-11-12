@@ -17,16 +17,29 @@ struct AgentState: Equatable, Sendable, Decodable {
     var installedVersion: String?
     /// The version of the `dedupd` inside this app.
     var version: String
+    /// Whether that copy is the very build inside this app. Two builds can
+    /// carry one version number; nil when the command does not say.
+    var sameBuild: Bool?
     var log: String
 
     private enum CodingKeys: String, CodingKey {
         case label, plist, installed, running, home, program, version, log
         case installedVersion = "installed_version"
+        case sameBuild = "same_build"
     }
 
-    /// The app carries a newer or older daemon than the one installed.
+    /// The app carries another daemon than the one installed: another
+    /// version, or another build of the same version.
     var needsUpdate: Bool {
-        installed && installedVersion != nil && installedVersion != version
+        installed && installedVersion != nil && (installedVersion != version || sameBuild == false)
+    }
+
+    /// What is different about the installed daemon, in a sentence.
+    var updateReason: String {
+        if installedVersion != version {
+            return "The installed daemon is version \(installedVersion ?? "?"); this app carries \(version)."
+        }
+        return "The installed daemon is another build of version \(version) than the one in this app."
     }
 }
 

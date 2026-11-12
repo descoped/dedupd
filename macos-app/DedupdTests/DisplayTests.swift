@@ -308,6 +308,18 @@ struct DisplayTests {
         #expect(Notice.notices(from: [], to: after).isEmpty, "what was already done when the app started is old news")
     }
 
+    @Test("A trial's home folder and label go on the command line")
+    func agentArguments() {
+        #expect(BundledAgent().arguments(["agent", "--json"]) == ["agent", "--json"])
+        #expect(
+            BundledAgent(home: "/tmp/home", label: "io.descoped.dedupd.trial").arguments(["install", "--env"])
+                == ["--home", "/tmp/home", "install", "--env", "--label", "io.descoped.dedupd.trial"]
+        )
+    }
+}
+
+/// What the bundled command says about the installed daemon.
+struct AgentStateTests {
     @Test("The agent's state is read from what the command prints")
     func agentState() throws {
         let json = """
@@ -325,14 +337,21 @@ struct DisplayTests {
             from: Data(json.replacingOccurrences(of: "\"0.0.9\"", with: "null").utf8)
         )
         #expect(!missing.needsUpdate)
-    }
 
-    @Test("A trial's home folder and label go on the command line")
-    func agentArguments() {
-        #expect(BundledAgent().arguments(["agent", "--json"]) == ["agent", "--json"])
-        #expect(
-            BundledAgent(home: "/tmp/home", label: "io.descoped.dedupd.trial").arguments(["install", "--env"])
-                == ["--home", "/tmp/home", "install", "--env", "--label", "io.descoped.dedupd.trial"]
-        )
+        // Two builds can carry one version number; the command says whether
+        // the installed daemon is the build inside this app.
+        let sameVersion = json.replacingOccurrences(of: "\"0.0.9\"", with: "\"0.1.0\"")
+        let unknown = try JSONDecoder().decode(AgentState.self, from: Data(sameVersion.utf8))
+        #expect(!unknown.needsUpdate)
+        let build = { (same: Bool) in
+            try JSONDecoder().decode(
+                AgentState.self,
+                from: Data(sameVersion.replacingOccurrences(of: "{\"label\"", with: "{\"same_build\": \(same), \"label\"").utf8)
+            )
+        }
+        #expect(try !build(true).needsUpdate)
+        #expect(try build(false).needsUpdate)
+        #expect(try build(false).updateReason == "The installed daemon is another build of version 0.1.0 than the one in this app.")
+        #expect(state.updateReason == "The installed daemon is version 0.0.9; this app carries 0.1.0.")
     }
 }

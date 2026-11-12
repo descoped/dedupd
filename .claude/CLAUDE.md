@@ -29,6 +29,7 @@ just app-check        # SwiftLint strict, build, unit tests (the gate)
 just app-uitest       # drive the window with canned daemons; takes pictures and takes over the screen while it runs
 just app-screenshots  # export those pictures to macos-app/build/screenshots
 just app-run          # build and start the app (menu bar)
+just app-install      # the fast round trip on this Mac: build, replace the app in /Applications, bring the installed daemon to the same build, open the app
 just app-preview downloading downloads   # the window on a canned daemon, on one of its screens
 just app-live 127.0.0.1:8643   # end to end: find, download and list a model through a running scratch daemon
 just app-bindings     # rebuild the Rust client and regenerate the Swift bindings
@@ -41,7 +42,7 @@ Tests need macOS on APFS, because they create real clones in a temp directory. T
 
 To try the CLI without touching the real store or the real app folders, use a scratch home with a `config.toml` that sets `bionic_models`, `ollama_models`, `hf_cache`, `listen` and `archive` (all optional): `dedupd --home <dir> ...` or `DEDUPD_HOME`. `--endpoint` / `DEDUPD_HF_ENDPOINT` redirects upstream calls. `dedupd install --label <other>` installs the launchd agent under another label for a trial.
 
-Never run a build from this folder against the real home (`~/.dedupd`); always pass `--home <scratch>`. The real home belongs to the installed daemon.
+Never run a build from this folder against the real home (`~/.dedupd`); always pass `--home <scratch>`. The real home belongs to the installed daemon. The one way a build from here reaches it is `just app-install`, which has the app's own `dedupd install` replace the installed daemon when it is another build (`agent --json` says so in `same_build`, because two builds can carry one version number).
 
 The database has one flat schema and no migrations (`SCHEMA` and `SCHEMA_VERSION` in `db.rs`). A database with another schema number is refused with a message that says to remove it. This is greenfield: when the schema changes, change `SCHEMA` in place, raise the number, and remove the old database (`dedupd.sqlite` with its `-wal` and `-shm` files, in the home and on the archive disk); the next scan adopts the models again from the app folders.
 

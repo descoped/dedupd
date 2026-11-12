@@ -156,10 +156,7 @@ private struct AgentCard: View {
         }
         .accessibilityIdentifier("agent-state")
         if agent.needsUpdate {
-            Label(
-                "The installed daemon is version \(agent.installedVersion ?? "?"); this app carries \(agent.version).",
-                systemImage: "arrow.up.circle"
-            )
+            Label(agent.updateReason, systemImage: "arrow.up.circle")
             .foregroundStyle(.orange)
         }
         if !agent.installed {

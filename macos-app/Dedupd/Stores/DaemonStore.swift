@@ -180,13 +180,17 @@ final class DaemonStore {
             if before != event.downloads.jobs {
                 onJobsChanged?(before, event.downloads.jobs)
             }
-            if library != event.library {
-                let first = library == nil
-                library = event.library
-                if !first {
-                    await refreshStatus()
-                    revision += 1
-                }
+            // A job that is done put files into apps. The screens look again
+            // then, whether or not the daemon also says the library changed.
+            let first = library == nil
+            let finished = event.downloads.jobs.contains { job in
+                job.phase == .done && before.first { $0.id == job.id }?.phase != .done
+            }
+            let changed = library != event.library
+            library = event.library
+            if !first, changed || finished {
+                await refreshStatus()
+                revision += 1
             }
         }
     }
