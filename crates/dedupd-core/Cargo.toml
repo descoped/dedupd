@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "The dedupd library: a content-addressed store of AI model files, shared with apps as clones"
 
 [dependencies]
 anyhow = "1.0.104"

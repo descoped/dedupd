@@ -95,7 +95,7 @@ extension FixtureData {
             ]
         } else {
             let bytes: UInt64 = local?.storedBytes ?? 5_420_000_000
-            let mlx = meta.formats.contains("mlx")
+            let bits = mlxBits(repo, formats: meta.formats)
             variants = [
                 Variant(
                     kind: "files",
@@ -104,9 +104,9 @@ extension FixtureData {
                     files: 8,
                     bytes: bytes,
                     storedBytes: local == nil ? 0 : bytes,
-                    usableBy: mlx ? ["bionic", "hf"] : ["hf"],
+                    usableBy: usableBy(mlxBits: bits),
                     placedIn: local?.appNames ?? [],
-                    decisions: decisions(usableBy: mlx ? ["bionic", "hf"] : ["hf"], mlx: mlx)
+                    decisions: decisions(usableBy: usableBy(mlxBits: bits), mlxBits: bits)
                 ),
             ]
             files = [

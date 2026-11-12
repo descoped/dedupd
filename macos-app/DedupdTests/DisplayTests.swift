@@ -95,7 +95,7 @@ struct DisplayTests {
     @Test("Archiving is described step by step before it is done")
     func archivePlan() {
         var plan = ArchivePlan(
-            repo: "org/Repo", archive: "/Volumes/Trunk/dedupd",
+            repo: "org/Repo", archive: "/Volumes/Archive/dedupd",
             deactivate: [
                 DeactivateStep(app: "bionic", files: 13, bytes: 16_080_000_000, keep: []),
                 DeactivateStep(app: "ollama", files: 5, bytes: 16_100_000_000, keep: []),
@@ -107,7 +107,7 @@ struct DisplayTests {
             "Every copy on the archive disk is read in full and checked. Nothing is removed unless all are good.",
             "The model is taken out of Bionic and Ollama.",
             "13 files, 16.08 GB, are removed from the internal disk. "
-                + "The copy in /Volumes/Trunk/dedupd stays, and Restore brings the model back.",
+                + "The copy in /Volumes/Archive/dedupd stays, and Restore brings the model back.",
         ])
         plan.copyFiles = 2
         plan.copyBytes = 1_200_000_000
@@ -133,17 +133,17 @@ struct DisplayTests {
         move.bytesDone = 16_000_000_000
         #expect(move.fraction == nil)
         #expect(move.statusText == "Restored: 13 files, 16.00 GB")
-        move.error = "the archive disk is not attached (/Volumes/Trunk not found)"
-        #expect(move.statusText == "Restoring failed: the archive disk is not attached (/Volumes/Trunk not found)")
+        move.error = "the archive disk is not attached (/Volumes/Archive not found)"
+        #expect(move.statusText == "Restoring failed: the archive disk is not attached (/Volumes/Archive not found)")
     }
 
     @Test("Archive and Restore say why they cannot be used")
     func archiveHelp() {
         var status = FixtureData.status()
-        #expect(ArchiveWords.archiveHelp(status).hasSuffix("The copy on /Volumes/Trunk/dedupd stays."))
-        #expect(ArchiveWords.restoreHelp(status) == "Copy the model back from /Volumes/Trunk/dedupd. Activate it in an app afterwards.")
+        #expect(ArchiveWords.archiveHelp(status).hasSuffix("The copy on /Volumes/Archive/dedupd stays."))
+        #expect(ArchiveWords.restoreHelp(status) == "Copy the model back from /Volumes/Archive/dedupd. Activate it in an app afterwards.")
         status.archiveAttached = false
-        #expect(ArchiveWords.archiveHelp(status) == "The archive disk is not attached (/Volumes/Trunk/dedupd)")
+        #expect(ArchiveWords.archiveHelp(status) == "The archive disk is not attached (/Volumes/Archive/dedupd)")
         #expect(ArchiveWords.restoreHelp(status) == "The archive disk is not attached")
         status.archivePath = nil
         #expect(ArchiveWords.archiveHelp(status) == "Set an archive folder on the Daemon screen first")
@@ -201,10 +201,16 @@ struct DisplayTests {
         var mlx = Variant(
             kind: "files", name: "all files", spec: "a/b", files: 8, bytes: 10, storedBytes: 10,
             usableBy: ["bionic", "hf"], placedIn: [],
-            decisions: FixtureData.decisions(usableBy: ["bionic", "hf"], mlx: true)
+            decisions: FixtureData.decisions(usableBy: ["bionic", "hf"], mlxBits: 6)
         )
         #expect([mlx].note(for: .bionic) == "Does not have it")
-        #expect([mlx].note(for: .ollama) == "Ollama can share this model with the store, but dedupd does not do that yet")
+        #expect(
+            [mlx].note(for: .ollama)
+                == "Ollama could not run 6-bit MLX models when dedupd tried it (0.40.16); it ran 4-bit and 8-bit ones"
+        )
+        mlx.usableBy = ["bionic", "ollama", "hf"]
+        mlx.decisions = FixtureData.decisions(usableBy: mlx.usableBy, mlxBits: 4)
+        #expect([mlx].note(for: .ollama) == "Does not have it")
         #expect(mlx.decision(for: .ollama)?.cost == "megabytes")
         #expect(mlx.placeHelp(for: .ollama).hasSuffix("It takes a few megabytes."))
         #expect(mlx.placeHelp(for: .bionic).hasSuffix("It takes no extra space."))
@@ -216,6 +222,7 @@ struct DisplayTests {
         #expect([mlx].note(for: .bionic) == "Does not have it · dedupd was not tested with version 9.9")
 
         // A daemon from before the profiles sends no decisions.
+        mlx.usableBy = ["bionic", "hf"]
         mlx.decisions = []
         #expect([mlx].note(for: .ollama) == "Cannot use this model")
     }

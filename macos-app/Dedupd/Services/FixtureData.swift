@@ -10,7 +10,7 @@ enum FixtureData {
     static let qwen = "lmstudio-community/Qwen3.8-27B-MLX-4bit"
     static let nemotron = "mlx-community/Nemotron-3-Super-120B-A12B-MLX-6bit"
     static let smolMLX = "mlx-community/SmolLM-135M-Instruct-4bit"
-    static let archiveFolder = "/Volumes/Trunk/dedupd"
+    static let archiveFolder = "/Volumes/Archive/dedupd"
 
     // MARK: - Status
 
@@ -313,35 +313,63 @@ extension FixtureData {
                 files: model.storedFiles,
                 bytes: model.storedBytes,
                 storedBytes: model.storedBytes,
-                usableBy: ["bionic", "hf"],
+                usableBy: usableBy(mlxBits: mlxBits(model.repo, formats: model.meta.formats)),
                 placedIn: model.appNames,
-                decisions: decisions(usableBy: ["bionic", "hf"], mlx: model.meta.formats.contains("mlx"))
+                decisions: decisions(
+                    usableBy: usableBy(mlxBits: mlxBits(model.repo, formats: model.meta.formats)),
+                    mlxBits: mlxBits(model.repo, formats: model.meta.formats)
+                )
             ),
         ]
     }
 
+    /// The bit width an MLX repository names itself with (`-4bit`), which
+    /// is what the canned daemon goes by; nil for a model that is not MLX.
+    static func mlxBits(_ repo: String, formats: [String]) -> Int? {
+        guard formats.contains("mlx") else {
+            return nil
+        }
+        let width = repo.lowercased().firstMatch(of: /(\d+)-?bit/).flatMap { Int($0.1) }
+        return width ?? 4
+    }
+
+    /// The apps a model that is not GGUF can be given to: the Hugging Face
+    /// cache takes anything, Bionic takes MLX, and Ollama takes MLX with
+    /// 4-bit or 8-bit weights.
+    static func usableBy(mlxBits: Int?) -> [String] {
+        switch mlxBits {
+        case nil: ["hf"]
+        case 4, 8: ["bionic", "ollama", "hf"]
+        default: ["bionic", "hf"]
+        }
+    }
+
     /// What the daemon's app profiles answer for a variant these apps can
-    /// be given, in short.
-    static func decisions(usableBy: [String], mlx: Bool = false) -> [Decision] {
+    /// be given, in short, in the profiles' own words.
+    static func decisions(usableBy: [String], mlxBits: Int? = nil) -> [Decision] {
         ModelApp.allCases.map(\.rawValue).map { app in
             var decision = Decision(
                 app: app, state: "ready", method: "clone", cost: "none", reason: "Shares the stored files",
                 version: nil, versionState: "unknown"
             )
+            let isOllama = app == ModelApp.ollama.rawValue
             if usableBy.contains(app) {
-                return decision
-            }
-            if app == ModelApp.ollama.rawValue, mlx {
-                decision.state = "planned"
-                decision.method = "clone-with-rewritten-index"
-                decision.cost = "megabytes"
-                decision.reason = "Ollama can share this model with the store, but dedupd does not do that yet"
+                if isOllama, mlxBits != nil {
+                    decision.method = "clone-with-rewritten-index"
+                    decision.cost = "megabytes"
+                    decision.reason = "Shares the stored files; only the index of each weights file is new"
+                }
                 return decision
             }
             decision.state = "no"
             decision.method = nil
             decision.cost = nil
-            decision.reason = "\(ModelApp.title(for: app)) cannot run this format"
+            if isOllama, let mlxBits {
+                decision.reason = "Ollama could not run \(mlxBits)-bit MLX models when dedupd tried it (0.40.16); "
+                    + "it ran 4-bit and 8-bit ones"
+            } else {
+                decision.reason = "\(ModelApp.title(for: app)) cannot run this format"
+            }
             return decision
         }
     }
@@ -415,7 +443,7 @@ extension FixtureData {
         path: "/Users/example/.dedupd/config.toml",
         listen: address,
         hfEndpoint: "https://huggingface.co",
-        archive: "/Volumes/Trunk/dedupd",
+        archive: "/Volumes/Archive/dedupd",
         bionicModels: "/Users/example/.lmstudio/models",
         ollamaModels: "/Users/example/.ollama/models",
         hfCache: "/Users/example/.cache/huggingface/hub",

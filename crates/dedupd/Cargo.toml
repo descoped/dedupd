@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+description = "One shared local store for AI models: the dedupd command and daemon"
 
 [dependencies]
 anyhow = "1.0.104"

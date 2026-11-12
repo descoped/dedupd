@@ -52,6 +52,10 @@ targets:
     platform: macOS
     sources:
       - Dedupd
+      # The licence travels with the app, in Contents/Resources.
+      - path: ../LICENSE
+        type: file
+        buildPhase: resources
     configFiles:
       Debug: Developer.xcconfig
       Release: Developer.xcconfig

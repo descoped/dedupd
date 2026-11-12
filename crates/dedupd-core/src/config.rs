@@ -11,7 +11,7 @@ pub const DEFAULT_LISTEN: &str = "127.0.0.1:8642";
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Folder on another disk that holds the second copy of the store, for
-    /// example `/Volumes/Trunk/dedupd`.
+    /// example `/Volumes/Archive/dedupd`.
     pub archive: Option<PathBuf>,
     /// Address the daemon listens on.
     pub listen: Option<String>,
@@ -128,7 +128,7 @@ mod tests {
         let home = Home::new(dir.path());
         std::fs::write(
             Config::path(&home),
-            "# where the second copy goes\narchive = \"/Volumes/Trunk/dedupd\"\nverify_days = 30\n",
+            "# where the second copy goes\narchive = \"/Volumes/Archive/dedupd\"\nverify_days = 30\n",
         )
         .unwrap();
         let changes = serde_json::json!({"max_connections": 4, "verify_days": null});
@@ -139,7 +139,7 @@ mod tests {
         );
         assert_eq!(
             std::fs::read_to_string(Config::path(&home)).unwrap(),
-            "# where the second copy goes\narchive = \"/Volumes/Trunk/dedupd\"\nmax_connections = 4\n"
+            "# where the second copy goes\narchive = \"/Volumes/Archive/dedupd\"\nmax_connections = 4\n"
         );
 
         // A setting that does not exist, or a value of the wrong kind,
