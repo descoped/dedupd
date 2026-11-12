@@ -155,6 +155,20 @@ extension Variant: @retroactive Identifiable {
     func decision(for app: ModelApp) -> Decision? {
         decisions.first { $0.app == app.rawValue }
     }
+
+    /// What placing this into an app does and what it costs, as the daemon
+    /// decided it.
+    func placeHelp(for app: ModelApp) -> String {
+        switch decision(for: app)?.cost {
+        case "megabytes":
+            "Give \(app.title) the model as clones of the stored files with their index rewritten. "
+                + "It takes a few megabytes."
+        case "full":
+            "Give \(app.title) a copy of the model. It takes the model's size again."
+        default:
+            "Give \(app.title) the model as a clone of the stored copy. It takes no extra space."
+        }
+    }
 }
 
 extension [Variant] {

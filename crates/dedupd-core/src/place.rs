@@ -139,12 +139,12 @@ pub struct Dest<'a> {
     pub repo: &'a str,
 }
 
-struct Target<'a> {
-    app: App,
-    rel_path: &'a str,
-    sha256: &'a str,
-    size: u64,
-    commit: Option<&'a str>,
+pub(crate) struct Target<'a> {
+    pub(crate) app: App,
+    pub(crate) rel_path: &'a str,
+    pub(crate) sha256: &'a str,
+    pub(crate) size: u64,
+    pub(crate) commit: Option<&'a str>,
 }
 
 /// Put a clone of a stored file at `dst`. An existing file is never
@@ -153,7 +153,12 @@ struct Target<'a> {
 ///
 /// The database is locked only for its own calls, never while a file is
 /// hashed or brought back from the archive disk.
-fn place_clone(dest: &Dest<'_>, t: &Target<'_>, dst: &Path, out: &mut Placed) -> Result<()> {
+pub(crate) fn place_clone(
+    dest: &Dest<'_>,
+    t: &Target<'_>,
+    dst: &Path,
+    out: &mut Placed,
+) -> Result<()> {
     let dst_str = dst.to_string_lossy().into_owned();
     let record = |shared: bool, origin: &str| -> Result<()> {
         let fp = Fingerprint::of(dst)?;
@@ -174,6 +179,7 @@ fn place_clone(dest: &Dest<'_>, t: &Target<'_>, dst: &Path, out: &mut Placed) ->
             verify_state: verify.as_str(),
             verified_commit: t.commit,
             shared,
+            derived: None,
         })
     };
 

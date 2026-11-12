@@ -10,7 +10,7 @@ use crate::place::{App, AppDirs};
 use crate::select::Variant;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 const SOURCES: [&str; 3] = [
@@ -71,6 +71,8 @@ pub struct Detect {
     pub bundle: Option<String>,
     /// A file in the app's models folder that holds the version.
     pub file: Option<String>,
+    /// The app's command line tool, inside the bundle.
+    pub command: Option<String>,
 }
 
 /// One way of putting a model into an app.
@@ -87,6 +89,10 @@ pub struct Method {
     /// The quantization widths the app runs; empty when that does not matter.
     #[serde(default)]
     pub bits: Vec<u32>,
+    /// The method asks the installed app about the model, so the app has
+    /// to be found.
+    #[serde(default)]
+    pub needs_app: bool,
     /// What rules the method out: a trait of the model and the reason.
     #[serde(default)]
     pub unless: BTreeMap<String, String>,
@@ -121,9 +127,10 @@ pub struct Traits {
     pub format: Format,
     /// A GGUF in several parts.
     pub split: bool,
-    /// The quantization widths in the model, when its config says. Empty
-    /// when it is not known, for example before the model is downloaded.
-    pub bits: Vec<u32>,
+    /// The quantization widths in the model: `None` while they are not
+    /// known (the model is not downloaded yet), empty for a model that is
+    /// not quantized.
+    pub bits: Option<Vec<u32>>,
 }
 
 impl Traits {
@@ -148,11 +155,11 @@ impl Traits {
         Self {
             format,
             split: ggufs > 1,
-            bits: Vec::new(),
+            bits: None,
         }
     }
 
-    pub fn with_bits(mut self, bits: Vec<u32>) -> Self {
+    pub fn with_bits(mut self, bits: Option<Vec<u32>>) -> Self {
         self.bits = bits;
         self
     }
@@ -163,6 +170,13 @@ impl Traits {
             _ => false,
         }
     }
+}
+
+/// The quantization widths of the model whose `config.json` is at `path`;
+/// `None` when the file cannot be read.
+pub fn quantization_of(path: &Path) -> Option<Vec<u32>> {
+    let config = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    Some(quantization_bits(&config))
 }
 
 /// The quantization widths an MLX model's `config.json` names: its default
@@ -253,6 +267,7 @@ impl Profile {
         let wrong: Vec<u32> = traits
             .bits
             .iter()
+            .flatten()
             .copied()
             .filter(|b| !method.bits.contains(b))
             .collect();
@@ -268,6 +283,27 @@ impl Profile {
                 list(&method.tested)
             ),
         }
+    }
+
+    /// Why the model's bit widths rule a method out, if they do.
+    fn width_refusal(
+        &self,
+        method: &Method,
+        traits: &Traits,
+        version: Option<&str>,
+    ) -> Option<String> {
+        let bits = traits.bits.as_ref().filter(|_| !method.bits.is_empty())?;
+        if bits.is_empty() {
+            return Some(format!(
+                "dedupd gives {} only {} models that are quantized ({}), and this one is not",
+                self.name,
+                traits.format.label(),
+                widths(&method.bits)
+            ));
+        }
+        bits.iter()
+            .any(|b| !method.bits.contains(b))
+            .then(|| self.width_reason(method, traits, version))
     }
 
     /// The method for a model, given the app's installed version.
@@ -297,10 +333,13 @@ impl Profile {
                 ))
             } else if let Some((_, reason)) = method.unless.iter().find(|(t, _)| traits.has(t)) {
                 Some(reason.clone())
-            } else if !method.bits.is_empty()
-                && traits.bits.iter().any(|b| !method.bits.contains(b))
-            {
-                Some(self.width_reason(method, traits, version))
+            } else if let Some(reason) = self.width_refusal(method, traits, version) {
+                Some(reason)
+            } else if method.needs_app && version.is_none() {
+                Some(format!(
+                    "{} was not found on this Mac, and dedupd asks it about the model first",
+                    self.name
+                ))
             } else {
                 None
             };
@@ -350,9 +389,13 @@ pub fn profile(app: App) -> &'static Profile {
         .expect("every app has a profile")
 }
 
-/// The versions of the apps that are installed.
+/// The versions of the apps that are installed, and their command line
+/// tools.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Installed(BTreeMap<&'static str, String>);
+pub struct Installed {
+    versions: BTreeMap<&'static str, String>,
+    commands: BTreeMap<&'static str, PathBuf>,
+}
 
 /// The value of `CFBundleShortVersionString` in an XML property list.
 fn bundle_version(plist: &Path) -> Option<String> {
@@ -371,7 +414,14 @@ impl Installed {
     /// Read each app's version from where its profile says it is.
     pub fn detect(dirs: &AppDirs) -> Self {
         let mut found = BTreeMap::new();
+        let mut commands = BTreeMap::new();
         for p in profiles() {
+            if let (Some(bundle), Some(command)) = (&p.detect.bundle, &p.detect.command) {
+                let command = dirs.apps.join(bundle).join(command);
+                if command.is_file() {
+                    commands.insert(p.app.as_str(), command);
+                }
+            }
             let version = match (&p.detect.bundle, &p.detect.file) {
                 (Some(bundle), _) => {
                     bundle_version(&dirs.apps.join(bundle).join("Contents/Info.plist"))
@@ -386,16 +436,24 @@ impl Installed {
                 found.insert(p.app.as_str(), version);
             }
         }
-        Self(found)
+        Self {
+            versions: found,
+            commands,
+        }
     }
 
     pub fn with(mut self, app: App, version: &str) -> Self {
-        self.0.insert(app.as_str(), version.to_string());
+        self.versions.insert(app.as_str(), version.to_string());
         self
     }
 
     pub fn version(&self, app: App) -> Option<&str> {
-        self.0.get(app.as_str()).map(String::as_str)
+        self.versions.get(app.as_str()).map(String::as_str)
+    }
+
+    /// The app's command line tool, when the app is installed and has one.
+    pub fn command(&self, app: App) -> Option<&Path> {
+        self.commands.get(app.as_str()).map(PathBuf::as_path)
     }
 }
 
@@ -415,7 +473,7 @@ mod tests {
         Traits {
             format,
             split: false,
-            bits: Vec::new(),
+            bits: None,
         }
     }
 
@@ -473,23 +531,59 @@ mod tests {
     }
 
     #[test]
-    fn an_mlx_model_is_planned_for_ollama_when_its_widths_are_run() {
-        for bits in [vec![], vec![4], vec![4, 8]] {
+    fn an_mlx_model_goes_into_ollama_when_its_widths_are_run() {
+        for bits in [None, Some(vec![4]), Some(vec![4, 8])] {
             let t = traits(Format::Mlx).with_bits(bits);
-            assert_eq!(
-                states(&t),
-                pairs(&[("bionic", "ready"), ("ollama", "planned"), ("hf", "ready")])
-            );
             let d = profile(App::Ollama).decide(&t, Some("0.40.16"));
+            assert_eq!(d.state, "ready");
             assert_eq!(d.method.as_deref(), Some("clone-with-rewritten-index"));
             assert_eq!(d.cost, Some(Cost::Megabytes));
             assert_eq!(d.version_state, "tested");
+            // Another version is used all the same, and said to be untried.
+            let d = profile(App::Ollama).decide(&t, Some("0.41.0"));
+            assert_eq!(d.state, "ready");
+            assert_eq!(d.version_state, "untested");
         }
     }
 
     #[test]
+    fn the_method_that_asks_the_app_needs_the_app() {
+        let t = traits(Format::Mlx).with_bits(Some(vec![4]));
+        assert_eq!(
+            states(&t),
+            pairs(&[("bionic", "ready"), ("ollama", "no"), ("hf", "ready")])
+        );
+        assert_eq!(
+            profile(App::Ollama).decide(&t, None).reason,
+            "Ollama was not found on this Mac, and dedupd asks it about the model first"
+        );
+    }
+
+    #[test]
+    fn a_method_that_is_not_built_is_planned() {
+        let mut p = profile(App::Ollama).clone();
+        p.methods[1].built = false;
+        let d = p.decide(&traits(Format::Mlx), Some("0.40.16"));
+        assert_eq!(d.state, "planned");
+        assert_eq!(d.method.as_deref(), Some("clone-with-rewritten-index"));
+    }
+
+    #[test]
+    fn a_model_that_is_not_quantized_is_refused_where_widths_matter() {
+        let t = traits(Format::Mlx).with_bits(Some(vec![]));
+        let d = profile(App::Ollama).decide(&t, Some("0.40.16"));
+        assert_eq!(d.state, "no");
+        assert_eq!(
+            d.reason,
+            "dedupd gives Ollama only MLX models that are quantized (4-bit and 8-bit), \
+             and this one is not"
+        );
+        assert_eq!(profile(App::Bionic).decide(&t, None).state, "ready");
+    }
+
+    #[test]
     fn other_widths_are_refused_and_the_claim_names_what_was_tested() {
-        let t = traits(Format::Mlx).with_bits(vec![5]);
+        let t = traits(Format::Mlx).with_bits(Some(vec![5]));
         let tested = profile(App::Ollama).decide(&t, Some("0.40.16"));
         assert_eq!(tested.state, "no");
         assert_eq!(
@@ -503,7 +597,7 @@ mod tests {
             "Ollama could not run 5-bit MLX models when dedupd tried it (0.40.16); \
              it ran 4-bit and 8-bit ones"
         );
-        let mixed = traits(Format::Mlx).with_bits(vec![4, 6]);
+        let mixed = traits(Format::Mlx).with_bits(Some(vec![4, 6]));
         assert!(
             profile(App::Ollama)
                 .decide(&mixed, None)
@@ -579,5 +673,14 @@ mod tests {
         assert_eq!(found.version(App::Ollama), Some("0.40.16"));
         assert_eq!(found.version(App::Hf), Some("1"));
         assert_eq!(found.version(App::Bionic), None);
+        // The command line tool is found when it is in the bundle.
+        assert_eq!(found.command(App::Ollama), None);
+        let tool = dirs.apps.join("Ollama.app/Contents/Resources/ollama");
+        std::fs::create_dir_all(tool.parent().unwrap()).unwrap();
+        std::fs::write(&tool, "").unwrap();
+        assert_eq!(
+            Installed::detect(&dirs).command(App::Ollama),
+            Some(tool.as_path())
+        );
     }
 }

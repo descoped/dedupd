@@ -135,6 +135,8 @@ struct DisplayTests {
         #expect([mlx].note(for: .bionic) == "Does not have it")
         #expect([mlx].note(for: .ollama) == "Ollama can share this model with the store, but dedupd does not do that yet")
         #expect(mlx.decision(for: .ollama)?.cost == "megabytes")
+        #expect(mlx.placeHelp(for: .ollama).hasSuffix("It takes a few megabytes."))
+        #expect(mlx.placeHelp(for: .bionic).hasSuffix("It takes no extra space."))
         #expect([Variant]().note(for: .ollama) == "Does not have it")
 
         // A version of the app the daemon was not tested with is named.

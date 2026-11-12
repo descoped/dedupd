@@ -332,12 +332,14 @@ fn an_mlx_model_tells_each_app_what_it_can_do() {
     };
     let installed = Installed::unknown().with(App::Ollama, "0.40.16");
     let formats = ["mlx".to_string(), "safetensors".to_string()];
-    let ollama = |entries: &[TreeEntry]| {
-        let v = library::local_variants(&e.db(), &e.store, "org/m", entries, &formats, &installed)
+    let variant = |entries: &[TreeEntry]| {
+        library::local_variants(&e.db(), &e.store, "org/m", entries, &formats, &installed)
             .unwrap()
-            .remove(0);
-        assert_eq!(v.usable_by, ["bionic", "hf"]);
-        v.decisions.into_iter().find(|d| d.app == "ollama").unwrap()
+            .remove(0)
+    };
+    let ollama = |entries: &[TreeEntry]| {
+        let mut found = variant(entries).decisions.into_iter();
+        found.find(|d| d.app == "ollama").unwrap()
     };
 
     // Before the download nothing is known about the widths, so the answer
@@ -348,10 +350,11 @@ fn an_mlx_model_tells_each_app_what_it_can_do() {
         entry("model.safetensors", b"weights", true),
     ];
     let before = ollama(&entries);
-    assert_eq!(before.state, "planned");
+    assert_eq!(before.state, "ready");
     assert_eq!(before.method.as_deref(), Some("clone-with-rewritten-index"));
     assert_eq!(before.cost, Some(profile::Cost::Megabytes));
     assert_eq!(before.version_state, "tested");
+    assert_eq!(variant(&entries).usable_by, ["bionic", "ollama", "hf"]);
 
     // With the config in the store, a width Ollama cannot run is refused.
     let tmp = e.store.tmp_path("config");
@@ -361,6 +364,7 @@ fn an_mlx_model_tells_each_app_what_it_can_do() {
         .upsert_blob(&sha256(five), five.len() as u64, Some(&git_oid(five)))
         .unwrap();
     let after = ollama(&entries);
+    assert_eq!(variant(&entries).usable_by, ["bionic", "hf"]);
     assert_eq!(after.state, "no");
     assert_eq!(after.method, None);
     assert_eq!(

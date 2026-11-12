@@ -6,11 +6,13 @@ use crate::fetch::{Expect, Fetcher, Progress, Unavailable, Unwatched, Wait, Watc
 use crate::governor::Governor;
 use crate::hub::{HubClient, ModelMeta, Snapshot, TreeEntry};
 use crate::ollama;
+use crate::ollama_mlx;
 use crate::place::{self, App, AppDirs, Dest, Item, Placed};
 use crate::profile::{self, Installed, Traits};
 use crate::select::{self, Selection};
 use crate::store::Store;
 use anyhow::{Context, Result, anyhow, bail};
+use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
@@ -409,15 +411,40 @@ async fn place_into_ollama(
     repo_id: i64,
     snap: &Snapshot,
     entries: &[TreeEntry],
+    items: &Arc<Vec<Item>>,
 ) -> Result<Result<Placed, String>> {
     // The app's profile says whether this selection can go in, and why not.
     let weights = select::weights(entries);
     let info: serde_json::Value = serde_json::from_str(&snap.info_json).unwrap_or_default();
-    let traits = Traits::of_files(weights.len(), &ModelMeta::from_info(&info).formats);
+    let mut traits = Traits::of_files(weights.len(), &ModelMeta::from_info(&info).formats);
+    if weights.is_empty() {
+        let config = items.iter().find(|i| i.rel_path == "config.json");
+        traits = traits.with_bits(
+            config.and_then(|i| profile::quantization_of(&engine.store.blob_path(&i.sha256))),
+        );
+    }
     let installed = Installed::detect(&engine.dirs);
     let decision = profile::profile(App::Ollama).decide(&traits, installed.version(App::Ollama));
     if decision.state != "ready" {
         return Ok(Err(format!("not placed into Ollama: {}", decision.reason)));
+    }
+    if decision.method.as_deref() == Some(ollama_mlx::METHOD) {
+        let Some(command) = installed.command(App::Ollama).map(Path::to_path_buf) else {
+            return Ok(Err(
+                "not placed into Ollama: its command line tool was not found".into(),
+            ));
+        };
+        let (repo, items) = (req.repo.clone(), items.clone());
+        let placed = blocking(engine, move |engine| {
+            ollama_mlx::place(
+                &dest(engine, repo_id, &repo),
+                &command,
+                ollama::DEFAULT_TAG,
+                &items,
+            )
+        })
+        .await?;
+        return Ok(placed.map_err(|why| format!("not placed into Ollama: {why}")));
     }
     let tag = req
         .selection
@@ -523,7 +550,7 @@ pub async fn place(
                 .await?
             }
             App::Ollama => {
-                match place_into_ollama(engine, req, repo_id, snap, &plan.entries).await? {
+                match place_into_ollama(engine, req, repo_id, snap, &plan.entries, &items).await? {
                     Ok(result) => result,
                     Err(note) => {
                         notes.push(note);

@@ -131,6 +131,16 @@ ALTER TABLE repos ADD COLUMN upstream TEXT;
 ALTER TABLE repos ADD COLUMN checked_at INTEGER;
 "#;
 
+/// Added in schema version 4.
+const SCHEMA_V4: &str = r#"
+-- An app file that is not the stored file's bytes but made from them: a
+-- clone with a part rewritten, so a sha256 of its own. `sha256` still names
+-- the stored file it was made from and shares its disk blocks with;
+-- `method` says how it was made, as the app's profile names it.
+ALTER TABLE placements ADD COLUMN method TEXT;
+ALTER TABLE placements ADD COLUMN derived_sha256 TEXT;
+"#;
+
 pub struct Db {
     conn: Connection,
 }
@@ -154,6 +164,9 @@ pub struct PlacedFile {
     pub size: u64,
     pub mtime_ns: i64,
     pub shared: bool,
+    /// The file's own sha256 when it was derived from the stored file
+    /// rather than cloned as it is.
+    pub derived_sha256: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -199,6 +212,9 @@ pub struct NewPlacement<'a> {
     pub verified_commit: Option<&'a str>,
     /// Whether the app file shares disk blocks with the store file.
     pub shared: bool,
+    /// For a file made from the stored file by a method of the app's
+    /// profile: the method and the file's own sha256.
+    pub derived: Option<(&'a str, &'a str)>,
 }
 
 impl Db {
@@ -219,7 +235,7 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(30))?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 3 {
+        if version > 4 {
             anyhow::bail!(
                 "database schema version {version} is newer than this build of dedupd understands"
             );
@@ -235,6 +251,11 @@ impl Db {
         if version < 3 {
             conn.execute_batch(&format!(
                 "BEGIN; {SCHEMA_V3} PRAGMA user_version = 3; COMMIT;"
+            ))?;
+        }
+        if version < 4 {
+            conn.execute_batch(&format!(
+                "BEGIN; {SCHEMA_V4} PRAGMA user_version = 4; COMMIT;"
             ))?;
         }
         Ok(Self { conn })
@@ -414,14 +435,15 @@ impl Db {
         self.conn.execute(
             "INSERT INTO placements
                  (app, path, repo_id, rel_path, sha256, size, mtime_ns, origin,
-                  verify_state, verified_commit, recorded_at, shared)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+                  verify_state, verified_commit, recorded_at, shared, method, derived_sha256)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
              ON CONFLICT (path) DO UPDATE SET
                  app = excluded.app, repo_id = excluded.repo_id, rel_path = excluded.rel_path,
                  sha256 = excluded.sha256, size = excluded.size, mtime_ns = excluded.mtime_ns,
                  verify_state = excluded.verify_state, verified_commit = excluded.verified_commit,
                  recorded_at = excluded.recorded_at, shared = excluded.shared,
-                 origin = excluded.origin",
+                 origin = excluded.origin, method = excluded.method,
+                 derived_sha256 = excluded.derived_sha256",
             params![
                 p.app,
                 p.path,
@@ -434,7 +456,9 @@ impl Db {
                 p.verify_state,
                 p.verified_commit,
                 now(),
-                p.shared
+                p.shared,
+                p.derived.map(|d| d.0),
+                p.derived.map(|d| d.1)
             ],
         )?;
         Ok(())
@@ -640,7 +664,8 @@ impl Db {
 
     pub fn placements(&self) -> Result<Vec<PlacedFile>> {
         let mut stmt = self.conn.prepare(
-            "SELECT p.app, p.path, r.name, p.rel_path, p.sha256, p.size, p.mtime_ns, p.shared
+            "SELECT p.app, p.path, r.name, p.rel_path, p.sha256, p.size, p.mtime_ns, p.shared,
+                    p.derived_sha256
              FROM placements p JOIN repos r ON r.id = p.repo_id ORDER BY p.path",
         )?;
         Ok(stmt
@@ -654,9 +679,21 @@ impl Db {
                     size: r.get::<_, i64>(5)? as u64,
                     mtime_ns: r.get(6)?,
                     shared: r.get(7)?,
+                    derived_sha256: r.get(8)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?)
+    }
+
+    /// The sha256 of every app file that was derived from a stored file.
+    /// Such a file is dedupd's own work: it is not new content to adopt.
+    pub fn derived_files(&self) -> Result<std::collections::HashSet<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT derived_sha256 FROM placements WHERE derived_sha256 IS NOT NULL")?;
+        Ok(stmt
+            .query_map([], |r| r.get(0))?
+            .collect::<rusqlite::Result<_>>()?)
     }
 
     /// Drop a repository's archive records: its revisions, refs and Ollama

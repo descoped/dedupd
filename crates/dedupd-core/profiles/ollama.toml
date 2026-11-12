@@ -10,6 +10,7 @@ otherwise = "Ollama cannot run this format"
 
 [detect]
 bundle = "Ollama.app"
+command = "Contents/Resources/ollama"
 
 # The GGUF's sha256 is the layer digest, so the stored file is the blob.
 [[method]]
@@ -23,14 +24,17 @@ tested = ["0.40.16"]
 [method.unless]
 split = "Ollama cannot use a GGUF that is split into parts"
 
-# An MLX weights file as a clone with only its index rewritten; see
-# spikes/ollama_mlx_shared_clone.py. Ollama's own import of an MLX model with
-# another bit width succeeds, and the model then fails to load.
+# An MLX weights file as a clone with only its index rewritten (the
+# `ollama_mlx` module; spikes/ollama_mlx_shared_clone.py shows why it works).
+# Ollama's own import of an MLX model with another bit width succeeds, and
+# the model then fails to load. dedupd asks the installed Ollama about each
+# model before it places it, so the app has to be there.
 [[method]]
 id = "clone-with-rewritten-index"
-built = false
+built = true
+needs_app = true
 cost = "megabytes"
 formats = ["mlx"]
 bits = [4, 8]
-says = "Ollama can share this model with the store, but dedupd does not do that yet"
+says = "Shares the stored files; only the index of each weights file is new"
 tested = ["0.40.16"]

@@ -266,21 +266,18 @@ pub struct ModelDetail {
 }
 
 /// The quantization widths of a model that is not GGUF, from its
-/// `config.json` when the store has it. Empty when it is not known.
+/// `config.json`; `None` while the store does not have that file.
 fn widths(
     store: &Store,
     entries: &[TreeEntry],
     sha_of: impl Fn(&str) -> Option<String>,
-) -> Vec<u32> {
+) -> Option<Vec<u32>> {
     entries
         .iter()
         .find(|e| e.path == "config.json")
         .and_then(|e| sha_of(&e.path))
         .filter(|sha| store.contains(sha))
-        .and_then(|sha| std::fs::read(store.blob_path(&sha)).ok())
-        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
-        .map(|config| profile::quantization_bits(&config))
-        .unwrap_or_default()
+        .and_then(|sha| profile::quantization_of(&store.blob_path(&sha)))
 }
 
 /// `org/repo:quant` for a variant of a GGUF repository, else `org/repo`.

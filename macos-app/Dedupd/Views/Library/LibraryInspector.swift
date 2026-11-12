@@ -251,7 +251,7 @@ private struct AppRow: View {
                     Task { await library.place(variant, into: app) }
                 }
                 .controlSize(.small)
-                .help("Give \(app.title) the model as a clone of the stored copy. It takes no extra space.")
+                .help(variant.placeHelp(for: app))
                 .accessibilityIdentifier("place-\(app.rawValue)")
             } else if !placeable.isEmpty {
                 Menu("Place") {

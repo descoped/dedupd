@@ -44,7 +44,8 @@ pub fn reclaim(
     let candidates: Vec<_> = lock(db)
         .placements()?
         .into_iter()
-        .filter(|p| !p.shared)
+        // A derived file holds other bytes than the stored one on purpose.
+        .filter(|p| !p.shared && p.derived_sha256.is_none())
         .collect();
     for p in candidates {
         let path = Path::new(&p.path);
@@ -303,7 +304,10 @@ pub fn unplace_plan(
         let reason = match Fingerprint::of(Path::new(&p.path)) {
             Err(_) => Some("it is no longer there"),
             Ok(now) if now != p.fingerprint() => Some("it has changed since dedupd looked at it"),
-            Ok(_) if used_elsewhere.contains(&p.sha256) => Some("another Ollama model uses it"),
+            // Ollama names a layer by the bytes of the file itself.
+            Ok(_) if used_elsewhere.contains(p.derived_sha256.as_ref().unwrap_or(&p.sha256)) => {
+                Some("another Ollama model uses it")
+            }
             Ok(_)
                 if !store.contains(&p.sha256)
                     && !archive.is_some_and(|a| a.blob_path(&p.sha256).is_file()) =>

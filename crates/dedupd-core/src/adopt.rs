@@ -223,6 +223,7 @@ impl RepoState {
                 .then_some(self.commit.as_deref())
                 .flatten(),
             shared: file.shared,
+            derived: None,
         }
     }
 }
@@ -508,7 +509,20 @@ pub fn scan_apps(
             App::Ollama => {
                 let found = ollama::manifests(&dirs.ollama);
                 let db = lock(db);
+                // A file dedupd derived from a stored one is its own work.
+                // Neither it nor a manifest that names it is something to
+                // archive: the store holds what it was made from.
+                let derived = db.derived_files()?;
+                let names_derived = |body: &str| {
+                    crate::ollama::Manifest::parse(body).is_ok_and(|m| {
+                        m.all()
+                            .any(|l| l.sha256().is_ok_and(|sha| derived.contains(sha)))
+                    })
+                };
                 for m in found {
+                    if names_derived(&m.body) {
+                        continue;
+                    }
                     let repo_id = db.upsert_repo(m.provider, &m.repo)?;
                     let archived = db.manifest(repo_id, &m.tag, None)?;
                     if archived.map(|(_, body)| body).as_ref() != Some(&m.body) {
@@ -522,7 +536,16 @@ pub fn scan_apps(
                     }
                 }
                 drop(db);
-                repos.extend(ollama::scan(&dirs.ollama)?);
+                let mut scanned = ollama::scan(&dirs.ollama)?;
+                for repo in &mut scanned {
+                    repo.files.retain(|f| {
+                        !f.rel_path
+                            .strip_prefix("blobs/sha256-")
+                            .is_some_and(|sha| derived.contains(sha))
+                    });
+                }
+                scanned.retain(|r| !r.files.is_empty());
+                repos.extend(scanned);
             }
             App::Bionic => {}
         }
