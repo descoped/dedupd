@@ -220,24 +220,6 @@ struct DisplayTests {
         #expect([mlx].note(for: .ollama) == "Cannot use this model")
     }
 
-    @Test(
-        "Text that names a repository is told from words to search for",
-        arguments: [
-            ("org/repo", "org/repo"),
-            ("  https://huggingface.co/org/repo  ", "org/repo"),
-            ("https://huggingface.co/org/repo/tree/main", "org/repo"),
-            ("hf.co/org/repo", "org/repo"),
-        ]
-    )
-    func repositoryNames(text: String, repo: String) {
-        #expect(ModelSpec.repository(in: text) == repo)
-    }
-
-    @Test("Words are not a repository", arguments: ["qwen", "qwen gguf", "org/repo:Q4_K_M", "a/b c", ""])
-    func words(text: String) {
-        #expect(ModelSpec.repository(in: text) == nil)
-    }
-
     @Test("A README is split into headings, paragraphs, lists and code, without its metadata block")
     func markdown() {
         let blocks = Markdown.parse("""

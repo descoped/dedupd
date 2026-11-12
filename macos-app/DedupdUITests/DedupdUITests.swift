@@ -229,6 +229,30 @@ final class DedupdUITests: XCTestCase {
         XCTAssertTrue(element("scan-result", in: window, timeout: 5).exists)
     }
 
+    func testPanelFieldOpensAModelByItsAddress() {
+        let window = launch(arguments: ["-uiTestFixture", "running", "-panelWindow", "YES"])
+        let field = element("panel-find", in: window)
+
+        // An address that only looks like Hugging Face's goes nowhere.
+        field.click()
+        field.typeText("https://huggingface.co@evil.example/org/repo\n")
+        XCTAssertTrue(text("That is not a model's name or an address on huggingface.co", in: window).waitForExistence(timeout: 5))
+        XCTAssertEqual(app.windows.count, 1, "no other window opened")
+        screenshot(window, "15-menu-panel-refused")
+
+        // The model's own address opens Discover on that model.
+        field.click()
+        field.typeKey("a", modifierFlags: .command)
+        field.typeText("https://hf.co/bartowski/SmolLM2-135M-Instruct-GGUF?download=true\n")
+        let shown = app.staticTexts.matching(
+            NSPredicate(format: "value CONTAINS %@", "The inspector shows bartowski/SmolLM2-135M-Instruct-GGUF")
+        ).firstMatch
+        XCTAssertTrue(shown.waitForExistence(timeout: 10), "Discover shows the model")
+        let main = app.windows.containing(.any, identifier: "pane-discover").firstMatch
+        XCTAssertTrue(main.exists)
+        screenshot(main, "16-discover-from-panel")
+    }
+
     /// The real thing: the app, the Rust client and a running daemon. Skipped
     /// unless a daemon's address is given, because it downloads a model:
     ///

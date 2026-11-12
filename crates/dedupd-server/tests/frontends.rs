@@ -894,6 +894,46 @@ async fn activating_a_stored_model_says_the_library_changed() {
     assert!(after > before, "the library number stayed at {before}");
 }
 
+/// A name that is not a repository's name is refused before anything is
+/// asked of the provider or looked up: it cannot climb to another path
+/// there, and it cannot be queued for download.
+#[tokio::test]
+async fn a_name_that_is_not_a_models_name_is_refused() {
+    let fx = fixture().await;
+    let asked_before = fx.upstream.received_requests().await.unwrap().len();
+    for name in [
+        "org/..",
+        "org/%2E%2E",
+        "org/..%2F..%2Fapi%2Fwhoami-v2",
+        "..%2F..%2Fapi/whoami-v2",
+        "org/repo%3Fx=1",
+        "org/re%20po",
+        "org/repo.git",
+        "org/re--po",
+        "org/-repo",
+    ] {
+        // A plain `..` is taken out of the address by the HTTP client
+        // already, so that request finds no endpoint at all.
+        let (status, _) = control(&fx, "GET", &format!("hub/models/{name}"), None).await;
+        assert!(status == 400 || status == 404, "{name}: {status}");
+    }
+    for model in [
+        "org/..",
+        "../../etc/passwd",
+        "org/repo:../../x",
+        "org/repo@../../main",
+        "https://evil.example/org/repo",
+    ] {
+        let ask = json!({"model": model, "apps": ["ollama"]});
+        let (status, _) = control(&fx, "POST", "downloads", Some(ask)).await;
+        assert_eq!(status, 400, "{model}");
+    }
+    let (_, queue) = control(&fx, "GET", "downloads", None).await;
+    assert_eq!(queue["jobs"], json!([]));
+    let asked_after = fx.upstream.received_requests().await.unwrap().len();
+    assert_eq!(asked_before, asked_after, "the provider was asked");
+}
+
 #[tokio::test]
 async fn search_and_model_info_say_what_is_already_here() {
     let fx = fixture().await;

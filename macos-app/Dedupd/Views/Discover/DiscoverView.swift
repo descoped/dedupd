@@ -106,6 +106,13 @@ struct DiscoverView: View {
                     Task { await discover.search() }
                 }
             }
+        } else if let notice = discover.notice {
+            ContentUnavailableView(
+                "Not a model dedupd can open",
+                systemImage: "questionmark.circle",
+                description: Text(notice)
+            )
+            .accessibilityIdentifier("discover-notice")
         } else if discover.hits.isEmpty, discover.selection != nil {
             ContentUnavailableView(
                 "One model, by name",

@@ -339,7 +339,14 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
     match (&call.method, rest) {
         (&Method::GET, ["search"]) => search(server, call).await,
         (&Method::GET, ["models", org, name]) => {
-            model(server, &percent_decode(&format!("{org}/{name}"))).await
+            // The name goes into the provider's address and into the
+            // database, so it is a repository's name or nothing: no part of
+            // it can climb to another path on the provider.
+            let repo = percent_decode(&format!("{org}/{name}"));
+            if !dedupd_core::pull::is_repo_name(&repo) {
+                return plain(StatusCode::BAD_REQUEST, "that is not a model's name");
+            }
+            model(server, &repo).await
         }
         _ => plain(StatusCode::NOT_FOUND, "no such control endpoint"),
     }

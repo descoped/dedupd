@@ -208,6 +208,41 @@ struct DiscoverStoreTests {
         #expect(model.variants.first { $0.name == "Q4_K_M" }?.isStored == true)
     }
 
+    @Test("A model shown by name replaces the list and the text of the field")
+    func show() async {
+        let discover = DiscoverStore(daemon: await startedDaemon())
+        await discover.search()
+        discover.show(FixtureData.smolGGUF)
+        #expect(discover.selection == FixtureData.smolGGUF)
+        #expect(discover.text == FixtureData.smolGGUF)
+        #expect(discover.hits.isEmpty)
+        #expect(discover.hasSearched)
+    }
+
+    @Test(
+        "An address that is not a model's on Hugging Face is not sent to the daemon",
+        arguments: [
+            ("https://modelscope.cn/models/Qwen/Qwen3.8-27B", "ModelScope is not supported yet."),
+            ("https://evil.example/org/repo", "That is not a model's name"),
+            ("https://huggingface.co@evil.example/org/repo", "That is not a model's name"),
+        ]
+    )
+    func refused(text: String, says: String) async {
+        // A daemon that is away: a question to it would come back as a failure.
+        let discover = DiscoverStore(daemon: await startedDaemon(.notRunning))
+        discover.open("org/earlier")
+        discover.text = text
+        await discover.search()
+        #expect(discover.notice?.hasPrefix(says) == true)
+        #expect(discover.failure == nil, "the daemon was not asked")
+        #expect(discover.selection == nil)
+        #expect(discover.hits.isEmpty)
+
+        discover.text = ""
+        await discover.search()
+        #expect(discover.notice == nil, "the note goes when the text does")
+    }
+
     @Test("Downloading a variant queues it for the chosen apps")
     func download() async throws {
         let daemon = await startedDaemon()

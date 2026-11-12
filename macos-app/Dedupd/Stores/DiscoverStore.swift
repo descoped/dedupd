@@ -47,6 +47,9 @@ final class DiscoverStore {
     private(set) var isLoadingMore = false
     private(set) var hasSearched = false
     private(set) var failure: String?
+    /// Why the text in the field was not used: an address at a source that
+    /// is not built yet, or one that is not a model's address.
+    private(set) var notice: String?
 
     var selection: SearchHit.ID? {
         didSet {
@@ -60,6 +63,9 @@ final class DiscoverStore {
 
     @ObservationIgnored private let daemon: DaemonStore
     @ObservationIgnored private var generation = 0
+    /// The words of the last search, as they were checked; a next page
+    /// asks for the same ones.
+    @ObservationIgnored private var words = ""
 
     init(daemon: DaemonStore) {
         self.daemon = daemon
@@ -67,7 +73,7 @@ final class DiscoverStore {
 
     private var query: SearchQuery {
         SearchQuery(
-            text: text.trimmingCharacters(in: .whitespaces),
+            text: words,
             format: format,
             task: task,
             license: "",
@@ -78,16 +84,22 @@ final class DiscoverStore {
     }
 
     /// Search with what the fields say. Text that names a repository, or
-    /// its address on huggingface.co, opens that model directly.
+    /// its address on huggingface.co, opens that model directly. Text that
+    /// looks like an address and is not one is not sent anywhere.
     func search() async {
-        if let repo = ModelSpec.repository(in: text) {
-            hits = []
-            next = nil
-            failure = nil
-            hasSearched = true
-            open(repo)
+        switch ModelSpec.typed(text) {
+        case let .model(repo):
+            show(repo)
             return
+        case let .refused(why):
+            leaveTheList()
+            notice = why
+            selection = nil
+            return
+        case let .words(checked):
+            words = checked
         }
+        notice = nil
         generation += 1
         let mine = generation
         isSearching = true
@@ -145,6 +157,25 @@ final class DiscoverStore {
     /// reads its details when the selection changes.
     func open(_ repo: String) {
         selection = repo
+    }
+
+    /// Show one model in place of the list, as if its name had been typed
+    /// into the search field. The name is one `ModelSpec` has checked.
+    func show(_ repo: String) {
+        leaveTheList()
+        text = repo
+        open(repo)
+    }
+
+    /// Empty the list, and drop the answer of a search that is still out.
+    private func leaveTheList() {
+        generation += 1
+        isSearching = false
+        hits = []
+        next = nil
+        failure = nil
+        notice = nil
+        hasSearched = true
     }
 
     /// Read the selected model from Hugging Face. Quietly keeps what is on

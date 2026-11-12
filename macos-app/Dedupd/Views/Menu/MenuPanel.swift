@@ -20,6 +20,9 @@ struct MenuPanel: View {
                     tiles(status)
                 }
                 scanOutcome
+                if daemon.isRunning {
+                    MenuFindField { open(.discover) }
+                }
             }
             Divider()
             footer
@@ -135,6 +138,69 @@ struct MenuPanel: View {
     private func open(_ pane: Pane?) {
         AppEnvironment.shared.openMainWindow = { openWindow(id: MainWindow.id) }
         AppEnvironment.shared.showMainWindow(pane)
+    }
+}
+
+/// A field to go straight to a model: paste its address or its name, or
+/// type words to search for, and Return opens the main window on Discover.
+/// The text is read by `ModelSpec.typed`; only a checked `org/name` or
+/// plain words go on from here, and an address that is not a model's on
+/// Hugging Face goes nowhere.
+private struct MenuFindField: View {
+    @Environment(DiscoverStore.self) private var discover
+    /// Bring the main window to the front on Discover.
+    let showDiscover: () -> Void
+
+    @State private var text = ""
+    @State private var note: String?
+
+    private var isEmpty: Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                TextField("Find a model", text: $text, prompt: Text("Paste a model's address, or search"))
+                    .textFieldStyle(.roundedBorder)
+                    .autocorrectionDisabled()
+                    .onSubmit(submit)
+                    .accessibilityIdentifier("panel-find")
+                Button("Find", systemImage: "arrow.right.circle", action: submit)
+                    .labelStyle(.iconOnly)
+                    .disabled(isEmpty)
+                    .help("Show this model, or search for these words, in Discover")
+                    .accessibilityIdentifier("panel-find-button")
+            }
+            if let note {
+                Text(note)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("panel-find-note")
+            }
+        }
+        .onChange(of: text) {
+            note = nil
+        }
+    }
+
+    private func submit() {
+        guard !isEmpty else {
+            return
+        }
+        switch ModelSpec.typed(text) {
+        case let .model(repo):
+            discover.show(repo)
+        case let .words(words):
+            discover.text = words
+            Task { await discover.search() }
+        case let .refused(why):
+            note = why
+            return
+        }
+        text = ""
+        showDiscover()
     }
 }
 

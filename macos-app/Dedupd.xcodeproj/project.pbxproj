@@ -44,6 +44,7 @@
 		AEC877EA68F6C97C7C341510 /* ModelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25B1DC4550E5D37D301B58D5 /* ModelApp.swift */; };
 		AF5B6D66166A15273837C3B6 /* control in Resources */ = {isa = PBXBuildFile; fileRef = 3E3A2969749C0A1640EF764D /* control */; };
 		B26B301337A020DDBF99BF51 /* MenuPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A78B31A39A962287C18820A6 /* MenuPanel.swift */; };
+		B4082F1DC78E1B4E2E7D7038 /* ModelAddressTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 61CB12C4DB760C3543423C3A /* ModelAddressTests.swift */; };
 		B6F71A0D2C2FA1138A4B1DBB /* StorageView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DCAAA009058C3B3F26CC977 /* StorageView.swift */; };
 		BB1DE94FBCEA0A5524146AD3 /* MenuBarLabel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ED2F7E93AEE384DEFB2882EC /* MenuBarLabel.swift */; };
 		BEA3EAC9590C80E705C73C78 /* DiscoverInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = CD0BA62BB6D5D15A8823CCCD /* DiscoverInspector.swift */; };
@@ -109,6 +110,7 @@
 		596735B92A21D9CF195718A2 /* JobState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobState.swift; sourceTree = "<group>"; };
 		5AB78835F45F2AD9EB20CAB7 /* SettingsDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsDraft.swift; sourceTree = "<group>"; };
 		5DCAAA009058C3B3F26CC977 /* StorageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageView.swift; sourceTree = "<group>"; };
+		61CB12C4DB760C3543423C3A /* ModelAddressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelAddressTests.swift; sourceTree = "<group>"; };
 		688891337580B00E6FFA11F5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		6AC2644252BF5A44B57280BF /* ScreenStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenStoreTests.swift; sourceTree = "<group>"; };
 		6D0B83263644996DDF22EDAD /* ByteFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ByteFormatTests.swift; sourceTree = "<group>"; };
@@ -280,6 +282,7 @@
 				485343F149130DDDE1FFD3D4 /* ContractTests.swift */,
 				C762101D553FCD327F8986B9 /* DaemonStoreTests.swift */,
 				4070E9EE36A2CB759E66A166 /* DisplayTests.swift */,
+				61CB12C4DB760C3543423C3A /* ModelAddressTests.swift */,
 				BCE0FE66106D647E15B825C4 /* ScreenContractTests.swift */,
 				6AC2644252BF5A44B57280BF /* ScreenStoreTests.swift */,
 				0E907E9C59F73276150D3F10 /* Support */,
@@ -661,6 +664,7 @@
 				F4C81C84750436332D54C304 /* DaemonStoreTests.swift in Sources */,
 				72AE3DC29EEF642ABC85BF78 /* DisplayTests.swift in Sources */,
 				CDA4CC5DBC16EED43287699D /* FixtureServer.swift in Sources */,
+				B4082F1DC78E1B4E2E7D7038 /* ModelAddressTests.swift in Sources */,
 				6BD1F9A205D1DA8D10B968F3 /* ScreenContractTests.swift in Sources */,
 				18EEA6EC80FAA1578A3001E3 /* ScreenStoreTests.swift in Sources */,
 				EAD27C28064E8BE49E35CA42 /* TestSupport.swift in Sources */,
