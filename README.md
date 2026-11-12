@@ -37,7 +37,7 @@ comes with a command line and a macOS app.
 | Platform | macOS 26 on Apple silicon |
 | Apps | Ollama; Bionic and LM Studio; the Hugging Face cache (`hf`, `huggingface_hub`, `mlx_lm`, llama.cpp) |
 | Model source | Hugging Face |
-| Distribution | Built from source. A notarised download of the app is planned |
+| Distribution | A notarised disk image of the app on the [releases page](https://github.com/descoped/dedupd/releases); the command and the daemon are inside it. Or built from source |
 | Planned | A catalogue of model families and editions, ModelScope as a second source, and Linux with NVIDIA GPUs. See the [roadmap](docs/roadmap.md) |
 
 ## Requirements
@@ -47,6 +47,12 @@ comes with a command line and a macOS app.
 - The dedupd store and the applications' model directories on the same volume. A clone cannot span volumes.
 
 dedupd does not substitute symbolic links, hard links or copies when cloning is unavailable.
+
+## Install
+
+Download `dedupd-<version>.dmg` from the [releases page](https://github.com/descoped/dedupd/releases), drag Dedupd to
+Applications and open it. It runs in the menu bar. Install the background service on its Daemon screen; the app
+runs the `dedupd` command it carries, which copies itself to `~/.dedupd/bin` and registers a launchd agent.
 
 ## Build and try
 

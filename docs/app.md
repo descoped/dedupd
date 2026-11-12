@@ -4,7 +4,8 @@ The app is a menu bar app for the dedupd daemon. It shows what the daemon holds 
 activate, archive and restore models. The app holds no model data: everything it shows comes from the daemon, and
 the daemon continues to run when the app is closed or quit.
 
-Requirements: macOS 26 on Apple silicon. The app is built from source with `just app-run`.
+Requirements: macOS 26 on Apple silicon. The app is distributed as a notarised disk image on the
+[releases page](https://github.com/descoped/dedupd/releases), and can be built from source with `just app-run`.
 
 The pictures on this page were taken with sample data.
 

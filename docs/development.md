@@ -74,7 +74,8 @@ each module does.
 
 `just app-release` makes the app's release: a Release build signed with Developer ID, notarised by Apple, in a
 disk image. It needs the maintainer's certificate and notary credential. `just app-package` does everything short
-of sending it to Apple, for checking.
+of sending it to Apple, for checking. A release is tagged `v<version>` on the commit it was built from, and the
+disk image is attached to a GitHub release with its sha256 in the notes.
 
 ## Continuous integration
 

@@ -19,6 +19,7 @@ and has no dates. A platform, an app or a model source is called supported only 
 | App profiles | The rules for each app as data: which formats it takes, by which method, at what cost in disk space, and with which versions of the app this was tested |
 | Archive disk | A second copy of every stored file on another disk; archive and restore for one model |
 | Interfaces | The `dedupd` command, a control API, and a macOS app |
+| Distribution | A notarised disk image of the app, which carries the command and the daemon |
 
 ## Planned
 
@@ -166,7 +167,6 @@ with tests against the real app.
 
 ## macOS
 
-- A notarised download of the app.
 - Updates for the app.
 - Downloads from Hugging Face through its Xet storage, which is faster than the plain download used today.
 
