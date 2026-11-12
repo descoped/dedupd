@@ -156,6 +156,10 @@ Ollama registry:
 - Bionic has no endpoint setting. Its downloads go to `search.lmstudio.ai/v1/hf-proxy/...`; the base-URL override exists only in a signed enterprise policy. Bionic is covered by placement and by adopting what it downloads. Avoid folder-level symlinks in its models folder.
 - Bionic and LM Studio are separate apps sharing `~/.lmstudio`.
 
+## GitHub
+
+`main` is the default branch. `.github/workflows/ci.yml` runs `just check` on macOS 26 for pull requests into `main` and pushes to it (not for changes that touch only the app, the docs or the scripts). `.github/workflows/claude.yml` has Claude review a pull request once when it is opened or reopened, and answer an `@claude` mention from the owner or a collaborator; that second job runs on macOS, may run the Rust gate, and can push a fix. It needs the secret `CLAUDE_CODE_OAUTH_TOKEN` and the Claude GitHub app on the repository. `.github/renovate.json`: Renovate opens no pull request by itself; the owner ticks what he wants on the dependency dashboard, once a week.
+
 ## Harness
 
 `scripts/claude/finish-worktree-removal.sh` removes what a failed `git worktree remove` leaves under `.claude/worktrees/` (on this Mac, Finder can write a `.DS_Store` into the tree while git deletes it; git then stops and the directory is no longer listed). Hooks in `.claude/settings.json` run it at session start, after `git worktree remove|prune`, after `ExitWorktree` and when a subagent stops. Test it with `sh scripts/claude/finish-worktree-removal.test.sh`.
