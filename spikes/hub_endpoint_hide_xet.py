@@ -1,4 +1,4 @@
-# Spike: HF_ENDPOINT proxy that hides Xet so huggingface_hub falls back to plain HTTP via the proxy.
+# Spike: an HF_ENDPOINT server that hides Xet, so that huggingface_hub falls back to plain HTTP through it.
 import http.server, http.client, sys, json, urllib.parse, re
 def up(method, url, headers, body=None):
     u=urllib.parse.urlsplit(url); c=http.client.HTTPSConnection(u.netloc)
@@ -32,7 +32,7 @@ class H(http.server.BaseHTTPRequestHandler):
                     b=r2.read(1<<20)
                     if not b: break
                     self.wfile.write(b); tot+=len(b)
-                note=f"GET streamed {tot} bytes via proxy"
+                note=f"GET streamed {tot} bytes through this endpoint"
         else:
             data=r.read() if self.command!="HEAD" else b""
             if ("/tree/" in self.path or "/paths-info/" in self.path) and r.status==200:

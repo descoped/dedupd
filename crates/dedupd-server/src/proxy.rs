@@ -197,7 +197,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn link_header_is_pointed_at_the_proxy_and_loses_xet() {
+    fn link_header_is_pointed_at_the_daemon_and_loses_xet() {
         let v = r#"<https://huggingface.co/api/models/o/r/tree/c?cursor=x>; rel="next", <https://cas.example/auth>; rel="xet-auth""#;
         assert_eq!(
             rewrite_link(v, "https://huggingface.co", "http://127.0.0.1:8642").unwrap(),

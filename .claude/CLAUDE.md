@@ -102,7 +102,7 @@ Four parts, one process:
    - Bionic: `~/.lmstudio/models/{org}/{repo}/{file}`.
    - Hugging Face cache: `~/.cache/huggingface/hub/models--org--repo/{blobs/{etag},snapshots/{commit}/,refs/main}`; also serves llama.cpp and MLX tools.
 
-Two ways in: explicit (`dedupd pull org/repo --for ollama,bionic,mlx` fetches once and places clones) and transparent (an app fetches through the proxy, writes its own copy, and a reclaim pass swaps that copy for a clone). Existing models are adopted by cloning from the app folder into the store; adoption never modifies an app's files.
+Two ways in: explicit (`dedupd pull org/repo --for ollama,bionic,mlx` fetches once and places clones) and transparent (an app fetches through the daemon, writes its own copy, and a reclaim pass swaps that copy for a clone). Existing models are adopted by cloning from the app folder into the store; adoption never modifies an app's files.
 
 Commands: `pull`, `place`, `adopt`, `status`, `backup`, `serve`, `reclaim`, `verify`, `gc`, `forget`, `install`, `uninstall`, `start`, `stop`, `agent`, `env`. `install` copies the running binary to `<home>/bin/dedupd` and starts it from there, so the agent does not depend on where the app or a build folder is; `agent --json` is what the app reads.
 
@@ -121,9 +121,9 @@ The daemon's background pass (started by a folder watcher when an app folder cha
 
 Hub API (for `huggingface_hub`, llama.cpp):
 
-- Hide Xet, or model bytes bypass the proxy: remove `xetHash` from `/tree` and `/paths-info` entries (keep `lfs.oid`, `lfs.size`), and never emit `X-Xet-Hash`, the Xet `Link` relations or `X-Xet-Refresh-Route`. Still pass `/api/models/{repo}/xet-read-token/{rev}` through for clients with an older cached tree.
+- Hide Xet, or model bytes bypass the daemon: remove `xetHash` from `/tree` and `/paths-info` entries (keep `lfs.oid`, `lfs.size`), and never emit `X-Xet-Hash`, the Xet `Link` relations or `X-Xet-Refresh-Route`. Still pass `/api/models/{repo}/xet-read-token/{rev}` through for clients with an older cached tree.
 - Answer `HEAD /{repo}/resolve/{rev}/{path}` with 200 directly, carrying `X-Repo-Commit`, `ETag` (git sha1 for small files, sha256 for LFS), `Content-Length`, `Accept-Ranges: bytes`. Never redirect to a CDN; the CDN's own ETag is the Xet hash and would produce wrong blob names.
-- Rewrite the absolute `Link: rel="next"` pagination header to the proxy origin.
+- Rewrite the absolute `Link: rel="next"` pagination header to the daemon's origin.
 - Relay status, `X-Error-Code`, `X-Error-Message` and `X-Repo-Commit` verbatim, including on 404.
 - The `huggingface_hub` client refuses a plain-HTTP download of a single file over 50 GB. Handle those by pre-placing into the HF cache so the client only sends a HEAD.
 
@@ -131,7 +131,7 @@ Ollama registry:
 
 - `GET /v2/.../blobs/sha256:{d}` without `Range` must answer 307 to a URL with a different hostname; a direct 200 fails with `no Location header`, and so does a redirect to the same hostname, because Ollama follows that one itself. The daemon redirects between its two loopback names (`127.0.0.1` and `localhost`) and listens on both. Ollama then sends parallel `Range` parts of 100 MB to 1 GB.
 - Remove `WWW-Authenticate` from relayed registry errors; Ollama rejects a token realm on another host.
-- Plain HTTP requires `ollama pull --insecure 127.0.0.1:PORT/org/repo:tag`; the model name then carries the proxy address. Direct placement keeps the `hf.co/...` name.
+- Plain HTTP requires `ollama pull --insecure 127.0.0.1:PORT/org/repo:tag`; the model name then carries the daemon's address. Direct placement keeps the `hf.co/...` name.
 - Manifest responses differ by User-Agent; include it in the cache key.
 
 ## Upstream limits (not bugs here)
@@ -153,7 +153,7 @@ Ollama registry:
 python3 spikes/ollama_registry_from_folder.py <cas-dir> <manifest.json>
 ollama pull --insecure localhost:8099/<org>/<repo>:<tag>
 
-# Hub endpoint that hides Xet and streams through the proxy (port 8098)
+# Hub endpoint that hides Xet and streams the files itself (port 8098)
 python3 spikes/hub_endpoint_hide_xet.py
 HF_HOME=<scratch-dir> HF_ENDPOINT=http://127.0.0.1:8098 hf download <org>/<repo> <file>
 
