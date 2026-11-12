@@ -1,0 +1,134 @@
+name: Claude
+
+# Two jobs, one action:
+#
+# - `review` reads a pull request when it is opened or reopened and posts one
+#   review. It changes nothing.
+# - `respond` answers an `@claude` mention from the owner or a collaborator, in
+#   a pull request or an issue: sort out a finding, or fix it and push the fix.
+#
+# `reopened` is the way to have a pull request reviewed again. Deliberately not
+# `synchronize`: that would review every push to every open pull request.
+#
+# Needs the secret CLAUDE_CODE_OAUTH_TOKEN (made by `claude setup-token`, stored
+# with `gh secret set CLAUDE_CODE_OAUTH_TOKEN`) and the Claude GitHub app
+# installed on this repository.
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request:
+    types: [opened, reopened]
+  issues:
+    types: [opened, assigned]
+  pull_request_review:
+    types: [submitted]
+
+# A newer opened or reopened event cancels a review that is still running.
+# Only for `pull_request`: the action's own "Claude Code is working…" comment
+# arrives as `issue_comment` in this same group, and cancelling on that would
+# stop the review that wrote it.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # Runs on every opened pull request, Renovate's too, so its token cannot
+  # write to the repository: a review reads the diff and posts a comment.
+  review:
+    # No check on who opened it: the instruction is the fixed text below (the
+    # pull request's own text never becomes the instruction), and Renovate
+    # opens pull requests as an outsider, so a check would end its reviews.
+    if: github.event_name == 'pull_request' && github.event.pull_request.user.login != 'claude[bot]'
+    runs-on: ubuntu-latest
+    # A review cut off by the timeout still reports success with a half-filled
+    # comment, so the ceiling is generous.
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@aa8a7738e48bf30a40ee499ce818bef081c5ab5e  # v1 (v1.0.257)
+        with:
+          # The model is named, not inherited. `Agent` is denied so the review
+          # is one pass: a subagent still running when the main turn ends never
+          # reports, and nothing is posted. The read-only gh and git commands
+          # are granted because the action refuses every Bash call by default.
+          claude_args: >-
+            --model opus
+            --disallowedTools "Agent"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: "Review this PR. Read .claude/CLAUDE.md, then read each file in .claude/rules/ that applies to the files this PR changes (its Applies to line says which). The never-violate rules are the sections Invariants and Protocol rules that are easy to get wrong in .claude/CLAUDE.md: weight files in the store are never transformed, placement is by clones and never by symlinks, hard links or copies, nothing is deleted without an explicit apply, Authorization goes to huggingface.co only, Xet stays hidden from clients, and the Ollama registry redirect rules. Review against them as written there, and when you flag a violation name the rule. Also check correctness, error handling, that all SQL stays in the db module, that the database has one flat schema and no migrations, that the macOS app talks to the daemon only through crates/dedupd-client and never embeds dedupd-core, that a change to the control API comes with re-recorded fixtures and a change to the client with regenerated Swift bindings, hardcoded values and leaked secrets, and AI attribution lines in commits or the PR body (none allowed). The tests cannot run here (they need macOS and APFS); the CI workflow runs them. Distinguish CRITICAL (must fix before merge) from SUGGESTION (non-blocking). Post one concise PR review with file:line citations. If the PR is clean, say so plainly; do not manufacture issues. Complete the entire review within this run and post the consolidated review before ending; never end the turn while any review pass is deferred, backgrounded or promised for later."
+          track_progress: true
+          allowed_bots: 'renovate[bot]'
+
+      # The job succeeds even when the review never posted: the action edits
+      # one placeholder comment in place, and a run that ends early leaves its
+      # checklist unticked. An unticked box in that comment fails the job.
+      - name: Fail when the review did not post
+        if: ${{ always() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: |
+          body=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${PR}/comments" --paginate \
+            --jq '[.[] | select(.user.login == "claude[bot]")] | last | .body // ""')
+          if printf '%s' "$body" | grep -q -- '- \[ \]'; then
+            echo "::error::the review comment still has unchecked boxes; the review did not post"
+            exit 1
+          fi
+
+  respond:
+    # The comment or issue text becomes Claude's instruction, with a token that
+    # can write and the OAuth secret, so the author must be the owner, a member
+    # or a collaborator.
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.user.login != 'claude[bot]' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@claude') && github.event.comment.user.login != 'claude[bot]' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@claude') && github.event.review.user.login != 'claude[bot]' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association)) ||
+      (github.event_name == 'issues' && (contains(github.event.issue.body, '@claude') || contains(github.event.issue.title, '@claude')) && github.event.issue.user.login != 'claude[bot]' && contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.issue.author_association))
+    # macOS 26 on Apple silicon, like the CI job: the code builds only there,
+    # and the tests create real APFS clones. A fix can then be built and
+    # tested before it is pushed. (A macOS minute costs more than a Linux one;
+    # this job runs only when someone trusted writes `@claude`.)
+    runs-on: macos-26
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          fetch-depth: 1
+
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4.0.0
+
+      - name: Run Claude Code
+        uses: anthropics/claude-code-action@aa8a7738e48bf30a40ee499ce818bef081c5ab5e  # v1 (v1.0.257)
+        with:
+          # No prompt: the action answers the mention. Besides the read-only
+          # gh and git commands it may run the Rust gate and its parts, so a
+          # fix is checked here and not only by CI afterwards.
+          claude_args: >-
+            --model opus
+            --disallowedTools "Agent"
+            --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(just check),Bash(just fmt),Bash(cargo fmt:*),Bash(cargo clippy:*),Bash(cargo check:*),Bash(cargo build:*),Bash(cargo test:*)"
+            --append-system-prompt "Read .claude/CLAUDE.md before changing anything. When you change Rust code, run just check and push only when it passes; say plainly when it does not. Never add AI attribution to a commit message or to pull request text: no Generated-with line, no Co-Authored-By line, no session link. The macOS app (macos-app/) cannot be built or tested here; when a fix needs a change there, say what is left to do."
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          track_progress: true
