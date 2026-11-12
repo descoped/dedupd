@@ -97,6 +97,14 @@ archive = "/Volumes/Archive/dedupd"
 # The address the daemon listens on.
 listen = "127.0.0.1:8642"
 
+# The Hugging Face endpoint the daemon fetches from. Default https://huggingface.co.
+# --endpoint and DEDUPD_HF_ENDPOINT take precedence.
+hf_endpoint = "https://huggingface.co"
+
+# Set HF_ENDPOINT to the daemon's address for apps started from the Dock or Finder,
+# through launchctl setenv when the daemon starts. Default false; `dedupd install --env` sets it.
+set_env = false
+
 # The app folders, when they are not in the usual place.
 bionic_models = "/Users/you/.lmstudio/models"
 ollama_models = "/Users/you/.ollama/models"
