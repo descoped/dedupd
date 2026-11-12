@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Status
 
-Phases 1 to 4 of the build order are implemented and committed one phase per commit: store and adoption, fetcher and placers, the HTTP front ends, and the daemon with its background work. The daemon also has a durable download queue with a rate governor, and a control API that covers everything the app shows. The macOS app (`macos-app/`) is built on it: a menu bar icon with a small panel, and a main window with five screens (Library, Discover, Downloads, Storage, Daemon), all through the UniFFI client crate. A release of the app is made by `just app-release` (signed with Developer ID, notarised, in a disk image); the signing and packaging have been run, the notarisation has not, because no notary credential is stored on this Mac yet. Not built: Bionic network interception, Xet for the daemon's own downloads, updates for the app, and Xcode Cloud. `spikes/` holds three standalone Python scripts (standard library only, run with `python3`) that proved the protocol behaviour before the Rust code existed.
+Phases 1 to 4 of the build order are implemented and committed one phase per commit: store and adoption, fetcher and placers, the HTTP front ends, and the daemon with its background work. The daemon also has a durable download queue with a rate governor, and a control API that covers everything the app shows. The macOS app (`macos-app/`) is built on it: a menu bar icon with a small panel, and a main window with five screens (Library, Discover, Downloads, Storage, Daemon), all through the UniFFI client crate. A release of the app is made by `just app-release` (signed with Developer ID, notarised, in a disk image); the signing and packaging have been run, the notarisation has not, because no notary credential is stored on this Mac yet. Not built: Bionic network interception, Xet for the daemon's own downloads, updates for the app, and Xcode Cloud. `spikes/` holds standalone Python scripts (standard library only, run with `python3`): three that proved the protocol behaviour before the Rust code existed, and one that shows how Ollama can be given an MLX model without a second copy of its weights (not built into the product yet).
 
 The full research and plan is the Claude Docs artifact "dedupd: research and implementation plan" (https://claude.ai/artifact/CYuT3GEgaBf9EgKLaMPoxd); read it with the Artifact/Claude Docs tools before making design changes, and update it when a decision changes.
 
@@ -136,7 +136,7 @@ Ollama registry:
 
 ## Upstream limits (not bugs here)
 
-- Ollama cannot use MLX repos from Hugging Face (registry returns 400; Ollama re-packs safetensors) or split GGUF files.
+- Ollama cannot pull MLX repos from Hugging Face (the registry returns 400), and its own import (`ollama create`) re-packs safetensors into one file per tensor, a full second copy. A shared placement is possible all the same, see "MLX models in Ollama" under Spikes; the placer does not do it yet. Ollama cannot use split GGUF files.
 - Bionic has no endpoint setting. Its downloads go to `search.lmstudio.ai/v1/hf-proxy/...`; the base-URL override exists only in a signed enterprise policy. Bionic is covered by placement and by adopting what it downloads. Avoid folder-level symlinks in its models folder.
 - Bionic and LM Studio are separate apps sharing `~/.lmstudio`.
 
@@ -160,6 +160,25 @@ HF_HOME=<scratch-dir> HF_ENDPOINT=http://127.0.0.1:8098 hf download <org>/<repo>
 # Logging pass-through, to record what a client requests (port 8098)
 python3 spikes/hub_endpoint_logging_passthrough.py
 ```
+
+### MLX models in Ollama
+
+```sh
+# A scratch Ollama server and folder; OLLAMA_MODELS must be set for the client too,
+# because `ollama create` writes into the default folder otherwise.
+OLLAMA_HOST=127.0.0.1:11999 OLLAMA_MODELS=<scratch-dir> ollama serve
+OLLAMA_HOST=127.0.0.1:11999 OLLAMA_MODELS=<scratch-dir> \
+  python3 spikes/ollama_mlx_shared_clone.py <mlx-model-folder> hf.co/<org>/<repo> --measure
+```
+
+What it showed on Ollama 0.40.16 (2026-11-12), with `mlx-community/Qwen3.5-0.8B-4bit` and the owner's `Qwen3.8-27B-MLX-4bit` (three weights files, 16 GB):
+
+- Ollama's import keeps every tensor's bytes, dtype and shape. It renames `X.scales` to `X.weight.scale` and `X.biases` to `X.weight.bias`, and adds `{"quant_type": "int4", "group_size": "64"}` to the file's metadata. Its loader accepts a file that holds many tensors.
+- So a weights file can be given to Ollama as a clone whose index (the safetensors header) is rewritten in place. The 16 GB model cost about 130 MB of new disk; it lists, runs with the same answers as Ollama's own import, is still there after the server restarts, and `ollama rm` removes it.
+- The settings (the config layer with renderer, parser and capabilities) and the metadata note come from Ollama itself: it imports a stand-in of a few hundred KB (the model's small files and one quantized layer) and gives the same config layer as for the whole model.
+- The stand-in also tells what Ollama cannot run. It knows `int4` and `int8` (and `nvfp4`, `mxfp4`, `mxfp8`, not tried). For a 5-bit or 6-bit MLX model it writes no note; its own import of the owner's 5-bit model succeeds and the model then fails to load.
+- A model that mixes 4-bit and 8-bit layers fails to load after Ollama's own import (it labels every layer with the default). As one clone per bit width, each listing only its own tensors, it runs.
+- The blob's sha256 is that of the rewritten clone, not the Hub's `lfs.oid`, so the first invariant above does not hold for such a placement. This relies on behaviour Ollama does not document.
 
 Use a scratch `HF_HOME` and a tiny model (for example `bartowski/SmolLM2-135M-Instruct-GGUF`, 105 MB) when testing, and remove test models from `~/.ollama/models` and `~/.lmstudio/models` afterwards. Those folders hold the owner's real models (about 270 GB in Bionic).
 
