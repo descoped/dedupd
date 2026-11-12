@@ -106,7 +106,8 @@ struct DisplayTests {
     func kinds() {
         let single = Variant(
             kind: "gguf", name: "Q4_K_M", spec: "a/b:Q4_K_M", files: 1, bytes: 10, storedBytes: 10,
-            usableBy: ["bionic", "ollama", "hf"], placedIn: ["ollama"]
+            usableBy: ["bionic", "ollama", "hf"], placedIn: ["ollama"],
+            decisions: FixtureData.decisions(usableBy: ["bionic", "ollama", "hf"])
         )
         var split = single
         split.usableBy = ["bionic", "hf"]
@@ -122,6 +123,28 @@ struct DisplayTests {
         #expect(split.usableApps == [.bionic, .huggingFace])
         #expect(ModelKind.gguf.defaultApps == [.bionic, .ollama])
         #expect(ModelKind.mlx.defaultApps == [.bionic])
+    }
+
+    @Test("An app without the model says why, in the daemon's words")
+    func notes() {
+        var mlx = Variant(
+            kind: "files", name: "all files", spec: "a/b", files: 8, bytes: 10, storedBytes: 10,
+            usableBy: ["bionic", "hf"], placedIn: [],
+            decisions: FixtureData.decisions(usableBy: ["bionic", "hf"], mlx: true)
+        )
+        #expect([mlx].note(for: .bionic) == "Does not have it")
+        #expect([mlx].note(for: .ollama) == "Ollama can share this model with the store, but dedupd does not do that yet")
+        #expect(mlx.decision(for: .ollama)?.cost == "megabytes")
+        #expect([Variant]().note(for: .ollama) == "Does not have it")
+
+        // A version of the app the daemon was not tested with is named.
+        mlx.decisions[0].version = "9.9"
+        mlx.decisions[0].versionState = "untested"
+        #expect([mlx].note(for: .bionic) == "Does not have it · dedupd was not tested with version 9.9")
+
+        // A daemon from before the profiles sends no decisions.
+        mlx.decisions = []
+        #expect([mlx].note(for: .ollama) == "Cannot use this model")
     }
 
     @Test(

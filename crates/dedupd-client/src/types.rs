@@ -113,10 +113,36 @@ pub struct Variant {
     pub files: u64,
     pub bytes: u64,
     pub stored_bytes: u64,
-    /// The apps that can use it.
+    /// The apps the daemon can put it into.
     pub usable_by: Vec<String>,
     /// The apps that have it.
     pub placed_in: Vec<String>,
+    /// For every app: whether it can take this, how, at what cost, and why.
+    #[serde(default)]
+    pub decisions: Vec<Decision>,
+}
+
+/// What the daemon decided for one app and one variant of a model, from the
+/// app's profile and the version of the app that is installed.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct Decision {
+    pub app: String,
+    /// `ready` when the daemon can put the model into the app, `planned`
+    /// when the app could take it and the daemon cannot do it yet, `no`
+    /// when the app cannot take it.
+    pub state: String,
+    /// The method, unless the state is `no`: `clone`, or
+    /// `clone-with-rewritten-index`.
+    pub method: Option<String>,
+    /// New disk space the method takes: `none`, `megabytes` or `full`.
+    pub cost: Option<String>,
+    /// Why, in one sentence.
+    pub reason: String,
+    /// The installed version of the app, when the daemon found it.
+    pub version: Option<String>,
+    /// `tested`, `untested` or `broken` for that version; `unknown` when
+    /// the version was not found.
+    pub version_state: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]

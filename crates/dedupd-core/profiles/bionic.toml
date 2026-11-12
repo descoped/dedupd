@@ -1,0 +1,17 @@
+# How dedupd can put a model into Bionic (the LM Studio engine), which reads
+# plain files under ~/.lmstudio/models/{org}/{repo}/.
+
+app = "bionic"
+name = "Bionic"
+otherwise = "Bionic loads GGUF and MLX models, and this is neither"
+
+[detect]
+bundle = "Bionic.app"
+
+[[method]]
+id = "clone"
+built = true
+cost = "none"
+formats = ["gguf", "mlx"]
+says = "Shares the stored files"
+tested = ["1.2.0+2"]

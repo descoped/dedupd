@@ -12,6 +12,7 @@ use dedupd_core::db::PROVIDER_HF;
 use dedupd_core::fetch::encode_path;
 use dedupd_core::hub::{HubClient, HubError};
 use dedupd_core::place::App;
+use dedupd_core::profile::Installed;
 use dedupd_core::queue::{FileStage, JobRecord, State};
 use dedupd_core::{archive, library, maintain, status};
 use serde::Deserialize;
@@ -489,7 +490,11 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
             let repo = percent_decode(&name.join("/"));
             let found = {
                 let repo = repo.clone();
-                blocking(move || library::model(&engine.db(), &engine.store, &repo)).await
+                blocking(move || {
+                    let installed = Installed::detect(&engine.dirs);
+                    library::model(&engine.db(), &engine.store, &repo, &installed)
+                })
+                .await
             };
             match found {
                 Ok(Some(detail)) => ok(detail),

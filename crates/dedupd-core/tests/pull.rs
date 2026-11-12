@@ -5,7 +5,9 @@ mod common;
 
 use common::{COMMIT, REPO, Ranged, engine, git_oid, sha256};
 use dedupd_core::fetch::{Expect, Fetcher, Progress, Unwatched};
+use dedupd_core::hub::TreeEntry;
 use dedupd_core::place::{App, AppDirs};
+use dedupd_core::profile::{self, Installed};
 use dedupd_core::pull::{self, PullRequest};
 use dedupd_core::select::Selection;
 use dedupd_core::store::Store;
@@ -238,12 +240,27 @@ async fn a_model_is_removed_from_an_app_and_placed_again() {
         .unwrap();
 
     // The library says where the model is and what it can be used as.
-    let detail = library::model(&e.db(), &e.store, REPO).unwrap().unwrap();
+    let installed = Installed::detect(&e.dirs);
+    let detail = library::model(&e.db(), &e.store, REPO, &installed)
+        .unwrap()
+        .unwrap();
     assert_eq!(detail.model.apps.len(), 3);
     assert_eq!(detail.model.meta.formats, ["gguf"]);
     let q4 = detail.variants.iter().find(|v| v.name == "Q4_K_M").unwrap();
     assert_eq!(q4.spec, format!("{REPO}:Q4_K_M"));
     assert_eq!(q4.placed_in, ["bionic", "ollama", "hf"]);
+    assert_eq!(q4.usable_by, ["bionic", "ollama", "hf"]);
+    // Every app answers with a method and what it costs; no app is
+    // installed in the scratch folder, so no version is known.
+    assert_eq!(q4.decisions.len(), 3);
+    for d in &q4.decisions {
+        assert_eq!(
+            (d.state.as_str(), d.method.as_deref()),
+            ("ready", Some("clone"))
+        );
+        assert_eq!(d.cost, Some(profile::Cost::None));
+        assert_eq!(d.version_state, "unknown");
+    }
     assert_eq!(q4.stored_bytes, q4.bytes);
     let q8 = detail.variants.iter().find(|v| v.name == "Q8_0").unwrap();
     assert!(q8.placed_in.is_empty());
@@ -298,6 +315,58 @@ async fn a_model_is_removed_from_an_app_and_placed_again() {
         .await
         .unwrap();
     assert_placed(&up, &e2.dirs);
+}
+
+/// An MLX repository's answer for Ollama depends on the bit widths in its
+/// `config.json`, which is read from the store.
+#[test]
+fn an_mlx_model_tells_each_app_what_it_can_do() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let e = engine(&home, "http://127.0.0.1:9", &dir.path().join("apps"), None);
+    let entry = |path: &str, bytes: &[u8], lfs: bool| TreeEntry {
+        path: path.to_string(),
+        size: bytes.len() as u64,
+        git_oid: git_oid(bytes),
+        lfs_sha256: lfs.then(|| sha256(bytes)),
+    };
+    let installed = Installed::unknown().with(App::Ollama, "0.40.16");
+    let formats = ["mlx".to_string(), "safetensors".to_string()];
+    let ollama = |entries: &[TreeEntry]| {
+        let v = library::local_variants(&e.db(), &e.store, "org/m", entries, &formats, &installed)
+            .unwrap()
+            .remove(0);
+        assert_eq!(v.usable_by, ["bionic", "hf"]);
+        v.decisions.into_iter().find(|d| d.app == "ollama").unwrap()
+    };
+
+    // Before the download nothing is known about the widths, so the answer
+    // is the hopeful one.
+    let five = br#"{"quantization": {"group_size": 64, "bits": 5}}"#;
+    let entries = [
+        entry("config.json", five, false),
+        entry("model.safetensors", b"weights", true),
+    ];
+    let before = ollama(&entries);
+    assert_eq!(before.state, "planned");
+    assert_eq!(before.method.as_deref(), Some("clone-with-rewritten-index"));
+    assert_eq!(before.cost, Some(profile::Cost::Megabytes));
+    assert_eq!(before.version_state, "tested");
+
+    // With the config in the store, a width Ollama cannot run is refused.
+    let tmp = e.store.tmp_path("config");
+    fs::write(&tmp, five).unwrap();
+    e.store.add_tmp(&tmp, &sha256(five)).unwrap();
+    e.db()
+        .upsert_blob(&sha256(five), five.len() as u64, Some(&git_oid(five)))
+        .unwrap();
+    let after = ollama(&entries);
+    assert_eq!(after.state, "no");
+    assert_eq!(after.method, None);
+    assert_eq!(
+        after.reason,
+        "Ollama 0.40.16 cannot run 5-bit MLX models; it runs 4-bit and 8-bit ones"
+    );
 }
 
 #[tokio::test]

@@ -294,7 +294,8 @@ extension FixtureData {
                     bytes: model.storedBytes,
                     storedBytes: model.storedBytes,
                     usableBy: ["bionic", "ollama", "hf"],
-                    placedIn: model.appNames
+                    placedIn: model.appNames,
+                    decisions: decisions(usableBy: ["bionic", "ollama", "hf"])
                 ),
             ]
         }
@@ -307,9 +308,36 @@ extension FixtureData {
                 bytes: model.storedBytes,
                 storedBytes: model.storedBytes,
                 usableBy: ["bionic", "hf"],
-                placedIn: model.appNames
+                placedIn: model.appNames,
+                decisions: decisions(usableBy: ["bionic", "hf"], mlx: model.meta.formats.contains("mlx"))
             ),
         ]
+    }
+
+    /// What the daemon's app profiles answer for a variant these apps can
+    /// be given, in short.
+    static func decisions(usableBy: [String], mlx: Bool = false) -> [Decision] {
+        ModelApp.allCases.map(\.rawValue).map { app in
+            var decision = Decision(
+                app: app, state: "ready", method: "clone", cost: "none", reason: "Shares the stored files",
+                version: nil, versionState: "unknown"
+            )
+            if usableBy.contains(app) {
+                return decision
+            }
+            if app == ModelApp.ollama.rawValue, mlx {
+                decision.state = "planned"
+                decision.method = "clone-with-rewritten-index"
+                decision.cost = "megabytes"
+                decision.reason = "Ollama can share this model with the store, but dedupd does not do that yet"
+                return decision
+            }
+            decision.state = "no"
+            decision.method = nil
+            decision.cost = nil
+            decision.reason = "\(ModelApp.title(for: app)) cannot run this format"
+            return decision
+        }
     }
 
     static func folder(of app: String) -> String {

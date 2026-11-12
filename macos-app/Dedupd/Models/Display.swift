@@ -150,6 +150,28 @@ extension Variant: @retroactive Identifiable {
     func isPlaced(in app: ModelApp) -> Bool {
         placedIn.contains(app.rawValue)
     }
+
+    /// What the daemon decided for an app, from the app's profile.
+    func decision(for app: ModelApp) -> Decision? {
+        decisions.first { $0.app == app.rawValue }
+    }
+}
+
+extension [Variant] {
+    /// What to say about an app that does not have the model. When the app
+    /// cannot be given it, the reason is the daemon's own; when the daemon was
+    /// not tested with the installed version of the app, that is said too.
+    func note(for app: ModelApp) -> String {
+        let decisions = compactMap { $0.decision(for: app) }
+        guard isEmpty || contains(where: { $0.usableApps.contains(app) }) else {
+            return decisions.first?.reason ?? "Cannot use this model"
+        }
+        let untried = decisions.first { $0.state == "ready" && $0.versionState == "untested" }
+        if let version = untried?.version {
+            return "Does not have it · dedupd was not tested with version \(version)"
+        }
+        return "Does not have it"
+    }
 }
 
 extension Job: @retroactive Identifiable {}

@@ -1,0 +1,36 @@
+# How dedupd can put a model into Ollama.
+#
+# Methods are tried in order, cheapest first. `tested` lists the versions of
+# the app a method was run against; another version is not refused, it is
+# reported as not tried.
+
+app = "ollama"
+name = "Ollama"
+otherwise = "Ollama cannot run this format"
+
+[detect]
+bundle = "Ollama.app"
+
+# The GGUF's sha256 is the layer digest, so the stored file is the blob.
+[[method]]
+id = "clone"
+built = true
+cost = "none"
+formats = ["gguf"]
+says = "Shares the stored file"
+tested = ["0.40.16"]
+
+[method.unless]
+split = "Ollama cannot use a GGUF that is split into parts"
+
+# An MLX weights file as a clone with only its index rewritten; see
+# spikes/ollama_mlx_shared_clone.py. Ollama's own import of an MLX model with
+# another bit width succeeds, and the model then fails to load.
+[[method]]
+id = "clone-with-rewritten-index"
+built = false
+cost = "megabytes"
+formats = ["mlx"]
+bits = [4, 8]
+says = "Ollama can share this model with the store, but dedupd does not do that yet"
+tested = ["0.40.16"]

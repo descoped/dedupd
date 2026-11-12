@@ -671,6 +671,20 @@ async fn the_app_downloads_looks_removes_and_cleans_up() {
         detail["variants"][0]["usable_by"],
         json!(["bionic", "ollama", "hf"])
     );
+    // Each app's answer comes from its profile; no app is installed in the
+    // scratch folder, so no version is known.
+    assert_eq!(
+        detail["variants"][0]["decisions"][1],
+        json!({
+            "app": "ollama",
+            "state": "ready",
+            "method": "clone",
+            "cost": "none",
+            "reason": "Shares the stored file",
+            "version": null,
+            "version_state": "unknown",
+        })
+    );
     assert_eq!(
         detail["revisions"][0]["files"][0]["apps"],
         json!(["bionic", "hf"])
@@ -922,6 +936,12 @@ async fn the_client_reads_everything_the_daemon_sends() {
         assert_eq!(page.models[1].meta.formats, ["mlx", "safetensors"]);
         let hub = client::hub_model(a.clone(), REPO.into())?;
         assert_eq!(hub.variants[0].usable_by, ["bionic", "ollama", "hf"]);
+        let ollama = &hub.variants[0].decisions[1];
+        assert_eq!(
+            (ollama.app.as_str(), ollama.state.as_str()),
+            ("ollama", "ready")
+        );
+        assert_eq!(ollama.cost.as_deref(), Some("none"));
         assert_eq!(hub.related.len(), 1);
 
         let spec = hub.variants[0].spec.clone();

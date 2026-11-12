@@ -15,6 +15,7 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+mod apps;
 mod launchd;
 mod maintenance;
 mod serve;
@@ -88,6 +89,14 @@ enum Command {
     },
     /// Show what the store holds and which app files it covers
     Status {
+        /// Print machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show how each app can be given a model, or how one stored model can be given to each app
+    Apps {
+        /// A repository in the store, as org/repo
+        repo: Option<String>,
         /// Print machine-readable JSON
         #[arg(long)]
         json: bool,
@@ -587,6 +596,7 @@ async fn main() -> Result<()> {
             jobs,
         } => cmd_adopt(&o, apps, models_dir, offline, dry_run, rehash, jobs).await,
         Command::Status { json } => cmd_status(&o, json),
+        Command::Apps { repo, json } => apps::cmd_apps(&o, repo, json),
         Command::Backup { dir } => cmd_backup(&o, dir),
         Command::Serve { listen } => serve::cmd_serve(&o, listen).await,
         Command::Reclaim { dry_run } => maintenance::cmd_reclaim(&o, dry_run),

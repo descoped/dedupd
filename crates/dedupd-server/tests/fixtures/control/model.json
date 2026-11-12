@@ -141,6 +141,35 @@
   "variants": [
     {
       "bytes": 300008,
+      "decisions": [
+        {
+          "app": "bionic",
+          "cost": "none",
+          "method": "clone",
+          "reason": "Shares the stored files",
+          "state": "ready",
+          "version": "0.0.0",
+          "version_state": "unknown"
+        },
+        {
+          "app": "ollama",
+          "cost": "none",
+          "method": "clone",
+          "reason": "Shares the stored file",
+          "state": "ready",
+          "version": "0.0.0",
+          "version_state": "unknown"
+        },
+        {
+          "app": "hf",
+          "cost": "none",
+          "method": "clone",
+          "reason": "Shares the stored files",
+          "state": "ready",
+          "version": "0.0.0",
+          "version_state": "unknown"
+        }
+      ],
       "files": 2,
       "kind": "gguf",
       "name": "model",

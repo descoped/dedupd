@@ -15,6 +15,7 @@ pub mod maintain;
 pub mod ollama;
 pub mod paths;
 pub mod place;
+pub mod profile;
 pub mod pull;
 pub mod queue;
 pub mod select;

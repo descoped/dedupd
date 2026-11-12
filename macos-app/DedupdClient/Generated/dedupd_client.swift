@@ -1592,6 +1592,128 @@ public func FfiConverterTypeDaemonStatus_lower(_ value: DaemonStatus) -> RustBuf
 }
 
 
+/**
+ * What the daemon decided for one app and one variant of a model, from the
+ * app's profile and the version of the app that is installed.
+ */
+public struct Decision: Equatable, Hashable {
+    public var app: String
+    /**
+     * `ready` when the daemon can put the model into the app, `planned`
+     * when the app could take it and the daemon cannot do it yet, `no`
+     * when the app cannot take it.
+     */
+    public var state: String
+    /**
+     * The method, unless the state is `no`: `clone`, or
+     * `clone-with-rewritten-index`.
+     */
+    public var method: String?
+    /**
+     * New disk space the method takes: `none`, `megabytes` or `full`.
+     */
+    public var cost: String?
+    /**
+     * Why, in one sentence.
+     */
+    public var reason: String
+    /**
+     * The installed version of the app, when the daemon found it.
+     */
+    public var version: String?
+    /**
+     * `tested`, `untested` or `broken` for that version; `unknown` when
+     * the version was not found.
+     */
+    public var versionState: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(app: String, 
+        /**
+         * `ready` when the daemon can put the model into the app, `planned`
+         * when the app could take it and the daemon cannot do it yet, `no`
+         * when the app cannot take it.
+         */state: String, 
+        /**
+         * The method, unless the state is `no`: `clone`, or
+         * `clone-with-rewritten-index`.
+         */method: String?, 
+        /**
+         * New disk space the method takes: `none`, `megabytes` or `full`.
+         */cost: String?, 
+        /**
+         * Why, in one sentence.
+         */reason: String, 
+        /**
+         * The installed version of the app, when the daemon found it.
+         */version: String?, 
+        /**
+         * `tested`, `untested` or `broken` for that version; `unknown` when
+         * the version was not found.
+         */versionState: String) {
+        self.app = app
+        self.state = state
+        self.method = method
+        self.cost = cost
+        self.reason = reason
+        self.version = version
+        self.versionState = versionState
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Decision: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDecision: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Decision {
+        return
+            try Decision(
+                app: FfiConverterString.read(from: &buf), 
+                state: FfiConverterString.read(from: &buf), 
+                method: FfiConverterOptionString.read(from: &buf), 
+                cost: FfiConverterOptionString.read(from: &buf), 
+                reason: FfiConverterString.read(from: &buf), 
+                version: FfiConverterOptionString.read(from: &buf), 
+                versionState: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Decision, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.app, into: &buf)
+        FfiConverterString.write(value.state, into: &buf)
+        FfiConverterOptionString.write(value.method, into: &buf)
+        FfiConverterOptionString.write(value.cost, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+        FfiConverterOptionString.write(value.version, into: &buf)
+        FfiConverterString.write(value.versionState, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecision_lift(_ buf: RustBuffer) throws -> Decision {
+    return try FfiConverterTypeDecision.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDecision_lower(_ value: Decision) -> RustBuffer {
+    return FfiConverterTypeDecision.lower(value)
+}
+
+
 public struct Downloads: Equatable, Hashable {
     public var governor: Governor
     /**
@@ -4246,13 +4368,17 @@ public struct Variant: Equatable, Hashable {
     public var bytes: UInt64
     public var storedBytes: UInt64
     /**
-     * The apps that can use it.
+     * The apps the daemon can put it into.
      */
     public var usableBy: [String]
     /**
      * The apps that have it.
      */
     public var placedIn: [String]
+    /**
+     * For every app: whether it can take this, how, at what cost, and why.
+     */
+    public var decisions: [Decision]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -4264,11 +4390,14 @@ public struct Variant: Equatable, Hashable {
          * What to ask for to get it: `org/repo:Q4_K_M`, or `org/repo`.
          */spec: String, files: UInt64, bytes: UInt64, storedBytes: UInt64, 
         /**
-         * The apps that can use it.
+         * The apps the daemon can put it into.
          */usableBy: [String], 
         /**
          * The apps that have it.
-         */placedIn: [String]) {
+         */placedIn: [String], 
+        /**
+         * For every app: whether it can take this, how, at what cost, and why.
+         */decisions: [Decision]) {
         self.kind = kind
         self.name = name
         self.spec = spec
@@ -4277,6 +4406,7 @@ public struct Variant: Equatable, Hashable {
         self.storedBytes = storedBytes
         self.usableBy = usableBy
         self.placedIn = placedIn
+        self.decisions = decisions
     }
 
     
@@ -4302,7 +4432,8 @@ public struct FfiConverterTypeVariant: FfiConverterRustBuffer {
                 bytes: FfiConverterUInt64.read(from: &buf), 
                 storedBytes: FfiConverterUInt64.read(from: &buf), 
                 usableBy: FfiConverterSequenceString.read(from: &buf), 
-                placedIn: FfiConverterSequenceString.read(from: &buf)
+                placedIn: FfiConverterSequenceString.read(from: &buf), 
+                decisions: FfiConverterSequenceTypeDecision.read(from: &buf)
         )
     }
 
@@ -4315,6 +4446,7 @@ public struct FfiConverterTypeVariant: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.storedBytes, into: &buf)
         FfiConverterSequenceString.write(value.usableBy, into: &buf)
         FfiConverterSequenceString.write(value.placedIn, into: &buf)
+        FfiConverterSequenceTypeDecision.write(value.decisions, into: &buf)
     }
 }
 
@@ -4744,6 +4876,31 @@ fileprivate struct FfiConverterSequenceTypeBudget: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeBudget.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDecision: FfiConverterRustBuffer {
+    typealias SwiftType = [Decision]
+
+    public static func write(_ value: [Decision], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDecision.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Decision] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Decision]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDecision.read(from: &buf))
         }
         return seq
     }

@@ -4,6 +4,7 @@
 use crate::db::{Db, PROVIDER_HF};
 use crate::hub::{ModelMeta, TreeEntry};
 use crate::place::{App, AppDirs};
+use crate::profile::{self, Decision, Installed, Traits};
 use crate::select::{self, Variant};
 use crate::store::Store;
 use anyhow::{Result, bail};
@@ -244,10 +245,13 @@ pub struct LocalVariant {
     pub files: u64,
     pub bytes: u64,
     pub stored_bytes: u64,
-    /// The apps that can use it.
+    /// The apps dedupd can put it into: those whose decision is `ready`.
     pub usable_by: Vec<String>,
     /// The apps that have all its weight files.
     pub placed_in: Vec<String>,
+    /// For every app: whether it can take this variant, by which method,
+    /// at what cost in disk space, and why.
+    pub decisions: Vec<Decision>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -261,16 +265,22 @@ pub struct ModelDetail {
     pub readme: Option<String>,
 }
 
-/// The apps that can load a variant. Ollama takes one GGUF file; Bionic
-/// takes GGUF and MLX; everything can sit in the Hugging Face cache.
-pub fn usable_by(variant: &Variant, formats: &[String]) -> Vec<App> {
-    let mlx = formats.iter().any(|f| f == "mlx");
-    match variant.kind.as_str() {
-        "gguf" if variant.is_split() => vec![App::Bionic, App::Hf],
-        "gguf" => vec![App::Bionic, App::Ollama, App::Hf],
-        _ if mlx => vec![App::Bionic, App::Hf],
-        _ => vec![App::Hf],
-    }
+/// The quantization widths of a model that is not GGUF, from its
+/// `config.json` when the store has it. Empty when it is not known.
+fn widths(
+    store: &Store,
+    entries: &[TreeEntry],
+    sha_of: impl Fn(&str) -> Option<String>,
+) -> Vec<u32> {
+    entries
+        .iter()
+        .find(|e| e.path == "config.json")
+        .and_then(|e| sha_of(&e.path))
+        .filter(|sha| store.contains(sha))
+        .and_then(|sha| std::fs::read(store.blob_path(&sha)).ok())
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .map(|config| profile::quantization_bits(&config))
+        .unwrap_or_default()
 }
 
 /// `org/repo:quant` for a variant of a GGUF repository, else `org/repo`.
@@ -289,6 +299,7 @@ pub fn local_variants(
     repo: &str,
     entries: &[TreeEntry],
     formats: &[String],
+    installed: &Installed,
 ) -> Result<Vec<LocalVariant>> {
     let mut stmt = db.conn().prepare(
         "SELECT DISTINCT p.sha256, p.app FROM placements p JOIN repos r ON r.id = p.repo_id
@@ -323,13 +334,21 @@ pub fn local_variants(
                 })
                 .map(|a| a.as_str().to_string())
                 .collect();
+            let mut traits = Traits::of(&v, formats);
+            if v.kind != "gguf" {
+                traits =
+                    traits.with_bits(widths(store, &v.files, |p| sha_of(p).map(str::to_string)));
+            }
+            let decisions = profile::decisions(&traits, installed);
             LocalVariant {
                 spec: spec_of(repo, &v),
-                usable_by: usable_by(&v, formats)
+                usable_by: decisions
                     .iter()
-                    .map(|a| a.as_str().to_string())
+                    .filter(|d| d.state == "ready")
+                    .map(|d| d.app.clone())
                     .collect(),
                 placed_in,
+                decisions,
                 files: v.files.len() as u64,
                 bytes: v.bytes,
                 stored_bytes: v
@@ -364,7 +383,12 @@ pub fn presence(db: &Db) -> Result<BTreeMap<String, Vec<String>>> {
 
 /// Everything about one repository. `None` when the database does not
 /// know it.
-pub fn model(db: &Db, store: &Store, repo: &str) -> Result<Option<ModelDetail>> {
+pub fn model(
+    db: &Db,
+    store: &Store,
+    repo: &str,
+    installed: &Installed,
+) -> Result<Option<ModelDetail>> {
     let Some(row) = repo_rows(db, Some(repo))?.into_iter().next() else {
         return Ok(None);
     };
@@ -474,6 +498,7 @@ pub fn model(db: &Db, store: &Store, repo: &str) -> Result<Option<ModelDetail>> 
         &name,
         &newest.unwrap_or_default(),
         &model.meta.formats,
+        installed,
     )?;
 
     Ok(Some(ModelDetail {

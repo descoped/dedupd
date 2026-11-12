@@ -270,30 +270,12 @@ private struct AppRow: View {
 
     private var detail: String {
         guard let presence else {
-            if variants.contains(where: { $0.usableApps.contains(app) }) || variants.isEmpty {
-                return "Does not have it"
-            }
-            return unusable
+            return variants.note(for: app)
         }
         let shared = presence.sharedBytes >= presence.bytes
             ? "shared with the store"
             : "\(ByteFormat.string(presence.bytes - presence.sharedBytes)) not shared yet"
         return "\(ByteFormat.files(presence.files)), \(ByteFormat.string(presence.bytes)), \(shared)"
-    }
-}
-
-extension AppRow {
-    /// Why the app cannot be given this model as a clone of the stored copy.
-    fileprivate var unusable: String {
-        guard app == .ollama else {
-            return "Cannot use this format"
-        }
-        if variants.contains(where: { $0.kind == "gguf" }) {
-            return "Cannot use a GGUF that is split into parts"
-        }
-        // Ollama runs MLX models, but only from files of its own: an import
-        // splits the weights into one file per tensor, so nothing is shared.
-        return "Cannot share this copy: Ollama keeps such models in files of its own"
     }
 }
 

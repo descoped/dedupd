@@ -80,7 +80,8 @@ extension FixtureData {
                     bytes: bytes,
                     storedBytes: here ? bytes : 0,
                     usableBy: ["bionic", "ollama", "hf"],
-                    placedIn: here ? local?.appNames ?? [] : []
+                    placedIn: here ? local?.appNames ?? [] : [],
+                    decisions: decisions(usableBy: ["bionic", "ollama", "hf"])
                 )
             }
             files = quants.map { quant, bytes in
@@ -94,6 +95,7 @@ extension FixtureData {
             ]
         } else {
             let bytes: UInt64 = local?.storedBytes ?? 5_420_000_000
+            let mlx = meta.formats.contains("mlx")
             variants = [
                 Variant(
                     kind: "files",
@@ -102,8 +104,9 @@ extension FixtureData {
                     files: 8,
                     bytes: bytes,
                     storedBytes: local == nil ? 0 : bytes,
-                    usableBy: meta.formats.contains("mlx") ? ["bionic", "hf"] : ["hf"],
-                    placedIn: local?.appNames ?? []
+                    usableBy: mlx ? ["bionic", "hf"] : ["hf"],
+                    placedIn: local?.appNames ?? [],
+                    decisions: decisions(usableBy: mlx ? ["bionic", "hf"] : ["hf"], mlx: mlx)
                 ),
             ]
             files = [

@@ -13,6 +13,7 @@ use dedupd_core::db::PROVIDER_HF;
 use dedupd_core::fetch::encode_path;
 use dedupd_core::hub::{HubError, ModelMeta, TreeEntry, next_link};
 use dedupd_core::library;
+use dedupd_core::profile::Installed;
 use serde_json::{Value, json as j};
 use std::collections::BTreeMap;
 use std::sync::Arc;
@@ -289,8 +290,10 @@ async fn model(server: &Arc<Server>, repo: &str) -> Response {
     };
     let local = {
         let db = engine.db();
-        let variants = library::local_variants(&db, &engine.store, repo, &files, &meta.formats);
-        let detail = library::model(&db, &engine.store, repo);
+        let installed = Installed::detect(&engine.dirs);
+        let variants =
+            library::local_variants(&db, &engine.store, repo, &files, &meta.formats, &installed);
+        let detail = library::model(&db, &engine.store, repo, &installed);
         variants.and_then(|v| Ok((v, detail?)))
     };
     let (variants, detail) = match local {

@@ -4,9 +4,10 @@
 use crate::db::{self, Db, PROVIDER_HF};
 use crate::fetch::{Expect, Fetcher, Progress, Unavailable, Unwatched, Wait, Watch};
 use crate::governor::Governor;
-use crate::hub::{HubClient, Snapshot, TreeEntry};
+use crate::hub::{HubClient, ModelMeta, Snapshot, TreeEntry};
 use crate::ollama;
 use crate::place::{self, App, AppDirs, Dest, Item, Placed};
+use crate::profile::{self, Installed, Traits};
 use crate::select::{self, Selection};
 use crate::store::Store;
 use anyhow::{Context, Result, anyhow, bail};
@@ -409,13 +410,14 @@ async fn place_into_ollama(
     snap: &Snapshot,
     entries: &[TreeEntry],
 ) -> Result<Result<Placed, String>> {
+    // The app's profile says whether this selection can go in, and why not.
     let weights = select::weights(entries);
-    if weights.len() != 1 {
-        return Ok(Err(if weights.is_empty() {
-            "not placed into Ollama: it only runs GGUF files from Hugging Face".into()
-        } else {
-            "not placed into Ollama: it cannot use a GGUF that is split into parts".into()
-        }));
+    let info: serde_json::Value = serde_json::from_str(&snap.info_json).unwrap_or_default();
+    let traits = Traits::of_files(weights.len(), &ModelMeta::from_info(&info).formats);
+    let installed = Installed::detect(&engine.dirs);
+    let decision = profile::profile(App::Ollama).decide(&traits, installed.version(App::Ollama));
+    if decision.state != "ready" {
+        return Ok(Err(format!("not placed into Ollama: {}", decision.reason)));
     }
     let tag = req
         .selection

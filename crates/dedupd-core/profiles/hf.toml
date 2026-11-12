@@ -1,0 +1,18 @@
+# How dedupd can put a model into the Hugging Face cache, which
+# huggingface_hub, MLX tools and llama.cpp read. Its version is the layout
+# of the cache folder, which the cache itself notes in version.txt.
+
+app = "hf"
+name = "The Hugging Face cache"
+otherwise = "The Hugging Face cache takes any repository"
+
+[detect]
+file = "version.txt"
+
+[[method]]
+id = "clone"
+built = true
+cost = "none"
+formats = ["gguf", "mlx", "other"]
+says = "Shares the stored files"
+tested = ["1"]

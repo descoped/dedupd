@@ -53,6 +53,9 @@ pub struct AppDirs {
     pub bionic: PathBuf,
     pub ollama: PathBuf,
     pub hf_cache: PathBuf,
+    /// Where the apps themselves are installed; their versions are read
+    /// from there.
+    pub apps: PathBuf,
 }
 
 impl AppDirs {
@@ -81,6 +84,7 @@ impl AppDirs {
                 .or_else(|| env("HF_HUB_CACHE"))
                 .or_else(|| env("HF_HOME").map(|h| h.join("hub")))
                 .unwrap_or_else(|| home.join(".cache/huggingface/hub")),
+            apps: PathBuf::from("/Applications"),
         })
     }
 
@@ -90,6 +94,16 @@ impl AppDirs {
             bionic: root.join("lmstudio/models"),
             ollama: root.join("ollama/models"),
             hf_cache: root.join("huggingface/hub"),
+            apps: root.join("Applications"),
+        }
+    }
+
+    /// The folder an app keeps its models in.
+    pub fn models(&self, app: App) -> &Path {
+        match app {
+            App::Bionic => &self.bionic,
+            App::Ollama => &self.ollama,
+            App::Hf => &self.hf_cache,
         }
     }
 }
