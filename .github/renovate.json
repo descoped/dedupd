@@ -1,0 +1,40 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "description": "Manual: Renovate lists what could be updated on the Dependency Dashboard issue and opens no branch and no pull request until a box is ticked there. Nothing is merged automatically. The updates are taken in one round a week, by hand",
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "dependencyDashboardApproval": true,
+  "semanticCommits": "disabled",
+  "labels": ["dependencies"],
+  "prHourlyLimit": 0,
+  "vulnerabilityAlerts": {
+    "description": "A fix for a GitHub security alert waits for a tick on the dashboard like every other update; without this line Renovate opens such a pull request at once, whatever the setting above says",
+    "dependencyDashboardApproval": true,
+    "labels": ["dependencies", "security"]
+  },
+  "packageRules": [
+    {
+      "description": "One pull request, and so one run of the macOS CI, for every minor and patch update of a dependency at 1.0 or later",
+      "matchPackageNames": ["!uniffi"],
+      "matchUpdateTypes": ["minor", "patch"],
+      "matchCurrentVersion": "!/^v?0\\./",
+      "groupName": "all non-major dependencies",
+      "groupSlug": "all-minor-patch"
+    },
+    {
+      "description": "Below 1.0 only patch updates join that pull request. Cargo treats 0.x to 0.y as a breaking change, so each of those gets a pull request of its own, as a major update does",
+      "matchPackageNames": ["!uniffi"],
+      "matchUpdateTypes": ["patch"],
+      "matchCurrentVersion": "/^v?0\\./",
+      "groupName": "all non-major dependencies",
+      "groupSlug": "all-minor-patch"
+    },
+    {
+      "description": "uniffi generates the Swift bindings committed under macos-app/DedupdClient/Generated, and CI does not build the app. Every uniffi update therefore gets a pull request of its own, with a note on what to run before it is merged",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["uniffi"],
+      "prBodyNotes": [
+        "Before merging: run `just app-bindings` and `just app-check` on this branch, and commit what changed under `macos-app/DedupdClient/Generated/`."
+      ]
+    }
+  ]
+}

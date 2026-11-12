@@ -1,0 +1,63 @@
+name: CI
+
+# The Rust gate, `just check`: formatting, clippy with warnings as errors, and
+# every test of the workspace.
+#
+# Only the Rust side is checked here. The macOS app (`just app-check`) is
+# checked on the developer's Mac: its debug build is signed with an Apple
+# Development certificate, which a hosted runner does not have, and the project
+# is kept on an Xcode that GitHub offers only on a preview image.
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '.claude/**'
+      - 'macos-app/**'
+      - 'scripts/**'
+      - 'spikes/**'
+      - '.github/renovate.json'
+      - '.gitignore'
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - '.claude/**'
+      - 'macos-app/**'
+      - 'scripts/**'
+      - 'spikes/**'
+      - '.github/renovate.json'
+      - '.gitignore'
+  # To run the gate on any branch by hand.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request or branch ends the run it replaces.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust gate
+    # macOS, because the tests create real APFS clones (clonefile). macOS 26 or
+    # later, because .cargo/config.toml builds everything for macOS 26 and a
+    # binary built that way does not start on an older system. Apple silicon,
+    # like the Macs dedupd is made for.
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      # The repository has no rust-toolchain.toml, so this is the stable
+      # toolchain of the runner image, with clippy and rustfmt.
+      - run: rustup show active-toolchain && cargo clippy --version && cargo fmt --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3  # v4.0.0
+      - run: just check
