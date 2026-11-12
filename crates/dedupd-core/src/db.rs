@@ -29,6 +29,11 @@ pub fn lock(db: &Mutex<Db>) -> MutexGuard<'_, Db> {
     db.lock().expect("database lock")
 }
 
+/// The schema's number, kept in the database as `user_version`. There are
+/// no migrations: a database with another number was made by another build
+/// and is refused. Change the number whenever the schema changes.
+pub const SCHEMA_VERSION: i64 = 1;
+
 const SCHEMA: &str = r#"
 CREATE TABLE blobs (
     sha256    TEXT PRIMARY KEY,
@@ -40,14 +45,22 @@ CREATE TABLE blobs (
 CREATE INDEX blobs_git_oid ON blobs(git_oid);
 
 CREATE TABLE repos (
-    id        INTEGER PRIMARY KEY,
-    provider  TEXT NOT NULL,
-    name      TEXT NOT NULL,
+    id           INTEGER PRIMARY KEY,
+    provider     TEXT NOT NULL,
+    name         TEXT NOT NULL,
+    -- What the provider said when it was last asked about the repository:
+    -- 'ok', or 'gone' when it no longer has it or will not show it.
+    upstream     TEXT,
+    checked_at   INTEGER,
+    -- When the owner moved the model out of warm storage: it is in no app,
+    -- and its files are on the archive disk only. NULL for a model that is
+    -- not archived.
+    archived_at  INTEGER,
     UNIQUE (provider, name)
 );
 
--- One archived revision: the provider's own answers, kept verbatim so they
--- can be served again when the provider cannot be asked.
+-- One kept revision: the provider's own answers, verbatim, so they can be
+-- served again when the provider cannot be asked.
 CREATE TABLE revisions (
     id          INTEGER PRIMARY KEY,
     repo_id     INTEGER NOT NULL REFERENCES repos(id),
@@ -75,7 +88,8 @@ CREATE TABLE refs (
     PRIMARY KEY (repo_id, name)
 );
 
--- A file in an app's folder that holds the same bytes as a stored blob.
+-- A file in an app's folder that holds the bytes of a stored blob, or was
+-- made from them.
 CREATE TABLE placements (
     id               INTEGER PRIMARY KEY,
     app              TEXT NOT NULL,
@@ -88,15 +102,19 @@ CREATE TABLE placements (
     origin           TEXT NOT NULL,
     verify_state     TEXT NOT NULL,
     verified_commit  TEXT,
-    recorded_at      INTEGER NOT NULL
+    recorded_at      INTEGER NOT NULL,
+    -- 1 when the app file shares its disk blocks with the store file (one
+    -- was cloned from the other); 0 when it is a separate copy of the same
+    -- bytes.
+    shared           INTEGER NOT NULL DEFAULT 1,
+    -- Set for an app file that is not the stored file's bytes but made from
+    -- them: a clone with a part rewritten, so a sha256 of its own. `sha256`
+    -- still names the stored file it was made from and shares its disk
+    -- blocks with; `method` says how it was made, as the app's profile
+    -- names it.
+    method           TEXT,
+    derived_sha256   TEXT
 );
-"#;
-
-/// Added in schema version 2.
-const SCHEMA_V2: &str = r#"
--- 1 when the app file shares its disk blocks with the store file (one was
--- cloned from the other); 0 when it is a separate copy of the same bytes.
-ALTER TABLE placements ADD COLUMN shared INTEGER NOT NULL DEFAULT 1;
 
 -- The manifest the provider's Ollama registry generated for a tag. The answer
 -- depends on who asks, so the asking User-Agent is part of the key.
@@ -110,10 +128,7 @@ CREATE TABLE ollama_manifests (
     fetched_at  INTEGER NOT NULL,
     UNIQUE (repo_id, tag, user_agent)
 );
-"#;
 
-/// Added in schema version 3.
-const SCHEMA_V3: &str = r#"
 -- The daemon's download queue. A job is kept whole as JSON; `state` is
 -- repeated beside it so jobs can be picked without reading every one. A
 -- number is never used twice, so a removed job cannot be mistaken for a
@@ -124,29 +139,6 @@ CREATE TABLE downloads (
     job_json    TEXT NOT NULL,
     updated_at  INTEGER NOT NULL
 );
-
--- What the provider said when it was last asked about the repository:
--- 'ok', or 'gone' when it no longer has it or will not show it.
-ALTER TABLE repos ADD COLUMN upstream TEXT;
-ALTER TABLE repos ADD COLUMN checked_at INTEGER;
-"#;
-
-/// Added in schema version 4.
-const SCHEMA_V4: &str = r#"
--- An app file that is not the stored file's bytes but made from them: a
--- clone with a part rewritten, so a sha256 of its own. `sha256` still names
--- the stored file it was made from and shares its disk blocks with;
--- `method` says how it was made, as the app's profile names it.
-ALTER TABLE placements ADD COLUMN method TEXT;
-ALTER TABLE placements ADD COLUMN derived_sha256 TEXT;
-"#;
-
-/// Added in schema version 5.
-const SCHEMA_V5: &str = r#"
--- When the owner moved the model out of warm storage: it is in no app, and
--- its files are on the archive disk only. NULL for a model that is not
--- archived.
-ALTER TABLE repos ADD COLUMN archived_at INTEGER;
 "#;
 
 pub struct Db {
@@ -245,45 +237,35 @@ impl Db {
             std::fs::create_dir_all(parent)?;
         }
         let conn = Connection::open(path).with_context(|| format!("opening {}", path.display()))?;
-        Self::init(conn)
+        Self::init(conn).with_context(|| format!("opening {}", path.display()))
     }
 
     pub fn open_in_memory() -> Result<Self> {
         Self::init(Connection::open_in_memory()?)
     }
 
+    /// Create the schema in an empty database. One that holds another
+    /// schema is refused: there are no migrations, so it has to be removed.
     fn init(conn: Connection) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(30))?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 5 {
+        let tables: i64 = conn.query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+            [],
+            |r| r.get(0),
+        )?;
+        if version == 0 && tables == 0 {
+            conn.execute_batch(&format!(
+                "BEGIN; {SCHEMA} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
+            ))?;
+        } else if version != SCHEMA_VERSION {
             anyhow::bail!(
-                "database schema version {version} is newer than this build of dedupd understands"
+                "the database was made by another build of dedupd (schema {version}, this build uses \
+                 {SCHEMA_VERSION}). dedupd does not migrate a database: remove it and its -wal and \
+                 -shm files, then let dedupd adopt the models again"
             );
-        }
-        if version < 1 {
-            conn.execute_batch(&format!("BEGIN; {SCHEMA} PRAGMA user_version = 1; COMMIT;"))?;
-        }
-        if version < 2 {
-            conn.execute_batch(&format!(
-                "BEGIN; {SCHEMA_V2} PRAGMA user_version = 2; COMMIT;"
-            ))?;
-        }
-        if version < 3 {
-            conn.execute_batch(&format!(
-                "BEGIN; {SCHEMA_V3} PRAGMA user_version = 3; COMMIT;"
-            ))?;
-        }
-        if version < 4 {
-            conn.execute_batch(&format!(
-                "BEGIN; {SCHEMA_V4} PRAGMA user_version = 4; COMMIT;"
-            ))?;
-        }
-        if version < 5 {
-            conn.execute_batch(&format!(
-                "BEGIN; {SCHEMA_V5} PRAGMA user_version = 5; COMMIT;"
-            ))?;
         }
         Ok(Self { conn })
     }
@@ -837,6 +819,42 @@ mod tests {
             .query_row("SELECT count(*) FROM repos", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1);
+    }
+
+    #[test]
+    fn a_database_of_another_build_is_refused_not_migrated() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("d.sqlite");
+        drop(Db::open(&path).unwrap());
+        // The one schema holds everything; nothing is added afterwards.
+        let conn = Connection::open(&path).unwrap();
+        let version: i64 = conn
+            .query_row("PRAGMA user_version", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(version, SCHEMA_VERSION);
+        for column in ["shared", "method", "derived_sha256"] {
+            conn.prepare(&format!("SELECT {column} FROM placements"))
+                .unwrap();
+        }
+        conn.prepare("SELECT upstream, checked_at, archived_at FROM repos")
+            .unwrap();
+        conn.prepare("SELECT job_json FROM downloads").unwrap();
+        conn.prepare("SELECT body FROM ollama_manifests").unwrap();
+
+        for other in [SCHEMA_VERSION + 1, SCHEMA_VERSION + 4] {
+            conn.pragma_update(None, "user_version", other).unwrap();
+            let refused = format!("{:#}", Db::open(&path).err().unwrap());
+            assert!(refused.contains("does not migrate"), "{refused}");
+            assert!(refused.contains("d.sqlite"), "{refused}");
+        }
+        // Tables without a version are someone else's file, not an empty one.
+        conn.pragma_update(None, "user_version", 0).unwrap();
+        assert!(Db::open(&path).is_err());
+        // Nothing was changed by the refusals.
+        conn.pragma_update(None, "user_version", SCHEMA_VERSION)
+            .unwrap();
+        drop(conn);
+        Db::open(&path).unwrap();
     }
 
     #[test]
