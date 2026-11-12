@@ -99,18 +99,6 @@ extension LibraryModel: @retroactive Identifiable {
     var fetched: Date {
         fetchedAt.map(TimeFormat.date(epoch:)) ?? .distantPast
     }
-
-    /// "GGUF · 135M · apache-2.0", with the parts that are known.
-    var summary: String {
-        var parts = meta.formats.map(FormatBadge.title(for:))
-        if let parameters = meta.parameters {
-            parts.append(ByteFormat.parameters(parameters))
-        }
-        if let license = meta.license {
-            parts.append(license)
-        }
-        return parts.joined(separator: " · ")
-    }
 }
 
 extension SearchHit: @retroactive Identifiable {

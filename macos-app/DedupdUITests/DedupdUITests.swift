@@ -101,7 +101,7 @@ final class DedupdUITests: XCTestCase {
         element("row-density", in: window).click()
         XCTAssertEqual(
             element("model-bartowski/SmolLM2-135M-Instruct-GGUF", in: window).label,
-            "bartowski/SmolLM2-135M-Instruct-GGUF, GGUF · 135M · apache-2.0",
+            "bartowski/SmolLM2-135M-Instruct-GGUF, apache-2.0",
             "larger rows add a second line"
         )
         screenshot(window, "03-library-larger-rows")

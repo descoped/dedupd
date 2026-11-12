@@ -19,6 +19,9 @@ struct LibraryView: View {
             .toolbar {
                 ToolbarItemGroup {
                     filters
+                }
+                ToolbarSpacer(.fixed)
+                ToolbarItemGroup {
                     DensityToggle()
                     Button("Scan", systemImage: "arrow.triangle.2.circlepath") {
                         Task { await daemon.scan() }
@@ -30,7 +33,7 @@ struct LibraryView: View {
             }
             .inspector(isPresented: $showsInspector) {
                 LibraryInspector()
-                    .inspectorColumnWidth(min: 320, ideal: 400, max: 560)
+                    .inspectorColumnWidth(min: 300, ideal: 350, max: 560)
             }
             .sheet(isPresented: showsRemoval) {
                 if let plan = library.removal {
@@ -100,20 +103,20 @@ struct LibraryView: View {
 
     @ViewBuilder private var filters: some View {
         @Bindable var library = library
-        Picker("Format", selection: $library.filterFormat) {
-            Text("All formats").tag("")
-            ForEach(library.formats, id: \.self) { format in
-                Text(FormatBadge.title(for: format)).tag(format)
-            }
-        }
+        FilterMenu(
+            title: "Format",
+            selection: $library.filterFormat,
+            options: [FilterOption(value: "", title: "All formats")]
+                + library.formats.map { FilterOption(value: $0, title: FormatBadge.title(for: $0)) }
+        )
         .help("Show only models of one format")
         .accessibilityIdentifier("library-format")
-        Picker("App", selection: $library.filterApp) {
-            Text("All apps").tag("")
-            ForEach(ModelApp.allCases) { app in
-                Text(app.title).tag(app.rawValue)
-            }
-        }
+        FilterMenu(
+            title: "App",
+            selection: $library.filterApp,
+            options: [FilterOption(value: "", title: "All apps")]
+                + ModelApp.allCases.map { FilterOption(value: $0.rawValue, title: $0.title) }
+        )
         .help("Show only the models one app has")
     }
 
@@ -121,40 +124,50 @@ struct LibraryView: View {
         @Bindable var library = library
         let comfortable = settings.density == .comfortable
         return Table(library.visible, selection: $library.selection, sortOrder: $library.sortOrder) {
+            // The name takes whatever width is left. The other columns have
+            // one width each, as wide as what they show, so the whole table
+            // fits beside the sidebar and the inspector without scrolling
+            // sideways (the window's smallest width is set to match).
             TableColumn("Model", value: \.repo) { model in
                 ModelNameCell(
                     name: model.name,
                     organisation: model.organisation,
-                    detail: model.summary,
+                    detail: model.meta.license ?? "",
                     comfortable: comfortable
                 )
                 .accessibilityIdentifier("model-\(model.repo)")
             }
-            .width(min: 180, ideal: 320)
+            .width(min: 140, ideal: 360)
             TableColumn("Format") { model in
                 PrimaryFormat(meta: model.meta)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
-            .width(min: 84, ideal: 90, max: 110)
+            .width(TableWidth.format)
+            .alignment(.center)
             TableColumn("Size", value: \.bytes) { model in
                 Text(ByteFormat.string(model.bytes))
                     .monospacedDigit()
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
-            .width(min: 76, ideal: 84, max: 110)
+            .width(TableWidth.size)
+            .alignment(.trailing)
             TableColumn("Apps") { model in
                 AppBadges(apps: model.appNames, none: model.isArchived ? "Archived" : "Store only")
             }
-            .width(min: 128, ideal: 136, max: 200)
+            .width(TableWidth.apps)
             TableColumn("State") { model in
                 // The symbol alone; the words are in its tooltip and in the
                 // inspector, so the column stays narrow beside it.
                 HealthLabel(health: model.health, showsText: false)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
-            .width(min: 40, ideal: 44, max: 60)
+            .width(TableWidth.state)
+            .alignment(.center)
             TableColumn("Added", value: \.fetched) { model in
                 Text(model.fetchedAt.map { TimeFormat.relative(TimeFormat.date(epoch: $0)) } ?? "—")
                     .foregroundStyle(.secondary)
             }
-            .width(min: 80, ideal: 100, max: 140)
+            .width(TableWidth.time)
         }
         .contextMenu(forSelectionType: LibraryModel.ID.self) { ids in
             if let model = library.models.first(where: { ids.contains($0.id) }) {
@@ -168,8 +181,24 @@ struct LibraryView: View {
     }
 }
 
-/// A model's name in a table. Compact rows show the name alone; larger rows
-/// put who made it and what it is on a second line.
+/// The widths of the columns that hold one short thing, the same in every
+/// table of models. Each is as wide as the longest thing it shows.
+enum TableWidth {
+    /// A format tag; "Safetensors" is the longest.
+    static let format: CGFloat = 68
+    /// "156.38 GB".
+    static let size: CGFloat = 70
+    /// The short names of up to three apps.
+    static let apps: CGFloat = 124
+    /// One symbol under the word "State".
+    static let state: CGFloat = 40
+    /// "45 minutes ago".
+    static let time: CGFloat = 100
+}
+
+/// A model's name in a table. Compact rows show `organisation/name` on one
+/// line; larger rows put the name first and who made it, with the licence,
+/// on a second line.
 struct ModelNameCell: View {
     let name: String
     let organisation: String
@@ -177,21 +206,32 @@ struct ModelNameCell: View {
     let comfortable: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        Group {
             if comfortable {
-                Text(name)
-                    .fontWeight(.medium)
-                Text([organisation, detail].filter { !$0.isEmpty }.joined(separator: " · "))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .truncationMode(.tail)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name)
+                        .fontWeight(.medium)
+                        .truncationMode(.middle)
+                    Text([organisation, detail].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .truncationMode(.tail)
+                }
+                .padding(.vertical, 4)
             } else {
-                Text("\(Text(organisation + "/").foregroundStyle(.secondary))\(name)")
+                // `organisation/name` when the column has room for all of
+                // it; otherwise the model's own name, which is the part that
+                // tells two rows apart. Never half an organisation.
+                ViewThatFits(in: .horizontal) {
+                    Text("\(Text(organisation + "/").foregroundStyle(.secondary))\(name)")
+                        .fixedSize()
+                    Text(name)
+                        .truncationMode(.middle)
+                }
+                .help("\(organisation)/\(name)")
             }
         }
         .lineLimit(1)
-        .truncationMode(.middle)
-        .padding(.vertical, comfortable ? 4 : 0)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(comfortable && !detail.isEmpty ? "\(organisation)/\(name), \(detail)" : "\(organisation)/\(name)")
     }

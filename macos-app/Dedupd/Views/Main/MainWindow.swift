@@ -21,7 +21,7 @@ struct MainWindow: View {
             case .daemon: DaemonView()
             }
         }
-        .frame(minWidth: 900, minHeight: 560)
+        .frame(minWidth: 1150, minHeight: 560)
         .alert("That did not work", isPresented: showsProblem) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -137,6 +137,39 @@ struct DensityToggle: View {
         Toggle(RowDensity.comfortable.title, systemImage: RowDensity.comfortable.symbol, isOn: isLarger)
             .help("Larger rows add a second line with who made the model and what it is")
             .accessibilityIdentifier("row-density")
+    }
+}
+
+/// One thing a toolbar selector can be set to.
+struct FilterOption<Value: Hashable>: Identifiable {
+    let value: Value
+    let title: String
+
+    var id: Value { value }
+}
+
+/// A selector in the toolbar that shows what it is set to and is as wide as
+/// that, so two of them beside each other look alike.
+struct FilterMenu<Value: Hashable>: View {
+    /// What it chooses, for the tooltip and for VoiceOver.
+    let title: String
+    @Binding var selection: Value
+    let options: [FilterOption<Value>]
+
+    var body: some View {
+        Menu {
+            Picker(title, selection: $selection) {
+                ForEach(options) { option in
+                    Text(option.title).tag(option.value)
+                }
+            }
+            .pickerStyle(.inline)
+            .labelsHidden()
+        } label: {
+            Text(options.first { $0.value == selection }?.title ?? title)
+        }
+        .menuIndicator(.visible)
+        .accessibilityLabel(title)
     }
 }
 

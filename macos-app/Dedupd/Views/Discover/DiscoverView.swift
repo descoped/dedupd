@@ -28,6 +28,9 @@ struct DiscoverView: View {
             .toolbar {
                 ToolbarItemGroup {
                     filters
+                }
+                ToolbarSpacer(.fixed)
+                ToolbarItemGroup {
                     DensityToggle()
                     InspectorToggle(isShown: $showsInspector)
                 }
@@ -67,24 +70,26 @@ struct DiscoverView: View {
 
     @ViewBuilder private var filters: some View {
         @Bindable var discover = discover
-        Picker("Format", selection: $discover.format) {
-            ForEach(DiscoverStore.formats, id: \.self) { format in
-                Text(format.isEmpty ? "Any format" : FormatBadge.title(for: format)).tag(format)
+        FilterMenu(
+            title: "Format",
+            selection: $discover.format,
+            options: DiscoverStore.formats.map {
+                FilterOption(value: $0, title: $0.isEmpty ? "Any format" : FormatBadge.title(for: $0))
             }
-        }
+        )
         .help("Show only models that come in this format")
         .accessibilityIdentifier("discover-format")
-        Picker("Task", selection: $discover.task) {
-            ForEach(DiscoverStore.tasks, id: \.self) { task in
-                Text(task.isEmpty ? "Any task" : task).tag(task)
-            }
-        }
+        FilterMenu(
+            title: "Task",
+            selection: $discover.task,
+            options: DiscoverStore.tasks.map { FilterOption(value: $0, title: $0.isEmpty ? "Any task" : $0) }
+        )
         .help("Show only models made for this task")
-        Picker("Order", selection: $discover.sort) {
-            ForEach(SearchSort.allCases) { sort in
-                Text(sort.title).tag(sort)
-            }
-        }
+        FilterMenu(
+            title: "Order",
+            selection: $discover.sort,
+            options: SearchSort.allCases.map { FilterOption(value: $0, title: $0.title) }
+        )
         .help("The order Hugging Face lists the models in")
     }
 
@@ -149,23 +154,31 @@ struct DiscoverView: View {
             .width(min: 112, ideal: 130, max: 220)
             TableColumn("Format") { hit in
                 PrimaryFormat(meta: hit.meta)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
-            .width(min: 84, ideal: 90, max: 110)
+            .width(TableWidth.format)
+            .alignment(.center)
             TableColumn("Params") { hit in
                 Text(hit.meta.parameters.map(ByteFormat.parameters) ?? "—")
                     .monospacedDigit()
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .width(min: 50, ideal: 64, max: 100)
+            .alignment(.trailing)
             TableColumn("Downloads") { hit in
                 Text(hit.meta.downloads.map(ByteFormat.count) ?? "—")
                     .monospacedDigit()
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .width(min: 80, ideal: 88, max: 110)
+            .alignment(.trailing)
             TableColumn("Likes") { hit in
                 Text(hit.meta.likes.map(ByteFormat.count) ?? "—")
                     .monospacedDigit()
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .width(min: 40, ideal: 50, max: 80)
+            .alignment(.trailing)
             TableColumn("Updated") { hit in
                 Text(hit.meta.modified.map { TimeFormat.relative($0) } ?? "—")
                     .foregroundStyle(.secondary)

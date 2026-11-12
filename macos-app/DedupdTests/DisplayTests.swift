@@ -164,12 +164,11 @@ struct DisplayTests {
         #expect(changed.health == .unconfirmed)
     }
 
-    @Test("A model's name, maker and one-line description")
+    @Test("A model's name and maker")
     func modelWords() {
         let model = FixtureData.models[0]
         #expect(model.name == "SmolLM2-135M-Instruct-GGUF")
         #expect(model.organisation == "bartowski")
-        #expect(model.summary == "GGUF · 135M · apache-2.0")
         #expect(model.shortCommit == "09816acd5d99")
         #expect(model.meta.plainTags == ["conversational"])
     }

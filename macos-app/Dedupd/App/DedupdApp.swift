@@ -24,7 +24,7 @@ struct DedupdApp: App {
             MainWindow()
                 .appEnvironment(environment)
         }
-        .defaultSize(width: 1280, height: 800)
+        .defaultSize(width: 1440, height: 860)
         .defaultLaunchBehavior(environment.opensMainWindowAtLaunch ? .presented : .suppressed)
         .restorationBehavior(.disabled)
         .commands {
