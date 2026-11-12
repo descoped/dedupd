@@ -51,8 +51,15 @@ dedupd does not substitute symbolic links, hard links or copies when cloning is 
 ## Install
 
 Download `dedupd-<version>.dmg` from the [releases page](https://github.com/descoped/dedupd/releases), drag Dedupd to
-Applications and open it. It runs in the menu bar. Install the background service on its Daemon screen; the app
-runs the `dedupd` command it carries, which copies itself to `~/.dedupd/bin` and registers a launchd agent.
+Applications and open it. It runs in the menu bar. Install the background service with the `dedupd` command the
+app carries, which copies itself to `~/.dedupd/bin` and registers a launchd agent:
+
+```sh
+/Applications/Dedupd.app/Contents/Helpers/dedupd install
+```
+
+The Install button on the app's Daemon screen runs the same command; it has been tested only against a simulated
+agent so far.
 
 ## Build and try
 
