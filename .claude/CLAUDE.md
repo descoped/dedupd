@@ -86,9 +86,19 @@ Everything that touches the archive must tolerate the disk being detached.
 
 `dedupd` is an always-on local daemon for one Mac that lets Ollama, Bionic (LM Studio engine), MLX tools, llama.cpp and any `huggingface_hub` client share one on-disk copy of each Hugging Face model, and keep working when Hugging Face is down or a model is removed upstream.
 
-It is an archive, not a cache, and it is never in the path that loads a model into memory. Its job is to put files, manifests and cache entries where each app looks for them.
+It is a smart proxy and a shared store for models: it sits between the apps and the model sources, so a model is downloaded once and kept, and every file is stored once and shared with each app that can use it. It keeps what it has downloaded (it is not a cache), and it is never in the path that loads a model into memory. Its job is to put files, manifests and cache entries where each app looks for them.
 
-A network proxy alone saves no disk, because every app writes its own copy of what it downloads. The saving comes from the store plus clone placement.
+The disk saving comes from the store and from placement, because an app writes whatever it downloads itself: dedupd places a model before the app asks, or swaps the app's copy for a clone right after the download.
+
+### Direction (decided 2026-11-12)
+
+The aim is the least disk space for every pair of app and model. Do not build narrow: more apps, more model sources (ModelScope next) and more platforms (Ubuntu with NVIDIA GPUs) are expected, and each is added as data or as a plug-in, one at a time, with real tests. The plan document's "Direction and roadmap" section has the detail. What was decided:
+
+- Different editions of a model (GGUF, MLX, AWQ and so on) do not share disk; the catalogue groups them as one family.
+- dedupd does not convert between formats. It downloads the edition an app needs.
+- A file system that can clone files is a prerequisite (APFS; on Linux Btrfs and XFS with reflink). There is no fallback to hard links, symlinks or copies, so ext4 is not supported.
+- The words: activate and deactivate (place into an app, take out of it), backup (the copy on the archive disk, made at download), archive (a deliberate act for one model: deactivate it everywhere and move it out of warm storage), restore.
+- The roadmap, in order: app profiles; the words and archive/restore per model; the catalogue of families, editions and placements, with everything fetched at download; ModelScope; Linux (command line only); more apps.
 
 ## Architecture
 
@@ -193,4 +203,4 @@ Use a scratch `HF_HOME` and a tiny model (for example `bartowski/SmolLM2-135M-In
 
 6. Done, except distribution. The download queue and rate governor in the daemon, the wider control API with its event stream, and the macOS app: Library, Discover, Downloads, Storage and Daemon screens, the menu bar panel, notifications, and install and uninstall of the launch agent through the bundled command. Tried end to end against a scratch daemon with `just app-live`. The release recipe is written and its signing and packaging have been run. Not done: a first notarised release (the notary credential is not stored yet), updates for the app, Xcode Cloud; installing the agent from the app has only been run against the canned agent, not for real.
 
-Next: the first notarised release of the app; ModelScope as a second provider (the `repos.provider` column exists for it).
+Next: step 1 of the roadmap above, app profiles (the plan document's "Proposal: app profiles"). Waiting on the owner: the first notarised release of the app.
