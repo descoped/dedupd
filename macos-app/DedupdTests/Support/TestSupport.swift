@@ -1,14 +1,50 @@
 import DedupdClient
 import Foundation
+import Synchronization
 
 @testable import Dedupd
+
+/// The preference suites the tests make. Their files are removed when the
+/// test process ends; the few the system writes after that are removed at
+/// the start of the next run, so they never pile up in ~/Library/Preferences.
+private enum TestSuites {
+    static let prefix = "io.descoped.dedupd.tests."
+    private static let names = Mutex<[String]>([])
+    private static let folder = FileManager.default.homeDirectoryForCurrentUser.appending(path: "Library/Preferences")
+
+    static func add(_ name: String) {
+        names.withLock { names in
+            if names.isEmpty {
+                removeLeftovers()
+                atexit { TestSuites.removeOwn() }
+            }
+            names.append(name)
+        }
+    }
+
+    private static func removeLeftovers() {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        for file in files where file.hasPrefix(prefix) && file.hasSuffix(".plist") {
+            try? FileManager.default.removeItem(at: folder.appending(path: file))
+        }
+    }
+
+    private static func removeOwn() {
+        for name in names.withLock({ $0 }) {
+            // Have the system write what it holds first, so it is less
+            // likely to write the file again after it is removed.
+            UserDefaults(suiteName: name)?.synchronize()
+            try? FileManager.default.removeItem(at: folder.appending(path: "\(name).plist"))
+        }
+    }
+}
 
 /// Preferences that live only for one test.
 @MainActor
 func makeSettings(address: String = "127.0.0.1:8642") -> AppSettings {
-    let suite = "io.descoped.dedupd.tests.\(UUID().uuidString)"
+    let suite = TestSuites.prefix + UUID().uuidString
     let defaults = UserDefaults(suiteName: suite) ?? .standard
-    defaults.removePersistentDomain(forName: suite)
+    TestSuites.add(suite)
     return AppSettings(defaults: defaults, defaultAddress: address)
 }
 

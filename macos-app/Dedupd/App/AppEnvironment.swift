@@ -48,7 +48,10 @@ final class AppEnvironment {
             client = FixtureDaemonClient(scenario: scenario)
             control = FixtureAgent(installed: scenario != .notRunning)
         } else {
-            settings = AppSettings()
+            // The app that hosts the unit tests must not use up the owner's
+            // first launch, so it keeps preferences of its own too.
+            let hosted = options.isHostingUnitTests ? UserDefaults(suiteName: "io.descoped.dedupd.app.unittests") : nil
+            settings = AppSettings(defaults: hosted ?? .standard)
             client = LiveDaemonClient()
             control = BundledAgent(home: options.agentHome, label: options.agentLabel)
         }
