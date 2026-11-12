@@ -50,6 +50,9 @@ pub struct Model {
     pub checked_at: Option<i64>,
     /// The Ollama tags whose manifests are archived.
     pub ollama_tags: Vec<String>,
+    /// When the owner archived the model: it is in no app and its files are
+    /// on the archive disk only. `None` for a model that is not archived.
+    pub archived_at: Option<i64>,
 }
 
 struct RepoRow {
@@ -58,11 +61,12 @@ struct RepoRow {
     name: String,
     upstream: Option<String>,
     checked_at: Option<i64>,
+    archived_at: Option<i64>,
 }
 
 fn repo_rows(db: &Db, only: Option<&str>) -> Result<Vec<RepoRow>> {
     let mut stmt = db.conn().prepare(
-        "SELECT id, provider, name, upstream, checked_at FROM repos
+        "SELECT id, provider, name, upstream, checked_at, archived_at FROM repos
          WHERE ?1 IS NULL OR name = ?1 ORDER BY name COLLATE NOCASE, provider",
     )?;
     Ok(stmt
@@ -73,6 +77,7 @@ fn repo_rows(db: &Db, only: Option<&str>) -> Result<Vec<RepoRow>> {
                 name: r.get(2)?,
                 upstream: r.get(3)?,
                 checked_at: r.get(4)?,
+                archived_at: r.get(5)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?)
@@ -182,6 +187,7 @@ fn model_of(db: &Db, row: RepoRow) -> Result<Model> {
         upstream: row.upstream.unwrap_or_else(|| "unknown".into()),
         checked_at: row.checked_at,
         ollama_tags,
+        archived_at: row.archived_at,
     })
 }
 
@@ -609,6 +615,6 @@ pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
 pub fn repo_id(db: &Db, repo: &str) -> Result<(i64, String)> {
     match repo_rows(db, Some(repo))?.into_iter().next() {
         Some(row) => Ok((row.id, row.provider)),
-        None => bail!("{repo} is not in the archive"),
+        None => bail!("{repo} is not in the library"),
     }
 }

@@ -30,6 +30,15 @@ struct Fixture {
 }
 
 async fn fixture() -> Fixture {
+    fixture_with(false).await
+}
+
+/// The fixture with an archive folder on a disk that is attached.
+async fn fixture_with_archive() -> Fixture {
+    fixture_with(true).await
+}
+
+async fn fixture_with(archive: bool) -> Fixture {
     let weights: Vec<u8> = (0..300_000u32).map(|i| (i % 241) as u8).collect();
     let config = b"{\"a\":1}\n".to_vec();
     let ollama_config = b"{\"model_format\":\"gguf\"}".to_vec();
@@ -124,8 +133,20 @@ async fn fixture() -> Fixture {
 
     let dir = tempfile::tempdir().unwrap();
     let home = Home::new(dir.path().join("home"));
-    let engine = common::engine(&home, &upstream.uri(), &dir.path().join("apps"), None);
-    let server = Server::new(engine, Config::default(), home).unwrap();
+    let settings = Config {
+        archive: archive.then(|| dir.path().join("trunk/dedupd")),
+        ..Config::default()
+    };
+    if archive {
+        std::fs::create_dir_all(dir.path().join("trunk")).unwrap();
+    }
+    let engine = common::engine(
+        &home,
+        &upstream.uri(),
+        &dir.path().join("apps"),
+        settings.archive_home(),
+    );
+    let server = Server::new(engine, settings, home).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(dedupd_server::serve(
@@ -1054,6 +1075,124 @@ async fn the_client_reads_everything_the_daemon_sends() {
     subscription.cancel();
 }
 
+/// Wait until the archive or restore the daemon is doing has ended, and
+/// give what it says about it.
+async fn moved(fx: &Fixture) -> Value {
+    for _ in 0..500 {
+        let (_, state) = control(fx, "GET", "move", None).await;
+        if state["running"] == false {
+            return state;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the move never finished");
+}
+
+/// The owner archives a model from the app and restores it: the daemon does
+/// the work in the background and says how it went.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_model_is_archived_and_restored_through_the_daemon() {
+    use dedupd_client as client;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Seen(Mutex<Vec<client::DaemonEvent>>);
+    impl client::EventListener for Seen {
+        fn on_event(&self, event: client::DaemonEvent) {
+            self.0.lock().unwrap().push(event);
+        }
+        fn on_connection(&self, _connected: bool) {}
+    }
+
+    // Without an archive disk the daemon says so and starts nothing.
+    let plain = fixture().await;
+    download(&plain, json!({"model": REPO, "apps": ["bionic"]})).await;
+    let ask = json!({"repo": REPO});
+    let (code, refused) = control(&plain, "POST", "archive", Some(ask.clone())).await;
+    assert_eq!(code, 409);
+    assert!(refused["error"].as_str().unwrap().contains("archive"));
+    let (code, _) = control(&plain, "POST", "restore", Some(ask)).await;
+    assert_eq!(code, 409);
+    let (_, none) = control(&plain, "GET", "move", None).await;
+    assert!(none.is_null());
+
+    let fx = fixture_with_archive().await;
+    download(&fx, json!({"model": REPO, "apps": ["bionic", "hf"]})).await;
+    let address = fx.base.trim_start_matches("http://").to_string();
+    let seen = Arc::new(Seen::default());
+    let subscription = client::subscribe(address.clone(), seen.clone());
+    let sha = sha256(&fx.weights);
+    let bionic = fx.server.engine.dirs.bionic.join(REPO).join("model.gguf");
+    assert!(bionic.is_file());
+
+    let a = address.clone();
+    let done = tokio::task::spawn_blocking(move || -> Result<(), client::ClientError> {
+        let wait = |kind: &str| -> Result<client::ModelMove, client::ClientError> {
+            loop {
+                let state = client::model_move(a.clone())?.expect("a move was started");
+                if !state.running {
+                    assert_eq!(state.kind, kind);
+                    return Ok(state);
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+        };
+        // A model the daemon does not have is refused before anything starts.
+        let unknown = client::archive_model(a.clone(), "org/Nope".into());
+        assert!(matches!(unknown, Err(client::ClientError::Failed { .. })));
+        assert_eq!(client::model_move(a.clone())?, None);
+
+        let plan = client::archive_plan(a.clone(), REPO.into())?;
+        let apps: Vec<&str> = plan.deactivate.iter().map(|d| d.app.as_str()).collect();
+        assert_eq!(apps, ["bionic", "hf"]);
+        assert_eq!((plan.files, plan.bytes), (2, 300_008));
+        assert!(plan.archive.ends_with("trunk/dedupd"));
+        assert!(plan.keep.is_empty());
+
+        client::archive_model(a.clone(), REPO.into())?;
+        let state = wait("archive")?;
+        assert_eq!(state.error, None);
+        assert_eq!((state.files, state.bytes_done, state.kept), (2, 300_008, 0));
+        let library = client::models(a.clone())?;
+        assert!(library[0].archived_at.is_some());
+        assert!(library[0].apps.is_empty());
+
+        let plan = client::restore_plan(a.clone(), REPO.into())?;
+        assert_eq!((plan.files, plan.bytes, plan.missing), (2, 300_008, 0));
+        assert!(plan.free > plan.bytes);
+        client::restore_model(a.clone(), REPO.into())?;
+        let state = wait("restore")?;
+        assert_eq!((state.error, state.files), (None, 2));
+        let library = client::models(a.clone())?;
+        assert_eq!(library[0].archived_at, None);
+        assert!(library[0].apps.is_empty());
+        Ok(())
+    })
+    .await
+    .unwrap();
+    done.unwrap();
+
+    // Restored to the store, and in no app until the owner activates it.
+    assert!(fx.server.engine.store.contains(&sha));
+    assert!(!bionic.exists());
+    // The event stream told about both moves.
+    let told = |kind: &str| {
+        let events = seen.0.lock().unwrap();
+        events
+            .iter()
+            .filter_map(|e| e.moving.as_ref())
+            .any(|m| m.kind == kind && m.repo == REPO && !m.running)
+    };
+    for _ in 0..300 {
+        if told("restore") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(told("restore"));
+    subscription.cancel();
+}
+
 /// The control API's answers, as the macOS app's tests decode them through
 /// the client. Paths, the upstream address and the version differ from run to
 /// run and are replaced, so the files change only when the answers do.
@@ -1081,7 +1220,7 @@ async fn control_api_answers_match_the_recorded_ones() {
                         "executable" => json!("/Users/example/bin/dedupd"),
                         "pid" => json!(1),
                         "volume_total" => json!(1_000_000_000_000u64),
-                        "volume_free" => json!(400_000_000_000u64),
+                        "volume_free" | "free" => json!(400_000_000_000u64),
                         "speed" => json!(0),
                         "resets_in" => json!(100),
                         "window" => json!(2),
@@ -1153,6 +1292,33 @@ async fn control_api_answers_match_the_recorded_ones() {
     let (_, verify) = control(&fx, "GET", "verify", None).await;
     let (_, log) = control(&fx, "GET", "log", None).await;
 
+    // Archive and restore need an archive disk, which the answers above do
+    // not have; these come from a daemon that has one.
+    let with_disk = fixture_with_archive().await;
+    download(&with_disk, json!({"model": REPO, "apps": ["bionic", "hf"]})).await;
+    let disk_root = with_disk._dir.path().to_string_lossy().into_owned();
+    let disk_real = std::fs::canonicalize(with_disk._dir.path())
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let on_disk = |value: Value| -> Value {
+        let body = value
+            .to_string()
+            .replace(&disk_real, &root)
+            .replace(&disk_root, &root);
+        serde_json::from_str(&body).unwrap()
+    };
+    // The backup is made first, so the plan has nothing left to copy.
+    control(&with_disk, "POST", "scan", Some(json!({}))).await;
+    let ask = json!({"repo": REPO});
+    let (_, archive) = control(&with_disk, "POST", "archive", Some(ask.clone())).await;
+    let go = json!({"repo": REPO, "apply": true});
+    let (_, started) = control(&with_disk, "POST", "archive", Some(go)).await;
+    assert_eq!(started, json!({"started": true}));
+    let moving = moved(&with_disk).await;
+    let (_, restore) = control(&with_disk, "POST", "restore", Some(ask)).await;
+    let (archive, moving, restore) = (on_disk(archive), on_disk(moving), on_disk(restore));
+
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/control");
     let update = std::env::var_os("DEDUPD_UPDATE_FIXTURES").is_some();
     for (name, body) in [
@@ -1175,6 +1341,9 @@ async fn control_api_answers_match_the_recorded_ones() {
         ("gc.json", gc),
         ("verify.json", verify),
         ("log.json", log),
+        ("archive.json", archive),
+        ("move.json", moving),
+        ("restore.json", restore),
     ] {
         let now = normalise(&body);
         let file = dir.join(name);

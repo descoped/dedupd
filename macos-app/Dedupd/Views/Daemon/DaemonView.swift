@@ -67,7 +67,7 @@ private struct DaemonStateCard: View {
             } else if daemon.connection == .notRunning {
                 Text(
                     "No daemon answers at \(daemon.address). Your models are untouched and the apps keep using them; "
-                        + "nothing new is shared or archived until the daemon runs."
+                        + "nothing new is shared or backed up until the daemon runs."
                 )
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)

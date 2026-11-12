@@ -42,6 +42,13 @@ protocol DaemonClient: Sendable {
     /// What removing a model from an app would delete, and with `apply` the
     /// removal itself.
     func unplace(_ repo: String, app: String, apply: Bool, at address: String) async throws -> UnplacePlan
+    /// What archiving a model would do: which apps it is taken out of and
+    /// how much leaves the internal disk.
+    func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan
+    /// Start archiving a model. Returns at once; the events tell how it goes.
+    func archive(_ repo: String, at address: String) async throws
+    /// Start copying an archived model back. Returns at once.
+    func restore(_ repo: String, at address: String) async throws
 
     func gcPlan(offload: Bool, at address: String) async throws -> GcPlan
     func gcApply(orphans: [String], offload: [String], at address: String) async throws -> GcPlan
@@ -132,6 +139,18 @@ struct LiveDaemonClient: DaemonClient {
         try await Self.blocking {
             try DedupdClient.unplace(address: address, repo: repo, app: app, apply: apply, paths: nil)
         }
+    }
+
+    func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan {
+        try await Self.blocking { try DedupdClient.archivePlan(address: address, repo: repo) }
+    }
+
+    func archive(_ repo: String, at address: String) async throws {
+        try await Self.blocking { try DedupdClient.archiveModel(address: address, repo: repo) }
+    }
+
+    func restore(_ repo: String, at address: String) async throws {
+        try await Self.blocking { try DedupdClient.restoreModel(address: address, repo: repo) }
     }
 
     func gcPlan(offload: Bool, at address: String) async throws -> GcPlan {

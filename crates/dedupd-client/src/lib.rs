@@ -423,9 +423,9 @@ pub fn download(address: String, id: i64) -> Result<JobDetail, ClientError> {
 }
 
 /// Queue a download of `model` (`org/repo`, `org/repo:Q4_K_M` or
-/// `org/repo@revision`) to be placed into `apps`. Returns at once; the
-/// event stream tells how it goes. With `offline`, only what is archived is
-/// used, which places an archived model without asking the provider.
+/// `org/repo@revision`) to be activated in `apps`. Returns at once; the
+/// event stream tells how it goes. With `offline`, only what dedupd has kept
+/// is used, which activates a stored model without asking the provider.
 #[uniffi::export]
 pub fn enqueue(
     address: String,
@@ -470,7 +470,7 @@ pub fn check_upstream(address: String, repo: String) -> Result<UpstreamCheck, Cl
     )
 }
 
-/// Drop `repo` from the archive records, so its files can be cleaned up.
+/// Drop `repo` from the library, so its files can be cleaned up.
 /// Refused while an app still has files of it.
 #[uniffi::export]
 pub fn forget(address: String, repo: String) -> Result<(), ClientError> {
@@ -480,7 +480,7 @@ pub fn forget(address: String, repo: String) -> Result<(), ClientError> {
 
 /// What removing `repo` from `app` would delete; with `apply`, delete it.
 /// `paths` limits the removal to the files the owner saw and agreed to.
-/// The store keeps everything, so the model can be placed again.
+/// The store keeps everything, so the model can be activated again.
 #[uniffi::export]
 pub fn unplace(
     address: String,
@@ -491,6 +491,46 @@ pub fn unplace(
 ) -> Result<UnplacePlan, ClientError> {
     let body = serde_json::json!({"repo": repo, "app": app, "apply": apply, "paths": paths});
     post(&address, "unplace", &body, PATIENT)
+}
+
+/// What archiving `repo` would do: which apps it is taken out of, and how
+/// much leaves the internal disk. Nothing is changed. Refused when the
+/// archive disk is not attached.
+#[uniffi::export]
+pub fn archive_plan(address: String, repo: String) -> Result<ArchivePlan, ClientError> {
+    let body = serde_json::json!({"repo": repo, "apply": false});
+    post(&address, "archive", &body, PATIENT)
+}
+
+/// Archive `repo`: out of every app and off the internal disk, once the
+/// archive disk holds a good copy of every file. Returns at once; the event
+/// stream tells how it goes (`moving`).
+#[uniffi::export]
+pub fn archive_model(address: String, repo: String) -> Result<(), ClientError> {
+    let body = serde_json::json!({"repo": repo, "apply": true});
+    post::<serde_json::Value>(&address, "archive", &body, PATIENT).map(|_| ())
+}
+
+/// What restoring `repo` would copy back from the archive disk.
+#[uniffi::export]
+pub fn restore_plan(address: String, repo: String) -> Result<RestorePlan, ClientError> {
+    let body = serde_json::json!({"repo": repo, "apply": false});
+    post(&address, "restore", &body, PATIENT)
+}
+
+/// Copy `repo` back from the archive disk. Returns at once; the event
+/// stream tells how it goes (`moving`). The model is put into no app.
+#[uniffi::export]
+pub fn restore_model(address: String, repo: String) -> Result<(), ClientError> {
+    let body = serde_json::json!({"repo": repo, "apply": true});
+    post::<serde_json::Value>(&address, "restore", &body, PATIENT).map(|_| ())
+}
+
+/// The archive or restore that is running, or the last one; `None` when
+/// there has been none since the daemon started.
+#[uniffi::export]
+pub fn model_move(address: String) -> Result<Option<ModelMove>, ClientError> {
+    get(&address, "move", QUICK)
 }
 
 /// The stored files that could be removed. With `offload`, also the local

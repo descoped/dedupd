@@ -11,6 +11,8 @@ enum ModelHealth: Equatable, Sendable {
     case unconfirmed
     /// No app holds the model; it is in the store only.
     case storedOnly
+    /// The owner archived the model: it is on the archive disk only.
+    case archived
     /// The provider no longer has the model; this copy is what is left.
     case goneUpstream
 
@@ -19,7 +21,8 @@ enum ModelHealth: Equatable, Sendable {
         case .verified: "checkmark.seal.fill"
         case .different: "exclamationmark.triangle.fill"
         case .unconfirmed: "questionmark.circle"
-        case .storedOnly: "archivebox"
+        case .storedOnly: "internaldrive"
+        case .archived: "archivebox"
         case .goneUpstream: "icloud.slash"
         }
     }
@@ -30,6 +33,7 @@ enum ModelHealth: Equatable, Sendable {
         case .different: "Differs from Hugging Face"
         case .unconfirmed: "Not fully checked"
         case .storedOnly: "In the store only"
+        case .archived: "Archived"
         case .goneUpstream: "Gone from Hugging Face"
         }
     }
@@ -38,7 +42,7 @@ enum ModelHealth: Equatable, Sendable {
         switch self {
         case .verified: .green
         case .different: .red
-        case .unconfirmed, .storedOnly: .secondary
+        case .unconfirmed, .storedOnly, .archived: .secondary
         case .goneUpstream: .orange
         }
     }
@@ -67,6 +71,9 @@ extension LibraryModel: @retroactive Identifiable {
         if mismatch > 0 {
             return .different
         }
+        if isArchived {
+            return .archived
+        }
         if apps.isEmpty {
             return .storedOnly
         }
@@ -84,7 +91,10 @@ extension LibraryModel: @retroactive Identifiable {
 
     var appNames: [String] { apps.map(\.app) }
 
-    /// When the model was last archived, for sorting; the oldest date when
+    /// The owner moved the model to the archive disk; it is in no app.
+    var isArchived: Bool { archivedAt != nil }
+
+    /// When the model's newest revision was added, for sorting; the oldest date when
     /// it never was.
     var fetched: Date {
         fetchedAt.map(TimeFormat.date(epoch:)) ?? .distantPast
@@ -262,7 +272,7 @@ extension ScanResult {
             parts.append("freed \(ByteFormat.string(reclaimedBytes)) by sharing \(ByteFormat.files(reclaimed))")
         }
         if archived > 0 {
-            parts.append("copied \(ByteFormat.files(archived)) to the archive")
+            parts.append("backed up \(ByteFormat.files(archived)) to the archive disk")
         }
         if forgotten > 0 {
             parts.append("forgot \(ByteFormat.files(forgotten)) no longer there")

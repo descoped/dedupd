@@ -74,6 +74,43 @@ struct LibraryStoreTests {
         #expect(library.removal == nil)
     }
 
+    @Test("Archiving a model shows what it does first; restoring brings it back into no app")
+    func archiveAndRestore() async throws {
+        let daemon = await startedDaemon()
+        let library = LibraryStore(daemon: daemon)
+        await library.reload()
+        library.selection = try #require(library.models.first { $0.repo == FixtureData.qwen }).id
+
+        await library.planArchive()
+        let plan = try #require(library.archiving)
+        #expect(plan.appList == "Bionic")
+        #expect((plan.files, plan.bytes) == (13, 16_080_000_000))
+        #expect(library.selected?.isArchived == false, "nothing is archived by asking")
+
+        await library.applyArchive()
+        #expect(library.archiving == nil)
+        #expect(await eventually { await daemon.moving?.kind == "archive" })
+        #expect(library.move == nil, "a move that ended well needs no line of its own")
+        await library.reload()
+        let archived = try #require(library.selected)
+        #expect(archived.health == .archived)
+        #expect(archived.apps.isEmpty)
+        await library.loadDetail()
+        #expect(library.detail.value?.placements.isEmpty == true)
+        #expect(library.detail.value?.variants.first?.isStored == false)
+
+        await library.restore()
+        #expect(await eventually { await daemon.moving?.kind == "restore" })
+        await library.reload()
+        #expect(library.selected?.isArchived == false)
+        #expect(library.selected?.apps.isEmpty == false, "the canned daemon knows the model as it was")
+        #expect(daemon.problem == nil)
+
+        // A model that is not archived cannot be restored; the daemon says so.
+        await library.restore()
+        #expect(daemon.problem == "\(FixtureData.qwen) is not archived")
+    }
+
     @Test("A model an app still has cannot be forgotten; the daemon says why")
     func forgetRefused() async throws {
         let daemon = await startedDaemon()
@@ -96,7 +133,7 @@ struct LibraryStoreTests {
         #expect(library.selection == nil)
     }
 
-    @Test("Placing a stored variant asks the daemon for that app only")
+    @Test("Activating a stored variant asks the daemon for that app only")
     func place() async throws {
         let daemon = await startedDaemon()
         let library = LibraryStore(daemon: daemon)
@@ -104,7 +141,7 @@ struct LibraryStoreTests {
         await library.place(variant, into: .bionic)
         #expect(await eventually { await daemon.jobs.first?.model == FixtureData.smolMLX })
         #expect(daemon.jobs.first?.apps == ["bionic"])
-        #expect(daemon.jobs.first?.phase == .done, "what is stored is placed without a download")
+        #expect(daemon.jobs.first?.phase == .done, "what is stored is activated without a download")
     }
 
     @Test("With no daemon the failure is kept for the screen to show")

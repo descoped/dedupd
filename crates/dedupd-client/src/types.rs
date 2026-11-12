@@ -63,6 +63,10 @@ pub struct LibraryModel {
     pub upstream: String,
     pub checked_at: Option<i64>,
     pub ollama_tags: Vec<String>,
+    /// When the owner archived the model, in seconds since the epoch: it is
+    /// in no app and its files are on the archive disk only.
+    #[serde(default)]
+    pub archived_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
@@ -365,7 +369,80 @@ pub struct DaemonEvent {
     pub library: u64,
     /// The whole store is being checked.
     pub checking: bool,
+    /// The archive or restore of one model that is running, or the last one.
+    #[serde(default)]
+    pub moving: Option<ModelMove>,
     pub downloads: Downloads,
+}
+
+/// One model on its way to the archive disk or back.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct ModelMove {
+    /// `archive` or `restore`.
+    pub kind: String,
+    pub repo: String,
+    pub running: bool,
+    /// Seconds since the epoch.
+    pub started_at: i64,
+    pub finished_at: Option<i64>,
+    /// The size of the files to move, and of those dealt with so far.
+    pub bytes_total: u64,
+    pub bytes_done: u64,
+    /// Once finished: the files that left or came back to the internal disk.
+    pub files: u64,
+    /// Once an archive has finished: stored files that stayed on the
+    /// internal disk, because another model or an app still uses them.
+    pub kept: u64,
+    pub error: Option<String>,
+}
+
+/// What archiving would take out of one app.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct DeactivateStep {
+    pub app: String,
+    pub files: u64,
+    pub bytes: u64,
+    /// The app's files that would be left alone, and why.
+    pub keep: Vec<KeptFile>,
+}
+
+/// A stored file that archiving leaves on the internal disk.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct KeptStored {
+    pub sha256: String,
+    pub size: u64,
+    pub why: String,
+}
+
+/// What archiving a model would do: take it out of every app, then remove
+/// its files from the internal disk once the archive disk has a good copy.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct ArchivePlan {
+    pub repo: String,
+    /// The archive folder.
+    pub archive: String,
+    pub deactivate: Vec<DeactivateStep>,
+    /// Stored files that would leave the internal disk, and their size.
+    pub files: u64,
+    pub bytes: u64,
+    /// Of those, the files the archive disk lacks; they are copied first.
+    pub copy_files: u64,
+    pub copy_bytes: u64,
+    pub keep: Vec<KeptStored>,
+}
+
+/// What restoring a model would copy back from the archive disk.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct RestorePlan {
+    pub repo: String,
+    /// The archive folder.
+    pub archive: String,
+    pub files: u64,
+    pub bytes: u64,
+    /// Free space on the internal disk.
+    pub free: u64,
+    /// Files that are on neither disk.
+    pub missing: u64,
 }
 
 /// The daemon as a process.

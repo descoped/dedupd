@@ -188,15 +188,15 @@ async fn resolve(engine: &Engine, req: &PullRequest, revision: &str) -> Result<R
             repo_id,
             snap,
             from_archive: true,
-            note: e.map(|e| format!("{e}; using the archived copy")),
+            note: e.map(|e| format!("{e}; using the kept copy")),
         }),
         // The provider's own error stays in the chain, so a caller can tell
         // a repository that is gone from a provider that cannot be reached.
         (None, Some(e)) => {
-            Err(anyhow::Error::new(e).context(format!("{} is not archived", req.repo)))
+            Err(anyhow::Error::new(e).context(format!("{} is not kept here", req.repo)))
         }
         (None, None) => bail!(
-            "{}@{revision} is not archived, and --offline was given",
+            "{}@{revision} is not kept here, and --offline was given",
             req.repo
         ),
     }
@@ -524,6 +524,8 @@ pub async fn place(
     items: Vec<Item>,
 ) -> Result<(Vec<(App, Placed)>, Vec<String>)> {
     let (repo_id, snap) = (plan.repo_id, &plan.snap);
+    // The files are in the store again, so the model is no longer archived.
+    engine.db().set_archived(repo_id, None)?;
     let mut notes = Vec::new();
     // Placement hashes and copies files, so it runs off the async runtime.
     let items = Arc::new(items);

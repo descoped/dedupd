@@ -34,9 +34,11 @@
 		72AE3DC29EEF642ABC85BF78 /* DisplayTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4070E9EE36A2CB759E66A166 /* DisplayTests.swift */; };
 		7C5BFD402DCB9AC6D69BCFF9 /* dedupd_client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AFF74CF2A637B9A04EAE90A /* dedupd_client.swift */; };
 		852E8BFF75CF87037EEE7370 /* DedupdUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A74F3AE0140D67A7C7B9279C /* DedupdUITests.swift */; };
+		8749D13F32B495B5316DC219 /* ArchiveSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A9B5D356603A62C21590620 /* ArchiveSheet.swift */; };
 		A0B0AFB37DF1534E16D19012 /* ContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 485343F149130DDDE1FFD3D4 /* ContractTests.swift */; };
 		A582FBC51E3BA26B922A8817 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 942965A9DC3D46A3BE8DB6EA /* AppEnvironment.swift */; };
 		A78F910DD1DB444E86F45735 /* DaemonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA590A639E56662A566C5687 /* DaemonView.swift */; };
+		A961D911B4C5584001A8B1BC /* ArchiveWords.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA1EE8C0C8DE789B6025261D /* ArchiveWords.swift */; };
 		AB240095EE9C92725A75116E /* LibraryStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F58F11DB905633AE1ADDEECA /* LibraryStore.swift */; };
 		AB4969B0621351AB8CF6A739 /* Display.swift in Sources */ = {isa = PBXBuildFile; fileRef = 71455B8FEB958390C6DC9225 /* Display.swift */; };
 		AEC877EA68F6C97C7C341510 /* ModelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25B1DC4550E5D37D301B58D5 /* ModelApp.swift */; };
@@ -85,6 +87,7 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		0A9B5D356603A62C21590620 /* ArchiveSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchiveSheet.swift; sourceTree = "<group>"; };
 		0AD0E3AA1965269EEFB6C82E /* DiscoverStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverStore.swift; sourceTree = "<group>"; };
 		1D5B6E131FA7D3C506F124C1 /* DaemonSettingsCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonSettingsCard.swift; sourceTree = "<group>"; };
 		2428FD9F55E79D7FA4EAC935 /* DiscoverView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverView.swift; sourceTree = "<group>"; };
@@ -125,6 +128,7 @@
 		A74F3AE0140D67A7C7B9279C /* DedupdUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DedupdUITests.swift; sourceTree = "<group>"; };
 		A78B31A39A962287C18820A6 /* MenuPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MenuPanel.swift; sourceTree = "<group>"; };
 		A9516F41E38D52026256E24B /* FixtureData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureData.swift; sourceTree = "<group>"; };
+		AA1EE8C0C8DE789B6025261D /* ArchiveWords.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ArchiveWords.swift; sourceTree = "<group>"; };
 		AB7FAC14D4C02E857832C7C5 /* TestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TestSupport.swift; sourceTree = "<group>"; };
 		BA590A639E56662A566C5687 /* DaemonView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonView.swift; sourceTree = "<group>"; };
 		BCE0FE66106D647E15B825C4 /* ScreenContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenContractTests.swift; sourceTree = "<group>"; };
@@ -215,6 +219,7 @@
 		24EAB418FFB5202C79F25C6A /* Models */ = {
 			isa = PBXGroup;
 			children = (
+				AA1EE8C0C8DE789B6025261D /* ArchiveWords.swift */,
 				71455B8FEB958390C6DC9225 /* Display.swift */,
 				596735B92A21D9CF195718A2 /* JobState.swift */,
 				25B1DC4550E5D37D301B58D5 /* ModelApp.swift */,
@@ -294,6 +299,7 @@
 		88FB079967CB66BCCC0D431F /* Library */ = {
 			isa = PBXGroup;
 			children = (
+				0A9B5D356603A62C21590620 /* ArchiveSheet.swift */,
 				35CF616E098F45096DA140B4 /* LibraryFiles.swift */,
 				D1A4B155585F47C6A2FEB293 /* LibraryInspector.swift */,
 				E87132FC4E828501384EE5C0 /* LibraryView.swift */,
@@ -684,6 +690,8 @@
 				0A2EB6313FF4BDB6E5CB1E02 /* AgentService.swift in Sources */,
 				A582FBC51E3BA26B922A8817 /* AppEnvironment.swift in Sources */,
 				CF61A5B7B2462BEDD9A5F9DE /* AppSettings.swift in Sources */,
+				8749D13F32B495B5316DC219 /* ArchiveSheet.swift in Sources */,
+				A961D911B4C5584001A8B1BC /* ArchiveWords.swift in Sources */,
 				5C3815D0D88E8965754C6168 /* Badges.swift in Sources */,
 				D8612C3610B0CBDF5220EC79 /* ByteFormat.swift in Sources */,
 				41A06DFAF3DFB77E7A2F6162 /* DaemonClient.swift in Sources */,

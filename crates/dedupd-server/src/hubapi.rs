@@ -171,7 +171,7 @@ async fn refs(server: &Arc<Server>, call: &Call, repo: &str) -> Response {
             .archived(repo, "main")
             .is_none_or(|s| !restricted(&s.info_json));
         if !archived.is_empty() && open {
-            eprintln!("dedupd: {repo}: branch names answered from the archive");
+            eprintln!("dedupd: {repo}: branch names answered from the kept copy");
             let branches: Vec<Value> = archived
                 .iter()
                 .map(|(name, commit)| {

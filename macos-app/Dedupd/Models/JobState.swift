@@ -129,7 +129,7 @@ extension Job {
             let left = secondsLeft.map { " · \(ByteFormat.duration(seconds: $0)) left" } ?? ""
             return "\(ByteFormat.speed(speed))\(left)"
         case .done:
-            return "Placed into \(appList)"
+            return apps.isEmpty ? "In the store only" : "Activated in \(appList)"
         default:
             return phase.title
         }

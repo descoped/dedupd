@@ -106,6 +106,37 @@ struct ContractTests {
         ))
     }
 
+    @Test("Archive and restore: the plans, and how a finished move is told")
+    func archiveAndRestore() async throws {
+        let server = try await Self.daemon([
+            "POST /dedupd/v1/archive": .init(body: Self.recorded("archive")),
+            "POST /dedupd/v1/restore": .init(body: Self.recorded("restore")),
+            "GET /dedupd/v1/move": .init(body: Self.recorded("move")),
+        ])
+        defer { server.stop() }
+        let client = LiveDaemonClient()
+
+        let plan = try await client.archivePlan("org/Repo-GGUF", at: server.address)
+        #expect(plan.archive == "/Users/example/trunk/dedupd")
+        #expect(plan.deactivate.map(\.app) == ["bionic", "hf"])
+        #expect((plan.files, plan.bytes, plan.copyFiles) == (2, 300_008, 0))
+        #expect(plan.keep.isEmpty)
+        try await client.archive("org/Repo-GGUF", at: server.address)
+        try await client.restore("org/Repo-GGUF", at: server.address)
+
+        let address = server.address
+        let back = try await Self.blocking { try DedupdClient.restorePlan(address: address, repo: "org/Repo-GGUF") }
+        #expect(back == RestorePlan(
+            repo: "org/Repo-GGUF", archive: "/Users/example/trunk/dedupd", files: 2, bytes: 300_008,
+            free: 400_000_000_000, missing: 0
+        ))
+        let move = try await Self.blocking { try DedupdClient.modelMove(address: address) }
+        #expect(move == ModelMove(
+            kind: "archive", repo: "org/Repo-GGUF", running: false, startedAt: 1_700_000_000,
+            finishedAt: 1_700_000_000, bytesTotal: 300_008, bytesDone: 300_008, files: 2, kept: 0, error: nil
+        ))
+    }
+
     @Test("A refusal carries the daemon's own words")
     func refusal() async throws {
         let server = try await Self.daemon(["POST /dedupd/v1/downloads": .init(status: 400, body: Self.recorded("error"))])

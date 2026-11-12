@@ -93,8 +93,8 @@ final class DedupdUITests: XCTestCase {
         screenshot(window, "01-library")
 
         model.click()
-        XCTAssertTrue(element("remove-ollama", in: window).exists, "Ollama has the model, so it can be removed from it")
-        XCTAssertTrue(element("place-hf", in: window).exists, "the Hugging Face cache does not, so it can be placed there")
+        XCTAssertTrue(element("remove-ollama", in: window).exists, "Ollama has the model, so it can be deactivated there")
+        XCTAssertTrue(element("place-hf", in: window).exists, "the Hugging Face cache does not, so it can be activated there")
         XCTAssertTrue(labelled("Parameters: 135M", in: window).exists)
         screenshot(window, "02-library-inspector")
 
@@ -110,6 +110,27 @@ final class DedupdUITests: XCTestCase {
         XCTAssertTrue(element("confirm-removal", in: window).exists, "nothing is removed before the owner has seen the list")
         XCTAssertTrue(text("manifests/hf.co/bartowski/SmolLM2-135M-Instruct-GGUF/Q4_K_M", in: window).exists)
         screenshot(window, "04-remove-from-app")
+    }
+
+    func testAModelIsArchivedAndRestored() {
+        let window = launch("running")
+        element("model-lmstudio-community/Qwen3.8-27B-MLX-4bit", in: window).click()
+
+        element("archive-model", in: window).click()
+        XCTAssertTrue(element("confirm-archive", in: window).exists, "nothing is archived before the owner has seen what it does")
+        XCTAssertTrue(element("archive-steps", in: window).label.contains("The model is taken out of Bionic."))
+        screenshot(window, "05-archive-a-model")
+
+        element("confirm-archive", in: window).click()
+        XCTAssertTrue(element("restore-model", in: window).waitForExistence(timeout: 5), "an archived model can be restored")
+        XCTAssertFalse(
+            window.descendants(matching: .any)["remove-bionic"].firstMatch.exists,
+            "an archived model is in no app"
+        )
+        screenshot(window, "06-archived-model")
+
+        element("restore-model", in: window).click()
+        XCTAssertTrue(element("archive-model", in: window).waitForExistence(timeout: 5), "a restored model can be archived again")
     }
 
     func testDiscoverFindsAModelAndQueuesADownload() {
@@ -239,7 +260,7 @@ final class DedupdUITests: XCTestCase {
 
         go(to: "downloads", in: window)
         let done = window.descendants(matching: .any)
-            .matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS 'Placed into'", model)).firstMatch
+            .matching(NSPredicate(format: "label CONTAINS %@ AND label CONTAINS 'Activated in'", model)).firstMatch
         XCTAssertTrue(done.waitForExistence(timeout: 300), "the download of \(model) finishes")
         screenshot(window, "21-live-downloaded")
 

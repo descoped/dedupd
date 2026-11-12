@@ -307,6 +307,16 @@ void uniffi_dedupd_client_fn_free_eventsubscription(uint64_t handle, RustCallSta
 void uniffi_dedupd_client_fn_method_eventsubscription_cancel(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_MODEL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_MODEL
+void uniffi_dedupd_client_fn_func_archive_model(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_PLAN
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_PLAN
+RustBuffer uniffi_dedupd_client_fn_func_archive_plan(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_CHECK_UPSTREAM
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_CHECK_UPSTREAM
 RustBuffer uniffi_dedupd_client_fn_func_check_upstream(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
@@ -378,6 +388,11 @@ RustBuffer uniffi_dedupd_client_fn_func_log_tail(RustBuffer address, uint32_t li
 RustBuffer uniffi_dedupd_client_fn_func_model(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_MODEL_MOVE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_MODEL_MOVE
+RustBuffer uniffi_dedupd_client_fn_func_model_move(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_MODELS
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_MODELS
 RustBuffer uniffi_dedupd_client_fn_func_models(RustBuffer address, RustCallStatus *_Nonnull out_status
@@ -391,6 +406,16 @@ RustBuffer uniffi_dedupd_client_fn_func_pull(RustBuffer address, RustBuffer mode
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTART
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTART
 void uniffi_dedupd_client_fn_func_restart(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTORE_MODEL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTORE_MODEL
+void uniffi_dedupd_client_fn_func_restore_model(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTORE_PLAN
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTORE_PLAN
+RustBuffer uniffi_dedupd_client_fn_func_restore_plan(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SCAN
@@ -698,6 +723,18 @@ void ffi_dedupd_client_rust_future_free_void(uint64_t handle
 void ffi_dedupd_client_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ARCHIVE_MODEL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ARCHIVE_MODEL
+uint16_t uniffi_dedupd_client_checksum_func_archive_model(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ARCHIVE_PLAN
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ARCHIVE_PLAN
+uint16_t uniffi_dedupd_client_checksum_func_archive_plan(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_CHECK_UPSTREAM
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_CHECK_UPSTREAM
 uint16_t uniffi_dedupd_client_checksum_func_check_upstream(void
@@ -782,6 +819,12 @@ uint16_t uniffi_dedupd_client_checksum_func_model(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_MODEL_MOVE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_MODEL_MOVE
+uint16_t uniffi_dedupd_client_checksum_func_model_move(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_MODELS
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_MODELS
 uint16_t uniffi_dedupd_client_checksum_func_models(void
@@ -797,6 +840,18 @@ uint16_t uniffi_dedupd_client_checksum_func_pull(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_RESTART
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_RESTART
 uint16_t uniffi_dedupd_client_checksum_func_restart(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_RESTORE_MODEL
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_RESTORE_MODEL
+uint16_t uniffi_dedupd_client_checksum_func_restore_model(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_RESTORE_PLAN
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_RESTORE_PLAN
+uint16_t uniffi_dedupd_client_checksum_func_restore_plan(void
     
 );
 #endif

@@ -673,7 +673,7 @@ impl Queue {
             r.bytes_done = 0;
             r.files = plan.entries.iter().map(file_state).collect();
             let from = if plan.from_archive {
-                ", from the archive"
+                ", from the kept copy"
             } else {
                 ""
             };
@@ -794,7 +794,7 @@ fn not_available(status: u16, req: &PullRequest) -> String {
             req.repo
         ),
         _ => format!(
-            "{} is not on Hugging Face (HTTP {status}), and it is not archived here.",
+            "{} is not on Hugging Face (HTTP {status}), and it is not kept here.",
             req.repo
         ),
     }

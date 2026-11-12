@@ -317,6 +317,182 @@ async fn a_model_is_removed_from_an_app_and_placed_again() {
     assert_placed(&up, &e2.dirs);
 }
 
+/// Archiving a model takes it out of every app and off the internal disk,
+/// once the archive disk is known to hold a good copy of each file; restoring
+/// copies the files back and leaves the apps alone.
+#[tokio::test]
+async fn a_model_is_archived_and_restored() {
+    let up = upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let trunk = dir.path().join("trunk");
+    let archive_home = Home::new(trunk.join("dedupd"));
+    let apps = dir.path().join("apps");
+    let e = engine(&home, &up.server.uri(), &apps, Some(archive_home.clone()));
+    pull::pull(&e, &request(&App::ALL, false), &Arc::default())
+        .await
+        .unwrap();
+    let installed = Installed::detect(&e.dirs);
+    let archived_at = |e: &pull::Engine| {
+        library::model(&e.db(), &e.store, REPO, &installed)
+            .unwrap()
+            .unwrap()
+            .model
+            .archived_at
+    };
+    let plan_of = || archive::archive_plan(&e.db, &e.store, &e.dirs, REPO);
+
+    // Without the disk, and for a model dedupd does not have, nothing is planned.
+    let refused = plan_of().unwrap_err().to_string();
+    assert!(refused.contains("not attached"), "{refused}");
+    fs::create_dir_all(&trunk).unwrap();
+    assert!(archive::archive_plan(&e.db, &e.store, &e.dirs, "org/Nope").is_err());
+
+    // The weights, the config, and the two small layers Ollama needs.
+    let all: Vec<String> = [&up.weights, &up.config]
+        .into_iter()
+        .map(|b| sha256(b))
+        .chain(
+            dedupd_core::ollama::Manifest::parse(&up.manifest)
+                .unwrap()
+                .all()
+                .map(|l| l.sha256().unwrap().to_string()),
+        )
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    assert_eq!(all.len(), 4);
+
+    // Nothing is on the archive disk yet, so every file would be copied
+    // first. Planning changes nothing.
+    let plan = plan_of().unwrap();
+    assert_eq!(plan.deactivate.len(), 3);
+    assert_eq!((plan.remove.len(), plan.copy_files), (4, 4));
+    assert!(plan.keep.is_empty());
+    assert_placed(&up, &e.dirs);
+    assert!(archived_at(&e).is_none());
+
+    // The backup is made, and then one copy on the archive disk goes bad.
+    archive::sync(&e.db, &e.store, &archive_home, &mut |_, _| {}).unwrap();
+    let bad = archive_home.blob_path(&sha256(&up.config));
+    fs::remove_file(&bad).unwrap();
+    fs::write(&bad, vec![b'x'; up.config.len()]).unwrap();
+    let plan = plan_of().unwrap();
+    assert_eq!(plan.copy_files, 0);
+
+    let mut checked = 0;
+    let report =
+        archive::archive_apply(&e.db, &e.store, &e.dirs, REPO, &mut |n| checked += n).unwrap();
+    assert_eq!((report.files, report.copied), (4, 1));
+    assert_eq!((report.freed, checked), (plan.bytes, plan.bytes));
+    assert_eq!(report.deactivated.len(), 3);
+    assert_eq!(fs::read(&bad).unwrap(), up.config);
+    // In no app, and off the internal disk; the archive disk has it all.
+    assert!(!e.dirs.bionic.join(REPO).exists());
+    assert!(!e.dirs.hf_cache.join("models--org--Repo-GGUF").exists());
+    assert!(!e.dirs.ollama.join("manifests/hf.co").join(REPO).exists());
+    assert_eq!(
+        fs::read_dir(e.dirs.ollama.join("blobs")).unwrap().count(),
+        0
+    );
+    for sha in &all {
+        assert!(!e.store.contains(sha));
+        assert!(archive_home.blob_path(sha).is_file());
+    }
+    let detail = library::model(&e.db(), &e.store, REPO, &installed)
+        .unwrap()
+        .unwrap();
+    assert!(detail.model.archived_at.is_some());
+    assert!(detail.model.apps.is_empty());
+    let weights = detail.revisions[0]
+        .files
+        .iter()
+        .find(|f| f.path == "model-Q4_K_M.gguf")
+        .unwrap();
+    assert!(!weights.stored && weights.archived);
+    // Archiving again finds nothing left to do.
+    let again = plan_of().unwrap();
+    assert!(again.deactivate.is_empty() && again.remove.is_empty());
+
+    // Restoring copies the files back and puts the model into no app.
+    let plan = archive::restore_plan(&e.db, &e.store, REPO).unwrap();
+    assert_eq!((plan.copy.len(), plan.missing.len()), (4, 0));
+    assert!(!e.store.contains(&all[0]));
+    let report = archive::restore(&e.db, &e.store, REPO, &mut |_| {}).unwrap();
+    assert_eq!((report.files, report.bytes), (4, plan.bytes));
+    for sha in &all {
+        assert!(e.store.contains(sha));
+        assert!(archive_home.blob_path(sha).is_file());
+    }
+    assert!(archived_at(&e).is_none());
+    assert!(!e.dirs.bionic.join(REPO).exists());
+    // Activating is then the usual step, without the provider.
+    let offline = engine(
+        &home,
+        "http://127.0.0.1:1",
+        &apps,
+        Some(archive_home.clone()),
+    );
+    pull::pull(&offline, &request(&App::ALL, true), &Arc::default())
+        .await
+        .unwrap();
+    assert_placed(&up, &offline.dirs);
+
+    // A file that something else still needs stays on the internal disk:
+    // another model has the same weights, and the owner edited one of
+    // Bionic's files, so Bionic keeps it.
+    offline
+        .db()
+        .archive_snapshot(
+            "hf",
+            "org/Other",
+            "main",
+            &dedupd_core::hub::Snapshot {
+                commit: "1".repeat(40),
+                info_json: "{}".into(),
+                tree_json: "[]".into(),
+                entries: vec![TreeEntry {
+                    path: "other.gguf".into(),
+                    size: up.weights.len() as u64,
+                    git_oid: "pointer".into(),
+                    lfs_sha256: Some(sha256(&up.weights)),
+                }],
+            },
+        )
+        .unwrap();
+    let edited = offline.dirs.bionic.join(REPO).join("sub/config.json");
+    fs::write(&edited, b"my own edit").unwrap();
+    let e = offline;
+    let report = archive::archive_apply(&e.db, &e.store, &e.dirs, REPO, &mut |_| {}).unwrap();
+    let mut kept: Vec<(&str, &str)> = report
+        .keep
+        .iter()
+        .map(|k| (k.sha256.as_str(), k.why.as_str()))
+        .collect();
+    kept.sort_by_key(|(_, why)| *why);
+    assert_eq!(
+        kept,
+        [
+            (sha256(&up.config).as_str(), "an app still has it"),
+            (sha256(&up.weights).as_str(), "another model uses it"),
+        ]
+    );
+    assert_eq!(report.files, 2);
+    assert!(e.store.contains(&sha256(&up.weights)));
+    assert!(e.store.contains(&sha256(&up.config)));
+    assert_eq!(fs::read(&edited).unwrap(), b"my own edit");
+    assert!(archived_at(&e).is_some());
+
+    // Activating an archived model brings back what it needs from the
+    // archive disk, and the model is no longer archived.
+    fs::remove_file(&edited).unwrap();
+    pull::pull(&e, &request(&App::ALL, true), &Arc::default())
+        .await
+        .unwrap();
+    assert_placed(&up, &e.dirs);
+    assert!(archived_at(&e).is_none());
+}
+
 /// An MLX repository's answer for Ollama depends on the bit widths in its
 /// `config.json`, which is read from the store.
 #[test]

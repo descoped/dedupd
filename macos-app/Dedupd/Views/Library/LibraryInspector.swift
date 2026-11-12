@@ -86,7 +86,7 @@ struct LibraryInspector: View {
             if let readme = library.detail.value?.readme {
                 MarkdownText(readme)
             } else if library.detail.value != nil {
-                Text("No README was archived with this model.")
+                Text("No README was kept with this model.")
                     .foregroundStyle(.secondary)
             } else {
                 loading
@@ -95,7 +95,7 @@ struct LibraryInspector: View {
             if let json = library.detail.value?.infoJson {
                 RawJSONView(json: json)
             } else if library.detail.value != nil {
-                Text("Hugging Face's description of this model was not archived. It is archived the next time the model is checked.")
+                Text("Hugging Face's description of this model was not kept. It is kept the next time the model is checked.")
                     .foregroundStyle(.secondary)
             } else {
                 loading
@@ -120,6 +120,7 @@ private struct LibraryOverview: View {
     let detail: ModelDetail?
 
     @Environment(LibraryStore.self) private var library
+    @Environment(DaemonStore.self) private var daemon
     @Environment(DiscoverStore.self) private var discover
     @Environment(Navigation.self) private var navigation
     @State private var confirmsForget = false
@@ -128,12 +129,16 @@ private struct LibraryOverview: View {
         InspectorSection(title: "On this Mac") {
             Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 5) {
                 FactRow("Size", ByteFormat.string(model.bytes))
-                FactRow("Stored", "\(ByteFormat.files(model.storedFiles)), \(ByteFormat.string(model.storedBytes))")
+                FactRow("Stored", model.storedText)
                 if let commit = model.shortCommit { FactRow("Revision", commit, monospaced: true) }
                 if model.revisions > 1 { FactRow("Revisions kept", "\(model.revisions)") }
-                if let fetched = model.fetchedAt { FactRow("Archived", TimeFormat.full(TimeFormat.date(epoch: fetched))) }
+                if let fetched = model.fetchedAt { FactRow("Added", TimeFormat.full(TimeFormat.date(epoch: fetched))) }
+                if let archived = model.archivedAt { FactRow("Archived", TimeFormat.full(TimeFormat.date(epoch: archived))) }
                 if let checked = model.checkedAt { FactRow("Last checked", TimeFormat.relative(TimeFormat.date(epoch: checked))) }
                 if !model.ollamaTags.isEmpty { FactRow("Ollama tags", model.ollamaTags.joined(separator: ", ")) }
+            }
+            if let move = library.move {
+                MoveStatus(move: move)
             }
             upstream
         }
@@ -145,7 +150,7 @@ private struct LibraryOverview: View {
         if let variants = detail?.variants, !variants.isEmpty {
             InspectorSection(title: "Variants") {
                 ForEach(variants) { variant in
-                    LocalVariantRow(variant: variant)
+                    LocalVariantRow(variant: variant, archived: model.isArchived)
                 }
             }
         }
@@ -163,13 +168,28 @@ private struct LibraryOverview: View {
             }
             .help("Look at the model on Hugging Face: its other variants and files")
             Spacer()
+            if model.isArchived {
+                Button("Restore") {
+                    Task { await library.restore() }
+                }
+                .disabled(library.isMoving || daemon.status?.archiveAttached != true)
+                .help(ArchiveWords.restoreHelp(daemon.status))
+                .accessibilityIdentifier("restore-model")
+            } else {
+                Button("Archive…") {
+                    Task { await library.planArchive() }
+                }
+                .disabled(library.isMoving || daemon.status?.archiveAttached != true)
+                .help(ArchiveWords.archiveHelp(daemon.status))
+                .accessibilityIdentifier("archive-model")
+            }
             Button("Forget…", role: .destructive) {
                 confirmsForget = true
             }
             .disabled(!model.apps.isEmpty)
             .help(model.apps.isEmpty
                 ? "Drop the model from the records, so its stored files can be cleaned up"
-                : "Remove the model from every app first")
+                : "Deactivate the model in every app first")
         }
         .confirmationDialog("Forget \(model.repo)?", isPresented: $confirmsForget) {
             Button("Forget", role: .destructive) {
@@ -240,21 +260,21 @@ private struct AppRow: View {
             }
             Spacer()
             if presence != nil {
-                Button("Remove…") {
+                Button("Deactivate…") {
                     Task { await library.planRemoval(from: app.rawValue) }
                 }
                 .controlSize(.small)
-                .help("Remove the model from \(app.title). The stored copy stays.")
+                .help("Take the model out of \(app.title). The stored copy stays.")
                 .accessibilityIdentifier("remove-\(app.rawValue)")
             } else if placeable.count == 1, let variant = placeable.first {
-                Button("Place") {
+                Button("Activate") {
                     Task { await library.place(variant, into: app) }
                 }
                 .controlSize(.small)
                 .help(variant.placeHelp(for: app))
                 .accessibilityIdentifier("place-\(app.rawValue)")
             } else if !placeable.isEmpty {
-                Menu("Place") {
+                Menu("Activate") {
                     ForEach(placeable) { variant in
                         Button(variant.name) {
                             Task { await library.place(variant, into: app) }
@@ -282,6 +302,8 @@ private struct AppRow: View {
 /// One way the model can be used: a quantization, or the whole repository.
 private struct LocalVariantRow: View {
     let variant: Variant
+    /// The model is on the archive disk only; Restore brings it back.
+    let archived: Bool
 
     @Environment(LibraryStore.self) private var library
 
@@ -296,7 +318,7 @@ private struct LocalVariantRow: View {
             }
             Spacer()
             AppBadges(apps: variant.placedIn, none: "")
-            if !variant.isStored {
+            if !variant.isStored, !archived {
                 Button("Download") {
                     Task { await library.download(variant) }
                 }
@@ -309,6 +331,9 @@ private struct LocalVariantRow: View {
     private var state: String {
         if variant.isStored {
             return "stored"
+        }
+        if archived {
+            return "on the archive disk"
         }
         return variant.storedBytes == 0 ? "not on this Mac" : "\(ByteFormat.string(variant.storedBytes)) stored"
     }

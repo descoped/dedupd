@@ -66,7 +66,7 @@ struct DisplayTests {
         let done = job(2, .done)
         #expect(done.fraction == 1)
         #expect(done.progressText == "100.00 MB")
-        #expect(done.statusText == "Placed into Bionic and Ollama")
+        #expect(done.statusText == "Activated in Bionic and Ollama")
 
         var unsized = job(3, .resolving)
         unsized.bytesTotal = 0
@@ -76,6 +76,78 @@ struct DisplayTests {
         var storeOnly = job(4, .done)
         storeOnly.apps = []
         #expect(storeOnly.appList == "the store only")
+        #expect(storeOnly.statusText == "In the store only")
+    }
+
+    @Test("An archived model says so, and where its files are")
+    func archivedModel() {
+        var model = FixtureData.models[0]
+        #expect(!model.isArchived)
+        #expect(model.storedText == "4 files, 105.46 MB")
+        model.apps = []
+        model.archivedAt = 1_794_000_000
+        #expect(model.health == .archived)
+        #expect(model.storedText == "4 files, 105.46 MB, on the archive disk only")
+        model.upstream = "gone"
+        #expect(model.health == .goneUpstream, "that the provider lost the model matters more")
+    }
+
+    @Test("Archiving is described step by step before it is done")
+    func archivePlan() {
+        var plan = ArchivePlan(
+            repo: "org/Repo", archive: "/Volumes/Trunk/dedupd",
+            deactivate: [
+                DeactivateStep(app: "bionic", files: 13, bytes: 16_080_000_000, keep: []),
+                DeactivateStep(app: "ollama", files: 5, bytes: 16_100_000_000, keep: []),
+            ],
+            files: 13, bytes: 16_080_000_000, copyFiles: 0, copyBytes: 0, keep: []
+        )
+        #expect(plan.appList == "Bionic and Ollama")
+        #expect(plan.steps == [
+            "Every copy on the archive disk is read in full and checked. Nothing is removed unless all are good.",
+            "The model is taken out of Bionic and Ollama.",
+            "13 files, 16.08 GB, are removed from the internal disk. "
+                + "The copy in /Volumes/Trunk/dedupd stays, and Restore brings the model back.",
+        ])
+        plan.copyFiles = 2
+        plan.copyBytes = 1_200_000_000
+        #expect(plan.steps.first == "2 files, 1.20 GB, are copied to the archive disk first, because it does not have them yet.")
+        #expect(!plan.isEmpty)
+        plan.deactivate = []
+        plan.files = 0
+        #expect(plan.isEmpty)
+    }
+
+    @Test("A model on its way to the archive disk or back says how far it is")
+    func modelMove() {
+        var move = ModelMove(
+            kind: "archive", repo: "org/Repo", running: true, startedAt: 1, finishedAt: nil,
+            bytesTotal: 16_000_000_000, bytesDone: 4_000_000_000, files: 0, kept: 0, error: nil
+        )
+        #expect(move.fraction == 0.25)
+        #expect(move.statusText == "Archiving: 4.00 GB of 16.00 GB checked on the archive disk")
+        move.kind = "restore"
+        #expect(move.statusText == "Restoring: 4.00 GB of 16.00 GB copied back")
+        move.running = false
+        move.files = 13
+        move.bytesDone = 16_000_000_000
+        #expect(move.fraction == nil)
+        #expect(move.statusText == "Restored: 13 files, 16.00 GB")
+        move.error = "the archive disk is not attached (/Volumes/Trunk not found)"
+        #expect(move.statusText == "Restoring failed: the archive disk is not attached (/Volumes/Trunk not found)")
+    }
+
+    @Test("Archive and Restore say why they cannot be used")
+    func archiveHelp() {
+        var status = FixtureData.status()
+        #expect(ArchiveWords.archiveHelp(status).hasSuffix("The copy on /Volumes/Trunk/dedupd stays."))
+        #expect(ArchiveWords.restoreHelp(status) == "Copy the model back from /Volumes/Trunk/dedupd. Activate it in an app afterwards.")
+        status.archiveAttached = false
+        #expect(ArchiveWords.archiveHelp(status) == "The archive disk is not attached (/Volumes/Trunk/dedupd)")
+        #expect(ArchiveWords.restoreHelp(status) == "The archive disk is not attached")
+        status.archivePath = nil
+        #expect(ArchiveWords.archiveHelp(status) == "Set an archive folder on the Daemon screen first")
+        #expect(ArchiveWords.archiveHelp(nil) == "Set an archive folder on the Daemon screen first")
     }
 
     @Test("A model's state against Hugging Face")
@@ -228,7 +300,7 @@ struct DisplayTests {
             Notice(
                 id: "download-1",
                 title: "Downloaded org/Repo-GGUF:Q4_K_M",
-                body: "100.00 MB, placed into Bionic and Ollama."
+                body: "100.00 MB, activated in Bionic and Ollama."
             ),
             Notice(id: "download-2", title: "org/Repo-GGUF:Q4_K_M needs attention", body: "The disk is full."),
         ])

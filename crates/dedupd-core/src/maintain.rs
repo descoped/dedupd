@@ -235,13 +235,13 @@ pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
     Ok(freed)
 }
 
-/// Drop a repository from the archive records, so that `gc` sees its files as
+/// Drop a repository from the library records, so that `gc` sees its files as
 /// unreferenced. Refused while an app still has files of the repository.
 pub fn forget(db: &Mutex<Db>, repo: &str) -> Result<()> {
     prune_placements(db)?;
     let mut db = lock(db);
     let Some(id) = db.repo_id(PROVIDER_HF, repo)? else {
-        bail!("{repo} is not in the archive");
+        bail!("{repo} is not in the library");
     };
     let in_use: Vec<String> = db
         .placements()?

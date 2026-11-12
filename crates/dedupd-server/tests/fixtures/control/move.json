@@ -1,0 +1,12 @@
+{
+  "bytes_done": 300008,
+  "bytes_total": 300008,
+  "error": null,
+  "files": 2,
+  "finished_at": 1700000000,
+  "kept": 0,
+  "kind": "archive",
+  "repo": "org/Repo-GGUF",
+  "running": false,
+  "started_at": 1700000000
+}

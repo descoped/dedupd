@@ -1,7 +1,7 @@
 import DedupdClient
 import SwiftUI
 
-/// The files of each archived revision, and where the apps have them.
+/// The files of each revision dedupd keeps, and where the apps have them.
 struct LibraryFiles: View {
     let detail: ModelDetail
 
@@ -35,7 +35,7 @@ struct LibraryFiles: View {
     }
 
     private static func caption(_ revision: Revision) -> String {
-        var parts = [ByteFormat.string(revision.bytes), "archived \(TimeFormat.full(TimeFormat.date(epoch: revision.fetchedAt)))"]
+        var parts = [ByteFormat.string(revision.bytes), "added \(TimeFormat.full(TimeFormat.date(epoch: revision.fetchedAt)))"]
         if !revision.refs.isEmpty {
             parts.insert(revision.refs.joined(separator: ", "), at: 0)
         }
@@ -148,7 +148,7 @@ struct RemovalSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Remove \(plan.repo) from \(ModelApp.title(for: plan.app))?")
+            Text("Deactivate \(plan.repo) in \(ModelApp.title(for: plan.app))?")
                 .font(.headline)
             Text(summary)
                 .foregroundStyle(.secondary)
@@ -196,7 +196,7 @@ struct RemovalSheet: View {
                     library.removal = nil
                 }
                 .keyboardShortcut(.cancelAction)
-                Button("Remove", role: .destructive) {
+                Button("Deactivate", role: .destructive) {
                     Task { await library.applyRemoval() }
                 }
                 .disabled(plan.remove.isEmpty && plan.links.isEmpty)
@@ -213,6 +213,6 @@ struct RemovalSheet: View {
             return "Nothing can be removed: every file is still needed or has no stored copy."
         }
         return "\(ByteFormat.files(count)), \(ByteFormat.string(plan.bytes)), are deleted from the app's folder. "
-            + "The stored copy stays, so the model can be placed again without downloading."
+            + "The stored copy stays, so the model can be activated again without downloading."
     }
 }

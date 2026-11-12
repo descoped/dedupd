@@ -34,6 +34,8 @@ final class DaemonStore {
     private(set) var downloads: Downloads?
     /// The daemon is hashing its store.
     private(set) var checking = false
+    /// The archive or restore of one model that is running, or the last one.
+    private(set) var moving: ModelMove?
     /// Changes whenever the library may have changed or the daemon came
     /// back. Screens load their data again when it does.
     private(set) var revision = 0
@@ -165,6 +167,7 @@ final class DaemonStore {
             connection = .notRunning
             downloads = nil
             checking = false
+            moving = nil
             library = nil
         case let .event(event):
             if connection != .running {
@@ -173,6 +176,7 @@ final class DaemonStore {
             let before = jobs
             downloads = event.downloads
             checking = event.checking
+            moving = event.moving
             if before != event.downloads.jobs {
                 onJobsChanged?(before, event.downloads.jobs)
             }

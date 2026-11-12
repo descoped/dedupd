@@ -10,6 +10,7 @@ enum FixtureData {
     static let qwen = "lmstudio-community/Qwen3.8-27B-MLX-4bit"
     static let nemotron = "mlx-community/Nemotron-3-Super-120B-A12B-MLX-6bit"
     static let smolMLX = "mlx-community/SmolLM-135M-Instruct-4bit"
+    static let archiveFolder = "/Volumes/Trunk/dedupd"
 
     // MARK: - Status
 
@@ -19,7 +20,7 @@ enum FixtureData {
             version: "0.1.0",
             home: "/Users/example/.dedupd",
             endpoint: "https://huggingface.co",
-            archivePath: "/Volumes/Trunk/dedupd",
+            archivePath: archiveFolder,
             archiveAttached: true,
             storeFiles: 61,
             storeBytes: 290_040_000_000,
@@ -111,7 +112,8 @@ enum FixtureData {
             unchecked: 0,
             upstream: "ok",
             checkedAt: 1_793_980_000,
-            ollamaTags: ["Q4_K_M"]
+            ollamaTags: ["Q4_K_M"],
+            archivedAt: nil
         ),
         LibraryModel(
             provider: "hf",
@@ -132,7 +134,8 @@ enum FixtureData {
             unchecked: 0,
             upstream: "ok",
             checkedAt: 1_793_900_000,
-            ollamaTags: []
+            ollamaTags: [],
+            archivedAt: nil
         ),
         LibraryModel(
             provider: "hf",
@@ -150,7 +153,8 @@ enum FixtureData {
             unchecked: 0,
             upstream: "ok",
             checkedAt: 1_793_900_000,
-            ollamaTags: []
+            ollamaTags: [],
+            archivedAt: nil
         ),
         LibraryModel(
             provider: "hf",
@@ -171,7 +175,8 @@ enum FixtureData {
             unchecked: 2,
             upstream: "gone",
             checkedAt: 1_793_900_000,
-            ollamaTags: []
+            ollamaTags: [],
+            archivedAt: nil
         ),
         LibraryModel(
             provider: "hf",
@@ -189,7 +194,8 @@ enum FixtureData {
             unchecked: 0,
             upstream: "ok",
             checkedAt: 1_793_900_000,
-            ollamaTags: []
+            ollamaTags: [],
+            archivedAt: nil
         ),
     ]
 }
@@ -364,7 +370,7 @@ extension FixtureData {
             bytes: 290_040_000_000, sharedBytes: 290_040_000_000, models: 5
         ),
         archive: Location(
-            id: "archive", path: "/Volumes/Trunk/dedupd", present: true, files: 61,
+            id: "archive", path: archiveFolder, present: true, files: 61,
             bytes: 290_040_000_000, sharedBytes: 0, models: 5
         ),
         apps: [

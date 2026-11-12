@@ -111,7 +111,7 @@ private struct HubLocalState: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             if model.fromArchive {
-                Label("Hugging Face did not answer. This is the archived copy of the model's description.", systemImage: "archivebox")
+                Label("Hugging Face did not answer. This is the description dedupd kept of the model.", systemImage: "archivebox")
                     .foregroundStyle(.orange)
             }
             if model.downloading {
@@ -172,7 +172,7 @@ private struct TargetPicker: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
-                Text("Place into")
+                Text("Activate in")
                     .foregroundStyle(.secondary)
                 ForEach(usable) { app in
                     Toggle(app.shortTitle, isOn: binding(app))
@@ -280,7 +280,7 @@ private struct HubVariantRow: View {
                 .help(chosen.isEmpty ? "Stored on this Mac" : "On this Mac, in every app chosen above")
                 .accessibilityLabel("On this Mac")
         } else {
-            Button(variant.isStored ? "Place" : "Download") {
+            Button(variant.isStored ? "Activate" : "Download") {
                 Task { await discover.download(variant, into: variant.isStored ? missing : chosen) }
             }
             .controlSize(.small)
@@ -293,7 +293,7 @@ private struct HubVariantRow: View {
         let apps = variant.isStored ? missing : chosen
         let place = apps.isEmpty
             ? "keeps it in the store"
-            : "places it into \(ListFormatter.localizedString(byJoining: apps.map(\.shortTitle)))"
+            : "activates it in \(ListFormatter.localizedString(byJoining: apps.map(\.shortTitle)))"
         return variant.isStored
             ? "Already stored: \(place) as a clone, without downloading"
             : "Downloads \(ByteFormat.string(variant.bytes - min(variant.bytes, variant.storedBytes))) and \(place)"

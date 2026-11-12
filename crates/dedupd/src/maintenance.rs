@@ -67,7 +67,7 @@ fn print_blobs(title: &str, blobs: &[BlobRow]) {
 pub fn cmd_gc(o: &Opened, offload: bool, apply: bool) -> Result<()> {
     let plan = maintain::gc_plan(&o.engine.db, &o.engine.store, offload)?;
     print_blobs(
-        "Not referred to by any archived model or app file",
+        "Not referred to by any model in the library or app file",
         &plan.orphans,
     );
     if offload {
@@ -87,6 +87,6 @@ pub fn cmd_gc(o: &Opened, offload: bool, apply: bool) -> Result<()> {
 
 pub fn cmd_forget(o: &Opened, repo: &str) -> Result<()> {
     maintain::forget(&o.engine.db, repo)?;
-    println!("{repo} is no longer in the archive records. `dedupd gc` shows the files this frees.");
+    println!("{repo} is no longer in the library. `dedupd gc` shows the files this frees.");
     Ok(())
 }

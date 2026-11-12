@@ -29,6 +29,7 @@
     ],
     "repos": [
       {
+        "archived": false,
         "bytes": 300008,
         "commit": "0123456789abcdef0123456789abcdef01234567",
         "files": 2,

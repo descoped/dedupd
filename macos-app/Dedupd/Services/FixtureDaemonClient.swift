@@ -21,6 +21,11 @@ actor FixtureDaemonClient: DaemonClient {
     private var settings = FixtureData.settings
     private var seq: UInt64 = 0
     private var nextID: Int64 = 20
+    /// The models the owner archived, and the last move, as the daemon
+    /// would tell it.
+    private var archived: Set<String> = []
+    private var moving: ModelMove?
+    private var library: UInt64 = 1
     private var listeners: [UUID: AsyncStream<DaemonSignal>.Continuation] = [:]
 
     init(scenario: FixtureScenario) {
@@ -61,7 +66,7 @@ actor FixtureDaemonClient: DaemonClient {
     }
 
     private func event() -> DaemonEvent {
-        DaemonEvent(seq: seq, library: 1, checking: false, downloads: downloads())
+        DaemonEvent(seq: seq, library: library, checking: false, moving: moving, downloads: downloads())
     }
 
     private func downloads() -> Downloads {
@@ -109,13 +114,35 @@ actor FixtureDaemonClient: DaemonClient {
 
     func models(at address: String) async throws -> [LibraryModel] {
         try answering(address)
-        return FixtureData.models
+        return FixtureData.models.map(asHeld)
+    }
+
+    /// The model as the canned daemon holds it now: an archived one is in
+    /// no app.
+    private func asHeld(_ model: LibraryModel) -> LibraryModel {
+        guard archived.contains(model.repo) else {
+            return model
+        }
+        var model = model
+        model.apps = []
+        model.archivedAt = 1_794_000_000
+        return model
     }
 
     func model(_ repo: String, at address: String) async throws -> ModelDetail {
         try answering(address)
-        guard let detail = FixtureData.detail(repo) else {
-            throw ClientError.Failed(message: "\(repo) is not in the archive")
+        guard var detail = FixtureData.detail(repo) else {
+            throw ClientError.Failed(message: "\(repo) is not in the library")
+        }
+        if archived.contains(repo) {
+            detail.model = asHeld(detail.model)
+            detail.placements = []
+            detail.variants = detail.variants.map { variant in
+                var variant = variant
+                variant.placedIn = []
+                variant.storedBytes = 0
+                return variant
+            }
         }
         return detail
     }
@@ -234,6 +261,48 @@ actor FixtureDaemonClient: DaemonClient {
             bytes: files.map(\.size).reduce(0, +),
             removed: apply ? UInt64(files.count) : nil
         )
+    }
+
+    func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan {
+        try answering(address)
+        guard let model = FixtureData.models.first(where: { $0.repo == repo }), !archived.contains(repo) else {
+            throw ClientError.Failed(message: "\(repo) is not in the library")
+        }
+        return ArchivePlan(
+            repo: repo,
+            archive: FixtureData.archiveFolder,
+            deactivate: model.apps.map { DeactivateStep(app: $0.app, files: $0.files, bytes: $0.bytes, keep: []) },
+            files: model.storedFiles,
+            bytes: model.storedBytes,
+            copyFiles: 0,
+            copyBytes: 0,
+            keep: []
+        )
+    }
+
+    func archive(_ repo: String, at address: String) async throws {
+        try answering(address)
+        let plan = try await archivePlan(repo, at: address)
+        archived.insert(repo)
+        moved(kind: "archive", repo: repo, files: plan.files, bytes: plan.bytes)
+    }
+
+    func restore(_ repo: String, at address: String) async throws {
+        try answering(address)
+        guard archived.remove(repo) != nil, let model = FixtureData.models.first(where: { $0.repo == repo }) else {
+            throw ClientError.Failed(message: "\(repo) is not archived")
+        }
+        moved(kind: "restore", repo: repo, files: model.storedFiles, bytes: model.storedBytes)
+    }
+
+    /// The canned daemon moves a model at once and says so.
+    private func moved(kind: String, repo: String, files: UInt64, bytes: UInt64) {
+        moving = ModelMove(
+            kind: kind, repo: repo, running: false, startedAt: 1_794_000_000, finishedAt: 1_794_000_000,
+            bytesTotal: bytes, bytesDone: bytes, files: files, kept: 0, error: nil
+        )
+        library += 1
+        changed()
     }
 
     // MARK: - Storage

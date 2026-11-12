@@ -37,6 +37,11 @@ struct LibraryView: View {
                     RemovalSheet(plan: plan)
                 }
             }
+            .sheet(isPresented: showsArchive) {
+                if let plan = library.archiving {
+                    ArchiveSheet(plan: plan)
+                }
+            }
             .task(id: daemon.revision) {
                 await library.reload()
             }
@@ -51,6 +56,16 @@ struct LibraryView: View {
         } set: { shown in
             if !shown {
                 library.removal = nil
+            }
+        }
+    }
+
+    private var showsArchive: Binding<Bool> {
+        Binding {
+            library.archiving != nil
+        } set: { shown in
+            if !shown {
+                library.archiving = nil
             }
         }
     }
@@ -126,7 +141,7 @@ struct LibraryView: View {
             }
             .width(min: 76, ideal: 84, max: 110)
             TableColumn("Apps") { model in
-                AppBadges(apps: model.appNames, none: "Store only")
+                AppBadges(apps: model.appNames, none: model.isArchived ? "Archived" : "Store only")
             }
             .width(min: 128, ideal: 136, max: 200)
             TableColumn("State") { model in
@@ -135,7 +150,7 @@ struct LibraryView: View {
                 HealthLabel(health: model.health, showsText: false)
             }
             .width(min: 40, ideal: 44, max: 60)
-            TableColumn("Archived", value: \.fetched) { model in
+            TableColumn("Added", value: \.fetched) { model in
                 Text(model.fetchedAt.map { TimeFormat.relative(TimeFormat.date(epoch: $0)) } ?? "—")
                     .foregroundStyle(.secondary)
             }

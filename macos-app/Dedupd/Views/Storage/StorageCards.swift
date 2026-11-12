@@ -10,7 +10,7 @@ struct CleanUpCard: View {
         @Bindable var storage = storage
         Card(
             title: "Clean up",
-            note: "Nothing is deleted by itself. This lists stored files that no archived model and no app uses any more."
+            note: "Nothing is deleted by itself. This lists stored files that no model in the library and no app uses any more."
         ) {
             Toggle(
                 "Also list files that can be moved off this Mac: the archive disk has them and no app uses them",

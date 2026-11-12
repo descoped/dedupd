@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 
 mod apps;
 mod launchd;
+mod lifecycle;
 mod maintenance;
 mod serve;
 
@@ -43,7 +44,7 @@ struct Cli {
 struct ModelArgs {
     /// The model: org/repo, org/repo:Q4_K_M or org/repo@revision
     model: String,
-    /// Apps to place the model into: bionic, ollama, hf (also: mlx, llama.cpp)
+    /// Apps to activate the model in: bionic, ollama, hf (also: mlx, llama.cpp)
     #[arg(long = "for", value_delimiter = ',', value_name = "APPS")]
     apps: Vec<App>,
     /// Only files matching these patterns, for example '*Q8_0*.gguf'
@@ -53,7 +54,7 @@ struct ModelArgs {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Fetch a model into the store once and place it into apps as clones
+    /// Fetch a model into the store once and activate it in apps, as clones
     Pull {
         #[command(flatten)]
         model: ModelArgs,
@@ -61,10 +62,35 @@ enum Command {
         #[arg(long, default_value_t = pull::DEFAULT_JOBS)]
         jobs: usize,
     },
-    /// Place an archived model into apps without contacting Hugging Face
-    Place {
+    /// Activate a stored model in apps, as clones, without contacting Hugging Face
+    #[command(alias = "place")]
+    Activate {
         #[command(flatten)]
         model: ModelArgs,
+    },
+    /// Take a model out of apps; the stored copy stays. Lists what it would remove
+    Deactivate {
+        /// The repository, as org/repo
+        repo: String,
+        /// Apps to take it out of: bionic, ollama, hf [default: every app that has it]
+        #[arg(long = "from", value_delimiter = ',', value_name = "APPS")]
+        apps: Vec<App>,
+        /// Remove what is listed. Without this, nothing is removed
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Move a model to the archive disk only: out of every app and off the internal disk
+    Archive {
+        /// The repository, as org/repo
+        repo: String,
+        /// Do it. Without this, it only lists what would happen
+        #[arg(long)]
+        apply: bool,
+    },
+    /// Copy an archived model back from the archive disk
+    Restore {
+        /// The repository, as org/repo
+        repo: String,
     },
     /// Bring models the apps already hold into the store, without changing the apps' files
     Adopt {
@@ -101,7 +127,7 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
-    /// Copy the store and database to the archive disk
+    /// Copy the store and database to the archive disk (the backup)
     Backup {
         /// The archive folder [default: `archive` in config.toml]
         dir: Option<PathBuf>,
@@ -136,7 +162,7 @@ enum Command {
         #[arg(long)]
         apply: bool,
     },
-    /// Drop a model from the archive records, so gc can remove its files
+    /// Drop a model from the library, so gc can remove its files
     Forget {
         /// The repository, as org/repo
         repo: String,
@@ -237,20 +263,20 @@ pub fn backup_if_attached(o: &Opened) {
     };
     if !archive::attached(&archive_home) {
         eprintln!(
-            "Archive disk not attached; {} will be updated by the next `dedupd backup`.",
+            "The archive disk is not attached; {} will be updated by the next `dedupd backup`.",
             archive_home.root().display()
         );
         return;
     }
     match archive::sync(&o.engine.db, &o.engine.store, &archive_home, &mut |_, _| {}) {
         Ok(r) if r.copied > 0 => eprintln!(
-            "Archived {} files ({}) to {}.",
+            "Backed up {} files ({}) to {}.",
             r.copied,
             human(r.copied_bytes),
             archive_home.root().display()
         ),
         Ok(_) => {}
-        Err(e) => eprintln!("Could not update the archive: {e:#}"),
+        Err(e) => eprintln!("Could not update the backup: {e:#}"),
     }
 }
 
@@ -329,7 +355,7 @@ async fn cmd_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
         out.files,
         human(out.bytes),
         if out.from_archive {
-            " (from the archive; Hugging Face was not used)"
+            " (from the kept copy; Hugging Face was not used)"
         } else {
             ""
         }
@@ -341,7 +367,7 @@ async fn cmd_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
     );
     for placed in &out.placed {
         println!(
-            "  {:<7} {} placed as clones, {} already there",
+            "  {:<7} activated: {} files cloned, {} already there",
             placed.app, placed.cloned, placed.present
         );
     }
@@ -508,6 +534,9 @@ fn cmd_status(o: &Opened, json: bool) -> Result<()> {
     for r in &s.repos {
         let commit = r.commit.as_deref().map(short).unwrap_or("unknown");
         let mut notes = vec![format!("{} verified", r.verified)];
+        if r.archived {
+            notes.insert(0, "archived".to_string());
+        }
         for (n, label) in [
             (r.mismatch, "different from upstream"),
             (r.not_upstream, "not listed upstream"),
@@ -551,7 +580,7 @@ fn cmd_backup(o: &Opened, dir: Option<PathBuf>) -> Result<()> {
     );
     if report.only_in_archive > 0 {
         println!(
-            "{} files are only in the archive; they are copied back when needed.",
+            "{} files are only on the archive disk; they are copied back when needed.",
             report.only_in_archive
         );
     }
@@ -586,7 +615,12 @@ async fn main() -> Result<()> {
 
     match cli.command {
         Command::Pull { model, jobs } => cmd_pull(&o, model, jobs, false).await,
-        Command::Place { model } => cmd_pull(&o, model, 1, true).await,
+        Command::Activate { model } => cmd_pull(&o, model, 1, true).await,
+        Command::Deactivate { repo, apps, apply } => {
+            lifecycle::cmd_deactivate(&o, &repo, apps, apply)
+        }
+        Command::Archive { repo, apply } => lifecycle::cmd_archive(&o, &repo, apply),
+        Command::Restore { repo } => lifecycle::cmd_restore(&o, &repo),
         Command::Adopt {
             apps,
             models_dir,

@@ -59,6 +59,9 @@ final class LibraryStore {
     /// What removing the selected model from an app would delete; set while
     /// the owner is asked to confirm.
     var removal: UnplacePlan?
+    /// What archiving the selected model would do; set while the owner is
+    /// asked to confirm.
+    var archiving: ArchivePlan?
 
     @ObservationIgnored private let daemon: DaemonStore
 
@@ -185,6 +188,48 @@ final class LibraryStore {
             try await client.unplace(plan.repo, app: plan.app, apply: true, at: address)
         }
         await reload()
+    }
+
+    // MARK: - Archive and restore
+
+    /// The archive or restore of the selected model: the one that is
+    /// running, or the last one when it failed.
+    var move: ModelMove? {
+        guard let move = daemon.moving, move.repo == selected?.repo, move.running || move.error != nil else {
+            return nil
+        }
+        return move
+    }
+
+    /// The daemon moves one model at a time.
+    var isMoving: Bool { daemon.moving?.running == true }
+
+    /// Ask what archiving the selected model would do.
+    func planArchive() async {
+        guard let model = selected else {
+            return
+        }
+        archiving = await daemon.attempt { client, address in
+            try await client.archivePlan(model.repo, at: address)
+        }
+    }
+
+    /// Archive the model the owner agreed to. The daemon does it in the
+    /// background and its events tell how far it is.
+    func applyArchive() async {
+        guard let plan = archiving else {
+            return
+        }
+        archiving = nil
+        await daemon.attempt { client, address in try await client.archive(plan.repo, at: address) }
+    }
+
+    /// Copy the selected model back from the archive disk.
+    func restore() async {
+        guard let model = selected else {
+            return
+        }
+        await daemon.attempt { client, address in try await client.restore(model.repo, at: address) }
     }
 
     /// Drop the selected model from the records, so its stored files can be

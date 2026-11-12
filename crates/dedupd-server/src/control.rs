@@ -3,6 +3,7 @@
 //! Everything the app shows comes from here, and everything it does goes
 //! through here: the daemon owns the store, the database and the downloads.
 
+use crate::moves::{self, Kind};
 use crate::{Call, Server, daemon, json, percent_decode, plain};
 use axum::body::{Body, Bytes};
 use axum::http::{Method, StatusCode, header};
@@ -50,6 +51,14 @@ struct PullBody {
 #[derive(Deserialize)]
 struct RepoBody {
     repo: String,
+}
+
+#[derive(Deserialize)]
+struct MoveBody {
+    repo: String,
+    /// Do it. Without it the answer only says what would happen.
+    #[serde(default)]
+    apply: bool,
 }
 
 #[derive(Deserialize)]
@@ -195,12 +204,14 @@ fn events(server: &Arc<Server>) -> Response {
         server: Arc<Server>,
         queue: tokio::sync::watch::Receiver<u64>,
         library: tokio::sync::watch::Receiver<u64>,
+        moving: tokio::sync::watch::Receiver<Option<moves::MoveState>>,
         seq: u64,
     }
     let feed = Feed {
         server: server.clone(),
         queue: server.queue.subscribe(),
         library: server.library_changes(),
+        moving: server.moving.subscribe(),
         seq: 0,
     };
     let lines = futures_util::stream::unfold(feed, |mut feed| async move {
@@ -209,6 +220,7 @@ fn events(server: &Arc<Server>) -> Response {
                 _ = feed.server.shutdown.cancelled() => return None,
                 _ = feed.queue.changed() => {}
                 _ = feed.library.changed() => {}
+                _ = feed.moving.changed() => {}
                 _ = tokio::time::sleep(HEARTBEAT) => {}
             }
             tokio::select! {
@@ -219,9 +231,11 @@ fn events(server: &Arc<Server>) -> Response {
         feed.seq += 1;
         feed.queue.borrow_and_update();
         let library = *feed.library.borrow_and_update();
+        let moving = feed.moving.borrow_and_update().clone();
         let mut line = j!({
             "seq": feed.seq,
             "library": library,
+            "moving": moving,
             "checking": feed.server.check.lock().expect("lock").running,
             "downloads": downloads(&feed.server),
         })
@@ -290,7 +304,7 @@ async fn check_upstream(server: &Arc<Server>, repo: &str) -> Response {
             Ok(None) => {
                 return error(
                     StatusCode::NOT_FOUND,
-                    format!("{repo} is not in the archive"),
+                    format!("{repo} is not in the library"),
                 );
             }
             Err(e) => return internal(format!("{e:#}")),
@@ -364,6 +378,21 @@ async fn unplace(server: &Arc<Server>, body: UnplaceBody) -> Response {
         server.touch();
     }
     answer(done)
+}
+
+/// Archive or restore one model: say what it would do, or start doing it.
+async fn move_model(server: &Arc<Server>, kind: Kind, body: MoveBody) -> Response {
+    if body.apply {
+        return match moves::start(server, kind, body.repo).await {
+            Ok(()) => ok(j!({"started": true})),
+            Err(why) => error(StatusCode::CONFLICT, why),
+        };
+    }
+    let server = server.clone();
+    match blocking(move || moves::plan(&server, kind, &body.repo)).await {
+        Ok(plan) => ok(plan),
+        Err(e) => error(StatusCode::CONFLICT, format!("{e:#}")),
+    }
 }
 
 fn gc_answer(plan: &maintain::GcPlan, freed: Option<u64>) -> Value {
@@ -500,7 +529,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 Ok(Some(detail)) => ok(detail),
                 Ok(None) => error(
                     StatusCode::NOT_FOUND,
-                    format!("{repo} is not in the archive"),
+                    format!("{repo} is not in the library"),
                 ),
                 Err(e) => internal(format!("{e:#}")),
             }
@@ -530,6 +559,15 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
             Ok(b) => unplace(server, b).await,
             Err(refused) => *refused,
         },
+        (&Method::POST, ["archive"]) => match body::<MoveBody>(call) {
+            Ok(b) => move_model(server, Kind::Archive, b).await,
+            Err(refused) => *refused,
+        },
+        (&Method::POST, ["restore"]) => match body::<MoveBody>(call) {
+            Ok(b) => move_model(server, Kind::Restore, b).await,
+            Err(refused) => *refused,
+        },
+        (&Method::GET, ["move"]) => ok(server.moving.borrow().clone()),
         (&Method::GET, ["gc"]) => {
             let offload = call
                 .param("offload")

@@ -36,6 +36,8 @@ pub struct RepoStatus {
     pub mismatch: u64,
     pub not_upstream: u64,
     pub unchecked: u64,
+    /// The owner archived the model: its files are on the archive disk only.
+    pub archived: bool,
 }
 
 pub fn status(db: &Db) -> Result<Status> {
@@ -73,7 +75,7 @@ pub fn status(db: &Db) -> Result<Status> {
                 COALESCE(sum(p.verify_state = 'mismatch'), 0),
                 COALESCE(sum(p.verify_state = 'not_upstream'), 0),
                 COALESCE(sum(p.verify_state = 'unchecked'), 0),
-                r.id
+                r.id, r.archived_at IS NOT NULL
          FROM repos r LEFT JOIN placements p ON p.repo_id = r.id
          GROUP BY r.id ORDER BY r.provider, r.name",
     )?;
@@ -103,6 +105,7 @@ pub fn status(db: &Db) -> Result<Status> {
                 mismatch: n(6)?,
                 not_upstream: n(7)?,
                 unchecked: n(8)?,
+                archived: r.get(10)?,
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;

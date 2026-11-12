@@ -15,6 +15,7 @@
         "shared_bytes": 300008
       }
     ],
+    "archived_at": null,
     "checked_at": 1700000000,
     "commit": "0123456789abcdef0123456789abcdef01234567",
     "fetched_at": 1700000000,

@@ -59,6 +59,7 @@ func event(_ jobs: [Job], library: UInt64 = 1, seq: UInt64 = 1) -> DaemonEvent {
         seq: seq,
         library: library,
         checking: false,
+        moving: nil,
         downloads: Downloads(
             governor: Governor(connections: 1, window: 4, maxConnections: 8, holdSeconds: 0, speedLimit: 0, budgets: []),
             speed: jobs.map(\.speed).reduce(0, +),

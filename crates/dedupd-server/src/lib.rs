@@ -7,6 +7,7 @@ pub mod daemon;
 mod discover;
 mod files;
 mod hubapi;
+pub mod moves;
 mod proxy;
 mod registry;
 
@@ -41,6 +42,8 @@ pub struct Server {
     pub(crate) passes: daemon::PassState,
     /// The store check the owner asked for, or the scheduled one.
     pub(crate) check: Mutex<daemon::CheckState>,
+    /// The archive or restore of one model that is running, or the last one.
+    pub(crate) moving: watch::Sender<Option<moves::MoveState>>,
     /// Counts up whenever what the store or the apps hold has changed.
     library: watch::Sender<u64>,
     /// Answers from the provider's search, kept for a few minutes.
@@ -76,6 +79,7 @@ impl Server {
             queue,
             passes: daemon::PassState::default(),
             check: Mutex::new(daemon::CheckState::default()),
+            moving: watch::Sender::new(None),
             library: watch::Sender::new(0),
             searches: Mutex::new(HashMap::new()),
             started_at: std::time::SystemTime::now()

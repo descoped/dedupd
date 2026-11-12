@@ -1101,6 +1101,106 @@ public func FfiConverterTypeAppUsage_lower(_ value: AppUsage) -> RustBuffer {
 
 
 /**
+ * What archiving a model would do: take it out of every app, then remove
+ * its files from the internal disk once the archive disk has a good copy.
+ */
+public struct ArchivePlan: Equatable, Hashable {
+    public var repo: String
+    /**
+     * The archive folder.
+     */
+    public var archive: String
+    public var deactivate: [DeactivateStep]
+    /**
+     * Stored files that would leave the internal disk, and their size.
+     */
+    public var files: UInt64
+    public var bytes: UInt64
+    /**
+     * Of those, the files the archive disk lacks; they are copied first.
+     */
+    public var copyFiles: UInt64
+    public var copyBytes: UInt64
+    public var keep: [KeptStored]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(repo: String, 
+        /**
+         * The archive folder.
+         */archive: String, deactivate: [DeactivateStep], 
+        /**
+         * Stored files that would leave the internal disk, and their size.
+         */files: UInt64, bytes: UInt64, 
+        /**
+         * Of those, the files the archive disk lacks; they are copied first.
+         */copyFiles: UInt64, copyBytes: UInt64, keep: [KeptStored]) {
+        self.repo = repo
+        self.archive = archive
+        self.deactivate = deactivate
+        self.files = files
+        self.bytes = bytes
+        self.copyFiles = copyFiles
+        self.copyBytes = copyBytes
+        self.keep = keep
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ArchivePlan: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeArchivePlan: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ArchivePlan {
+        return
+            try ArchivePlan(
+                repo: FfiConverterString.read(from: &buf), 
+                archive: FfiConverterString.read(from: &buf), 
+                deactivate: FfiConverterSequenceTypeDeactivateStep.read(from: &buf), 
+                files: FfiConverterUInt64.read(from: &buf), 
+                bytes: FfiConverterUInt64.read(from: &buf), 
+                copyFiles: FfiConverterUInt64.read(from: &buf), 
+                copyBytes: FfiConverterUInt64.read(from: &buf), 
+                keep: FfiConverterSequenceTypeKeptStored.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ArchivePlan, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.repo, into: &buf)
+        FfiConverterString.write(value.archive, into: &buf)
+        FfiConverterSequenceTypeDeactivateStep.write(value.deactivate, into: &buf)
+        FfiConverterUInt64.write(value.files, into: &buf)
+        FfiConverterUInt64.write(value.bytes, into: &buf)
+        FfiConverterUInt64.write(value.copyFiles, into: &buf)
+        FfiConverterUInt64.write(value.copyBytes, into: &buf)
+        FfiConverterSequenceTypeKeptStored.write(value.keep, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeArchivePlan_lift(_ buf: RustBuffer) throws -> ArchivePlan {
+    return try FfiConverterTypeArchivePlan.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeArchivePlan_lower(_ value: ArchivePlan) -> RustBuffer {
+    return FfiConverterTypeArchivePlan.lower(value)
+}
+
+
+/**
  * What the provider allows in a time window, as it last said.
  */
 public struct Budget: Equatable, Hashable {
@@ -1184,6 +1284,10 @@ public struct DaemonEvent: Equatable, Hashable {
      * The whole store is being checked.
      */
     public var checking: Bool
+    /**
+     * The archive or restore of one model that is running, or the last one.
+     */
+    public var moving: ModelMove?
     public var downloads: Downloads
 
     // Default memberwise initializers are never public by default, so we
@@ -1194,10 +1298,14 @@ public struct DaemonEvent: Equatable, Hashable {
          */library: UInt64, 
         /**
          * The whole store is being checked.
-         */checking: Bool, downloads: Downloads) {
+         */checking: Bool, 
+        /**
+         * The archive or restore of one model that is running, or the last one.
+         */moving: ModelMove?, downloads: Downloads) {
         self.seq = seq
         self.library = library
         self.checking = checking
+        self.moving = moving
         self.downloads = downloads
     }
 
@@ -1220,6 +1328,7 @@ public struct FfiConverterTypeDaemonEvent: FfiConverterRustBuffer {
                 seq: FfiConverterUInt64.read(from: &buf), 
                 library: FfiConverterUInt64.read(from: &buf), 
                 checking: FfiConverterBool.read(from: &buf), 
+                moving: FfiConverterOptionTypeModelMove.read(from: &buf), 
                 downloads: FfiConverterTypeDownloads.read(from: &buf)
         )
     }
@@ -1228,6 +1337,7 @@ public struct FfiConverterTypeDaemonEvent: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.seq, into: &buf)
         FfiConverterUInt64.write(value.library, into: &buf)
         FfiConverterBool.write(value.checking, into: &buf)
+        FfiConverterOptionTypeModelMove.write(value.moving, into: &buf)
         FfiConverterTypeDownloads.write(value.downloads, into: &buf)
     }
 }
@@ -1589,6 +1699,77 @@ public func FfiConverterTypeDaemonStatus_lift(_ buf: RustBuffer) throws -> Daemo
 #endif
 public func FfiConverterTypeDaemonStatus_lower(_ value: DaemonStatus) -> RustBuffer {
     return FfiConverterTypeDaemonStatus.lower(value)
+}
+
+
+/**
+ * What archiving would take out of one app.
+ */
+public struct DeactivateStep: Equatable, Hashable {
+    public var app: String
+    public var files: UInt64
+    public var bytes: UInt64
+    /**
+     * The app's files that would be left alone, and why.
+     */
+    public var keep: [KeptFile]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(app: String, files: UInt64, bytes: UInt64, 
+        /**
+         * The app's files that would be left alone, and why.
+         */keep: [KeptFile]) {
+        self.app = app
+        self.files = files
+        self.bytes = bytes
+        self.keep = keep
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension DeactivateStep: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeDeactivateStep: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> DeactivateStep {
+        return
+            try DeactivateStep(
+                app: FfiConverterString.read(from: &buf), 
+                files: FfiConverterUInt64.read(from: &buf), 
+                bytes: FfiConverterUInt64.read(from: &buf), 
+                keep: FfiConverterSequenceTypeKeptFile.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: DeactivateStep, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.app, into: &buf)
+        FfiConverterUInt64.write(value.files, into: &buf)
+        FfiConverterUInt64.write(value.bytes, into: &buf)
+        FfiConverterSequenceTypeKeptFile.write(value.keep, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeactivateStep_lift(_ buf: RustBuffer) throws -> DeactivateStep {
+    return try FfiConverterTypeDeactivateStep.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeDeactivateStep_lower(_ value: DeactivateStep) -> RustBuffer {
+    return FfiConverterTypeDeactivateStep.lower(value)
 }
 
 
@@ -2600,6 +2781,67 @@ public func FfiConverterTypeKeptFile_lower(_ value: KeptFile) -> RustBuffer {
 
 
 /**
+ * A stored file that archiving leaves on the internal disk.
+ */
+public struct KeptStored: Equatable, Hashable {
+    public var sha256: String
+    public var size: UInt64
+    public var why: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(sha256: String, size: UInt64, why: String) {
+        self.sha256 = sha256
+        self.size = size
+        self.why = why
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension KeptStored: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeKeptStored: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> KeptStored {
+        return
+            try KeptStored(
+                sha256: FfiConverterString.read(from: &buf), 
+                size: FfiConverterUInt64.read(from: &buf), 
+                why: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: KeptStored, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.sha256, into: &buf)
+        FfiConverterUInt64.write(value.size, into: &buf)
+        FfiConverterString.write(value.why, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKeptStored_lift(_ buf: RustBuffer) throws -> KeptStored {
+    return try FfiConverterTypeKeptStored.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeKeptStored_lower(_ value: KeptStored) -> RustBuffer {
+    return FfiConverterTypeKeptStored.lower(value)
+}
+
+
+/**
  * One repository in the library.
  */
 public struct LibraryModel: Equatable, Hashable {
@@ -2625,6 +2867,11 @@ public struct LibraryModel: Equatable, Hashable {
     public var upstream: String
     public var checkedAt: Int64?
     public var ollamaTags: [String]
+    /**
+     * When the owner archived the model, in seconds since the epoch: it is
+     * in no app and its files are on the archive disk only.
+     */
+    public var archivedAt: Int64?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -2634,7 +2881,11 @@ public struct LibraryModel: Equatable, Hashable {
          */fetchedAt: Int64?, storedFiles: UInt64, storedBytes: UInt64, apps: [AppPresence], verified: UInt64, mismatch: UInt64, notUpstream: UInt64, unchecked: UInt64, 
         /**
          * `ok`, `gone` or `unknown`.
-         */upstream: String, checkedAt: Int64?, ollamaTags: [String]) {
+         */upstream: String, checkedAt: Int64?, ollamaTags: [String], 
+        /**
+         * When the owner archived the model, in seconds since the epoch: it is
+         * in no app and its files are on the archive disk only.
+         */archivedAt: Int64?) {
         self.provider = provider
         self.repo = repo
         self.commit = commit
@@ -2651,6 +2902,7 @@ public struct LibraryModel: Equatable, Hashable {
         self.upstream = upstream
         self.checkedAt = checkedAt
         self.ollamaTags = ollamaTags
+        self.archivedAt = archivedAt
     }
 
     
@@ -2684,7 +2936,8 @@ public struct FfiConverterTypeLibraryModel: FfiConverterRustBuffer {
                 unchecked: FfiConverterUInt64.read(from: &buf), 
                 upstream: FfiConverterString.read(from: &buf), 
                 checkedAt: FfiConverterOptionInt64.read(from: &buf), 
-                ollamaTags: FfiConverterSequenceString.read(from: &buf)
+                ollamaTags: FfiConverterSequenceString.read(from: &buf), 
+                archivedAt: FfiConverterOptionInt64.read(from: &buf)
         )
     }
 
@@ -2705,6 +2958,7 @@ public struct FfiConverterTypeLibraryModel: FfiConverterRustBuffer {
         FfiConverterString.write(value.upstream, into: &buf)
         FfiConverterOptionInt64.write(value.checkedAt, into: &buf)
         FfiConverterSequenceString.write(value.ollamaTags, into: &buf)
+        FfiConverterOptionInt64.write(value.archivedAt, into: &buf)
     }
 }
 
@@ -3148,6 +3402,127 @@ public func FfiConverterTypeModelMeta_lower(_ value: ModelMeta) -> RustBuffer {
 }
 
 
+/**
+ * One model on its way to the archive disk or back.
+ */
+public struct ModelMove: Equatable, Hashable {
+    /**
+     * `archive` or `restore`.
+     */
+    public var kind: String
+    public var repo: String
+    public var running: Bool
+    /**
+     * Seconds since the epoch.
+     */
+    public var startedAt: Int64
+    public var finishedAt: Int64?
+    /**
+     * The size of the files to move, and of those dealt with so far.
+     */
+    public var bytesTotal: UInt64
+    public var bytesDone: UInt64
+    /**
+     * Once finished: the files that left or came back to the internal disk.
+     */
+    public var files: UInt64
+    /**
+     * Once an archive has finished: stored files that stayed on the
+     * internal disk, because another model or an app still uses them.
+     */
+    public var kept: UInt64
+    public var error: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `archive` or `restore`.
+         */kind: String, repo: String, running: Bool, 
+        /**
+         * Seconds since the epoch.
+         */startedAt: Int64, finishedAt: Int64?, 
+        /**
+         * The size of the files to move, and of those dealt with so far.
+         */bytesTotal: UInt64, bytesDone: UInt64, 
+        /**
+         * Once finished: the files that left or came back to the internal disk.
+         */files: UInt64, 
+        /**
+         * Once an archive has finished: stored files that stayed on the
+         * internal disk, because another model or an app still uses them.
+         */kept: UInt64, error: String?) {
+        self.kind = kind
+        self.repo = repo
+        self.running = running
+        self.startedAt = startedAt
+        self.finishedAt = finishedAt
+        self.bytesTotal = bytesTotal
+        self.bytesDone = bytesDone
+        self.files = files
+        self.kept = kept
+        self.error = error
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ModelMove: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeModelMove: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelMove {
+        return
+            try ModelMove(
+                kind: FfiConverterString.read(from: &buf), 
+                repo: FfiConverterString.read(from: &buf), 
+                running: FfiConverterBool.read(from: &buf), 
+                startedAt: FfiConverterInt64.read(from: &buf), 
+                finishedAt: FfiConverterOptionInt64.read(from: &buf), 
+                bytesTotal: FfiConverterUInt64.read(from: &buf), 
+                bytesDone: FfiConverterUInt64.read(from: &buf), 
+                files: FfiConverterUInt64.read(from: &buf), 
+                kept: FfiConverterUInt64.read(from: &buf), 
+                error: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ModelMove, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.kind, into: &buf)
+        FfiConverterString.write(value.repo, into: &buf)
+        FfiConverterBool.write(value.running, into: &buf)
+        FfiConverterInt64.write(value.startedAt, into: &buf)
+        FfiConverterOptionInt64.write(value.finishedAt, into: &buf)
+        FfiConverterUInt64.write(value.bytesTotal, into: &buf)
+        FfiConverterUInt64.write(value.bytesDone, into: &buf)
+        FfiConverterUInt64.write(value.files, into: &buf)
+        FfiConverterUInt64.write(value.kept, into: &buf)
+        FfiConverterOptionString.write(value.error, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelMove_lift(_ buf: RustBuffer) throws -> ModelMove {
+    return try FfiConverterTypeModelMove.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelMove_lower(_ value: ModelMove) -> RustBuffer {
+    return FfiConverterTypeModelMove.lower(value)
+}
+
+
 public struct PlacedApp: Equatable, Hashable {
     public var app: String
     public var cloned: UInt64
@@ -3528,6 +3903,97 @@ public func FfiConverterTypeRepository_lift(_ buf: RustBuffer) throws -> Reposit
 #endif
 public func FfiConverterTypeRepository_lower(_ value: Repository) -> RustBuffer {
     return FfiConverterTypeRepository.lower(value)
+}
+
+
+/**
+ * What restoring a model would copy back from the archive disk.
+ */
+public struct RestorePlan: Equatable, Hashable {
+    public var repo: String
+    /**
+     * The archive folder.
+     */
+    public var archive: String
+    public var files: UInt64
+    public var bytes: UInt64
+    /**
+     * Free space on the internal disk.
+     */
+    public var free: UInt64
+    /**
+     * Files that are on neither disk.
+     */
+    public var missing: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(repo: String, 
+        /**
+         * The archive folder.
+         */archive: String, files: UInt64, bytes: UInt64, 
+        /**
+         * Free space on the internal disk.
+         */free: UInt64, 
+        /**
+         * Files that are on neither disk.
+         */missing: UInt64) {
+        self.repo = repo
+        self.archive = archive
+        self.files = files
+        self.bytes = bytes
+        self.free = free
+        self.missing = missing
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension RestorePlan: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeRestorePlan: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> RestorePlan {
+        return
+            try RestorePlan(
+                repo: FfiConverterString.read(from: &buf), 
+                archive: FfiConverterString.read(from: &buf), 
+                files: FfiConverterUInt64.read(from: &buf), 
+                bytes: FfiConverterUInt64.read(from: &buf), 
+                free: FfiConverterUInt64.read(from: &buf), 
+                missing: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: RestorePlan, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.repo, into: &buf)
+        FfiConverterString.write(value.archive, into: &buf)
+        FfiConverterUInt64.write(value.files, into: &buf)
+        FfiConverterUInt64.write(value.bytes, into: &buf)
+        FfiConverterUInt64.write(value.free, into: &buf)
+        FfiConverterUInt64.write(value.missing, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRestorePlan_lift(_ buf: RustBuffer) throws -> RestorePlan {
+    return try FfiConverterTypeRestorePlan.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeRestorePlan_lower(_ value: RestorePlan) -> RustBuffer {
+    return FfiConverterTypeRestorePlan.lower(value)
 }
 
 
@@ -4760,6 +5226,30 @@ fileprivate struct FfiConverterOptionTypeLocation: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionTypeModelMove: FfiConverterRustBuffer {
+    typealias SwiftType = ModelMove?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterTypeModelMove.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterTypeModelMove.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionSequenceString: FfiConverterRustBuffer {
     typealias SwiftType = [String]?
 
@@ -4876,6 +5366,31 @@ fileprivate struct FfiConverterSequenceTypeBudget: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeBudget.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeDeactivateStep: FfiConverterRustBuffer {
+    typealias SwiftType = [DeactivateStep]
+
+    public static func write(_ value: [DeactivateStep], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeDeactivateStep.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [DeactivateStep] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [DeactivateStep]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeDeactivateStep.read(from: &buf))
         }
         return seq
     }
@@ -5026,6 +5541,31 @@ fileprivate struct FfiConverterSequenceTypeKeptFile: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeKeptFile.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeKeptStored: FfiConverterRustBuffer {
+    typealias SwiftType = [KeptStored]
+
+    public static func write(_ value: [KeptStored], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeKeptStored.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [KeptStored] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [KeptStored]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeKeptStored.read(from: &buf))
         }
         return seq
     }
@@ -5331,6 +5871,33 @@ fileprivate struct FfiConverterSequenceTypeVariant: FfiConverterRustBuffer {
     }
 }
 /**
+ * Archive `repo`: out of every app and off the internal disk, once the
+ * archive disk holds a good copy of every file. Returns at once; the event
+ * stream tells how it goes (`moving`).
+ */
+public func archiveModel(address: String, repo: String)throws   {try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_archive_model(
+        FfiConverterString.lower(address),
+        FfiConverterString.lower(repo),uniffiCallStatus
+    )
+}
+}
+/**
+ * What archiving `repo` would do: which apps it is taken out of, and how
+ * much leaves the internal disk. Nothing is changed. Refused when the
+ * archive disk is not attached.
+ */
+public func archivePlan(address: String, repo: String)throws  -> ArchivePlan  {
+    return try  FfiConverterTypeArchivePlan_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_archive_plan(
+        FfiConverterString.lower(address),
+        FfiConverterString.lower(repo),uniffiCallStatus
+    )
+})
+}
+/**
  * Ask the provider whether it still has `repo` and whether `main` moved.
  */
 public func checkUpstream(address: String, repo: String)throws  -> UpstreamCheck  {
@@ -5403,9 +5970,9 @@ public func downloads(address: String)throws  -> Downloads  {
 }
 /**
  * Queue a download of `model` (`org/repo`, `org/repo:Q4_K_M` or
- * `org/repo@revision`) to be placed into `apps`. Returns at once; the
- * event stream tells how it goes. With `offline`, only what is archived is
- * used, which places an archived model without asking the provider.
+ * `org/repo@revision`) to be activated in `apps`. Returns at once; the
+ * event stream tells how it goes. With `offline`, only what dedupd has kept
+ * is used, which activates a stored model without asking the provider.
  */
 public func enqueue(address: String, model: String, apps: [String], include: [String], offline: Bool)throws  -> Enqueued  {
     return try  FfiConverterTypeEnqueued_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
@@ -5420,7 +5987,7 @@ public func enqueue(address: String, model: String, apps: [String], include: [St
 })
 }
 /**
- * Drop `repo` from the archive records, so its files can be cleaned up.
+ * Drop `repo` from the library, so its files can be cleaned up.
  * Refused while an app still has files of it.
  */
 public func forget(address: String, repo: String)throws   {try rustCallWithError(FfiConverterTypeClientError_lift) {
@@ -5509,6 +6076,18 @@ public func model(address: String, repo: String)throws  -> ModelDetail  {
 })
 }
 /**
+ * The archive or restore that is running, or the last one; `None` when
+ * there has been none since the daemon started.
+ */
+public func modelMove(address: String)throws  -> ModelMove?  {
+    return try  FfiConverterOptionTypeModelMove.lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_model_move(
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+})
+}
+/**
  * Every repository the daemon knows.
  */
 public func models(address: String)throws  -> [LibraryModel]  {
@@ -5546,6 +6125,30 @@ public func restart(address: String)throws   {try rustCallWithError(FfiConverter
         FfiConverterString.lower(address),uniffiCallStatus
     )
 }
+}
+/**
+ * Copy `repo` back from the archive disk. Returns at once; the event
+ * stream tells how it goes (`moving`). The model is put into no app.
+ */
+public func restoreModel(address: String, repo: String)throws   {try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_restore_model(
+        FfiConverterString.lower(address),
+        FfiConverterString.lower(repo),uniffiCallStatus
+    )
+}
+}
+/**
+ * What restoring `repo` would copy back from the archive disk.
+ */
+public func restorePlan(address: String, repo: String)throws  -> RestorePlan  {
+    return try  FfiConverterTypeRestorePlan_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_restore_plan(
+        FfiConverterString.lower(address),
+        FfiConverterString.lower(repo),uniffiCallStatus
+    )
+})
 }
 /**
  * Have the daemon look at the app folders now instead of waiting for its
@@ -5620,7 +6223,7 @@ public func storeCheck(address: String)throws  -> StoreCheck  {
 /**
  * What removing `repo` from `app` would delete; with `apply`, delete it.
  * `paths` limits the removal to the files the owner saw and agreed to.
- * The store keeps everything, so the model can be placed again.
+ * The store keeps everything, so the model can be activated again.
  */
 public func unplace(address: String, repo: String, app: String, apply: Bool, paths: [String]?)throws  -> UnplacePlan  {
     return try  FfiConverterTypeUnplacePlan_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
@@ -5676,6 +6279,12 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_dedupd_client_checksum_func_archive_model() != 58074) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dedupd_client_checksum_func_archive_plan() != 22656) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dedupd_client_checksum_func_check_upstream() != 21330) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5694,10 +6303,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_func_downloads() != 46143) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_func_enqueue() != 14730) {
+    if (uniffi_dedupd_client_checksum_func_enqueue() != 3116) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_func_forget() != 31731) {
+    if (uniffi_dedupd_client_checksum_func_forget() != 9779) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_gc_apply() != 24746) {
@@ -5718,6 +6327,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_func_model() != 9708) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dedupd_client_checksum_func_model_move() != 64140) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dedupd_client_checksum_func_models() != 44225) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -5725,6 +6337,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_restart() != 33512) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dedupd_client_checksum_func_restore_model() != 30179) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dedupd_client_checksum_func_restore_plan() != 9596) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_scan() != 46568) {
@@ -5745,7 +6363,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_func_store_check() != 58724) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_func_unplace() != 11453) {
+    if (uniffi_dedupd_client_checksum_func_unplace() != 12692) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_update_settings() != 8623) {

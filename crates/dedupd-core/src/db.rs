@@ -141,8 +141,30 @@ ALTER TABLE placements ADD COLUMN method TEXT;
 ALTER TABLE placements ADD COLUMN derived_sha256 TEXT;
 "#;
 
+/// Added in schema version 5.
+const SCHEMA_V5: &str = r#"
+-- When the owner moved the model out of warm storage: it is in no app, and
+-- its files are on the archive disk only. NULL for a model that is not
+-- archived.
+ALTER TABLE repos ADD COLUMN archived_at INTEGER;
+"#;
+
 pub struct Db {
     conn: Connection,
+}
+
+/// The condition on `blobs b` that a repository matching `repo` (the rest of
+/// a comparison with a repository id) refers to the file, through a revision
+/// or an Ollama manifest.
+fn used_by(repo: &str) -> String {
+    format!(
+        "(EXISTS (SELECT 1 FROM revision_files f JOIN revisions v ON v.id = f.revision_id
+                  WHERE v.repo_id {repo}
+                    AND (f.lfs_sha256 = b.sha256
+                         OR (f.lfs_sha256 IS NULL AND f.git_oid = b.git_oid)))
+          OR EXISTS (SELECT 1 FROM ollama_manifests m
+                     WHERE m.repo_id {repo} AND instr(m.body, b.sha256) > 0))"
+    )
 }
 
 /// One stored file as the database knows it.
@@ -235,7 +257,7 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.busy_timeout(std::time::Duration::from_secs(30))?;
         let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        if version > 4 {
+        if version > 5 {
             anyhow::bail!(
                 "database schema version {version} is newer than this build of dedupd understands"
             );
@@ -256,6 +278,11 @@ impl Db {
         if version < 4 {
             conn.execute_batch(&format!(
                 "BEGIN; {SCHEMA_V4} PRAGMA user_version = 4; COMMIT;"
+            ))?;
+        }
+        if version < 5 {
+            conn.execute_batch(&format!(
+                "BEGIN; {SCHEMA_V5} PRAGMA user_version = 5; COMMIT;"
             ))?;
         }
         Ok(Self { conn })
@@ -607,6 +634,41 @@ impl Db {
                AND NOT EXISTS (SELECT 1 FROM ollama_manifests m
                                WHERE instr(m.body, b.sha256) > 0)"
         ))
+    }
+
+    /// The stored files a repository's archived revisions and Ollama
+    /// manifests refer to.
+    pub fn repo_blobs(&self, repo_id: i64) -> Result<Vec<BlobRow>> {
+        self.blobs_where(&used_by(&format!("= {repo_id}")))
+    }
+
+    /// Of those, the ones another repository refers to as well, unless that
+    /// repository is archived itself.
+    pub fn repo_blobs_used_elsewhere(&self, repo_id: i64) -> Result<Vec<BlobRow>> {
+        self.blobs_where(&format!(
+            "{} AND {}",
+            used_by(&format!("= {repo_id}")),
+            used_by(&format!(
+                "IN (SELECT id FROM repos WHERE id != {repo_id} AND archived_at IS NULL)"
+            ))
+        ))
+    }
+
+    /// Mark a repository as archived at `at`, or as not archived.
+    pub fn set_archived(&self, repo_id: i64, at: Option<i64>) -> Result<()> {
+        self.conn.execute(
+            "UPDATE repos SET archived_at = ?2 WHERE id = ?1",
+            params![repo_id, at],
+        )?;
+        Ok(())
+    }
+
+    pub fn archived_at(&self, repo_id: i64) -> Result<Option<i64>> {
+        Ok(self.conn.query_row(
+            "SELECT archived_at FROM repos WHERE id = ?1",
+            [repo_id],
+            |r| r.get(0),
+        )?)
     }
 
     pub fn delete_blob(&self, sha256: &str) -> Result<()> {

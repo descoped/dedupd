@@ -1,0 +1,23 @@
+{
+  "archive": "/Users/example/trunk/dedupd",
+  "bytes": 300008,
+  "copy_bytes": 0,
+  "copy_files": 0,
+  "deactivate": [
+    {
+      "app": "bionic",
+      "bytes": 300008,
+      "files": 2,
+      "keep": []
+    },
+    {
+      "app": "hf",
+      "bytes": 300008,
+      "files": 2,
+      "keep": []
+    }
+  ],
+  "files": 2,
+  "keep": [],
+  "repo": "org/Repo-GGUF"
+}
