@@ -1,3 +1,10 @@
+---
+title: "How it works"
+description: "The architecture of dedupd: requirements, the content-addressed store, clones, placement into each app and the archive disk."
+group: Guide
+order: 1
+---
+
 # How it works
 
 ## Background

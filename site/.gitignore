@@ -1,0 +1,12 @@
+node_modules/
+dist/
+out/
+.next/
+.svelte-kit/
+.krantho/
+.env.local
+*.db
+*.db-journal
+
+# A copy of ../docs/images, made by `pnpm run images` before each build
+/public/images/

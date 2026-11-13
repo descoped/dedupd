@@ -1,3 +1,9 @@
+---
+title: "dedupd documentation"
+description: "dedupd keeps one copy of each AI model on disk and shares it, as APFS clones, with every app that runs it."
+order: 0
+---
+
 # dedupd documentation
 
 - [How it works](how-it-works.md): architecture, requirements, the store, clones, placement, the archive disk.

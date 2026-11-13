@@ -1,3 +1,10 @@
+---
+title: "Development"
+description: "Building and testing dedupd: what you need, the commands, and how the code is laid out."
+group: Project
+order: 5
+---
+
 # Development
 
 ## What you need
@@ -81,3 +88,10 @@ disk image is attached to a GitHub release with its sha256 in the notes.
 
 `.github/workflows/ci.yml` runs `just check` on macOS for pull requests and pushes to `main`. The app is checked
 on the developer's Mac, because its debug build is signed with a development certificate.
+
+## Documentation site
+
+The pages in `docs/` are also the documentation site, built by `site/` with krantho's static mode and published to
+GitHub Pages by `.github/workflows/pages.yml` when `docs/` or `site/` changes on `main`. Each page starts with
+frontmatter (`title`, `description`, `group`, `order`) and links to other pages by their file name, as GitHub
+does. `site/README.md` describes how to write a page and how to build the site locally.
