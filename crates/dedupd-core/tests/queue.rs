@@ -400,3 +400,38 @@ async fn a_file_that_arrives_damaged_twice_needs_the_owner() {
     assert!(leftovers(&s.home).is_empty(), "{:?}", leftovers(&s.home));
     assert!(!Path::new(&placed(&s.engine)).exists());
 }
+
+#[tokio::test]
+async fn a_job_that_gets_into_none_of_its_apps_needs_the_owner() {
+    // The fake Hub has no Ollama manifest for the model, so Ollama cannot
+    // be given it; Bionic can.
+    let up = upstream(true).await;
+    let s = scene(&up);
+
+    let id = s
+        .queue
+        .add(MODEL, vec![], vec![App::Ollama], false)
+        .unwrap();
+    let record = settled(&s.queue, id).await;
+    assert_eq!(record.state, State::NeedsAttention, "{}", history(&record));
+    let detail = record.detail.unwrap_or_default();
+    assert!(detail.starts_with("not placed into Ollama: "), "{detail}");
+    // The download itself is done and kept.
+    assert_eq!(record.bytes_done, record.bytes_total);
+    assert!(s.engine.store.contains(&sha256(&up.weights)));
+
+    // With an app that took it, the job is done and the note is in its
+    // history.
+    let id = s
+        .queue
+        .add(MODEL, vec![], vec![App::Bionic, App::Ollama], false)
+        .unwrap();
+    let record = settled(&s.queue, id).await;
+    assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert!(
+        history(&record).contains("not placed into Ollama: "),
+        "{}",
+        history(&record)
+    );
+    assert_eq!(fs::read(placed(&s.engine)).unwrap(), up.weights);
+}

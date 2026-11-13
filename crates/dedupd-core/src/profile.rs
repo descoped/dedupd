@@ -7,6 +7,7 @@
 //! The same input always gives the same answer.
 
 use crate::place::{App, AppDirs};
+use crate::refusals::Refusals;
 use crate::select::Variant;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -465,6 +466,38 @@ pub fn decisions(traits: &Traits, installed: &Installed) -> Vec<Decision> {
         .collect()
 }
 
+impl Decision {
+    /// Turn a `ready` answer into `no` when this version of the app said no
+    /// to the model (known by the sha256 of its `config.json`) when it was
+    /// asked before.
+    pub fn unless_refused(mut self, refusals: &Refusals, config: Option<&str>) -> Self {
+        if self.state != "ready" {
+            return self;
+        }
+        let (Some(config), Some(version), Some(method)) =
+            (config, self.version.as_deref(), self.method.as_deref())
+        else {
+            return self;
+        };
+        let Some(refusal) = refusals.find(&self.app, version, method, config) else {
+            return self;
+        };
+        let name = profiles()
+            .iter()
+            .find(|p| p.app.as_str() == self.app)
+            .map_or(self.app.as_str(), |p| p.name.as_str());
+        let mut reason = refusal.reason.clone();
+        if let Some(first) = reason.get(..1) {
+            reason.replace_range(..1, &first.to_uppercase());
+        }
+        self.reason = format!("{reason} (asked with {name} {version})");
+        self.state = "no".into();
+        self.method = None;
+        self.cost = None;
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -682,5 +715,44 @@ mod tests {
             Installed::detect(&dirs).command(App::Ollama),
             Some(tool.as_path())
         );
+    }
+
+    #[test]
+    fn a_refusal_turns_ready_into_no_for_that_version_and_model() {
+        use crate::refusals::Refusal;
+        let dir = tempfile::tempdir().unwrap();
+        let home = crate::Home::new(dir.path());
+        let mut t = traits(Format::Mlx);
+        t.bits = Some(vec![4]);
+        let ready = profile(App::Ollama).decide(&t, Some("0.40.16"));
+        assert_eq!(ready.state, "ready");
+        Refusals::record(
+            &home,
+            Refusal {
+                app: "ollama".into(),
+                version: "0.40.16".into(),
+                method: ready.method.clone().unwrap(),
+                config: "c0".into(),
+                reason: "ollama would not import a stand-in for the model: unsupported".into(),
+                at: 1,
+            },
+        )
+        .unwrap();
+        let known = Refusals::load(&home);
+
+        let no = ready.clone().unless_refused(&known, Some("c0"));
+        assert_eq!(no.state, "no");
+        assert_eq!(no.method, None);
+        assert_eq!(no.cost, None);
+        assert_eq!(
+            no.reason,
+            "Ollama would not import a stand-in for the model: unsupported \
+             (asked with Ollama 0.40.16)"
+        );
+        // Another model, another version, or no config: asked again.
+        assert_eq!(ready.clone().unless_refused(&known, Some("c1")), ready);
+        assert_eq!(ready.clone().unless_refused(&known, None), ready);
+        let newer = profile(App::Ollama).decide(&t, Some("0.41.0"));
+        assert_eq!(newer.clone().unless_refused(&known, Some("c0")), newer);
     }
 }

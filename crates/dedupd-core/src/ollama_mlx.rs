@@ -37,6 +37,24 @@ use std::process::{Command, Stdio};
 
 /// The method's name in the app's profile and in the database.
 pub const METHOD: &str = "clone-with-rewritten-index";
+
+/// Why a model was not placed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NotPlaced {
+    /// Ollama's answer when it was shown the stand-in. It holds for this
+    /// model and this version of Ollama, so it is worth keeping.
+    Ollama(String),
+    /// Something about the model's files.
+    Model(String),
+}
+
+impl std::fmt::Display for NotPlaced {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Ollama(why) | Self::Model(why) => f.write_str(why),
+        }
+    }
+}
 /// The layer type Ollama gives a file of tensors.
 const TENSOR: &str = "application/vnd.ollama.image.tensor";
 const STAND_IN: &str = "dedupd-stand-in";
@@ -269,6 +287,7 @@ impl Scratch {
         if !done.status.success() {
             let said = String::from_utf8_lossy(&done.stderr);
             let last = said.lines().last().unwrap_or("it gave no reason").trim();
+            let last = last.strip_prefix("Error:").map_or(last, str::trim);
             return Ok(Err(format!(
                 "Ollama would not import a stand-in for the model: {last}"
             )));
@@ -365,13 +384,15 @@ fn ask_ollama(
     small: &[(String, PathBuf)],
     files: &[(PathBuf, Index)],
     ways: &Ways,
-) -> Result<Result<Answer, String>> {
+) -> Result<Result<Answer, NotPlaced>> {
     let samples = smallest_layers(files, ways);
     // The model's default way first: its answer carries the settings.
     let mut order: Vec<&Way> = samples.keys().collect();
     order.sort_by_key(|way| (Some(*way) != ways.default.as_ref(), (*way).clone()));
     if order.is_empty() {
-        return Ok(Err("the model has no quantized layer to show Ollama".into()));
+        return Ok(Err(NotPlaced::Model(
+            "the model has no quantized layer to show Ollama".into(),
+        )));
     }
 
     let now = std::time::SystemTime::now()
@@ -389,7 +410,7 @@ fn ask_ollama(
         write_stand_in(&work, small, way, sample)?;
         let answer = match scratch.import(&format!("{STAND_IN}-{i}"), &work)? {
             Ok(answer) => answer,
-            Err(why) => return Ok(Err(why)),
+            Err(why) => return Ok(Err(NotPlaced::Ollama(why))),
         };
         // What Ollama wrote for the layer: its names, and the note in the
         // file that holds the weight.
@@ -402,20 +423,20 @@ fn ask_ollama(
         }
         for (name, _) in &sample.parts {
             if !written.contains_key(&ollama_name(name)) {
-                return Ok(Err(format!(
+                return Ok(Err(NotPlaced::Ollama(format!(
                     "this Ollama names tensors differently from the one dedupd was written against: \
                      it wrote no {}",
                     ollama_name(name)
-                )));
+                ))));
             }
         }
         let weight = ollama_name(&sample.parts[0].0);
         match written.remove(&weight).flatten() {
             Some(note) => notes.insert(way.clone(), note),
             None => {
-                return Ok(Err(format!(
+                return Ok(Err(NotPlaced::Ollama(format!(
                     "this Ollama has no name for {way} layers, so it cannot run this model"
-                )));
+                ))));
             }
         };
         manifest.get_or_insert(answer);
@@ -504,7 +525,7 @@ pub fn place(
     command: &Path,
     tag: &str,
     items: &[Item],
-) -> Result<Result<Placed, String>> {
+) -> Result<Result<Placed, NotPlaced>> {
     let mut out = Placed::default();
     // Ollama imports the files at the top of a model folder.
     let top: Vec<&Item> = items.iter().filter(|i| !i.rel_path.contains('/')).collect();
@@ -521,7 +542,9 @@ pub fn place(
         .collect();
     weights.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     if weights.is_empty() {
-        return Ok(Err("the model has no safetensors weights files".into()));
+        return Ok(Err(NotPlaced::Model(
+            "the model has no safetensors weights files".into(),
+        )));
     }
     let small: Vec<(String, PathBuf)> = top
         .iter()
@@ -532,7 +555,7 @@ pub fn place(
         .map(|i| (i.rel_path.clone(), path_of(i)))
         .collect();
     let Some((_, config)) = small.iter().find(|(name, _)| name == "config.json") else {
-        return Ok(Err("the model has no config.json".into()));
+        return Ok(Err(NotPlaced::Model("the model has no config.json".into())));
     };
     let config: Value = serde_json::from_slice(&fs::read(config)?)
         .context("the model's config.json is not valid")?;
@@ -567,7 +590,7 @@ pub fn place(
     for (_, index) in &files {
         match groups(index, &ways) {
             Ok(groups) => split.push(groups),
-            Err(why) => return Ok(Err(why)),
+            Err(why) => return Ok(Err(NotPlaced::Model(why))),
         }
     }
     let answer = match ask_ollama(dest, command, &small, &files, &ways)? {

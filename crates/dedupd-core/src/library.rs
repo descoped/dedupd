@@ -5,6 +5,7 @@ use crate::db::{Db, PROVIDER_HF};
 use crate::hub::{ModelMeta, TreeEntry};
 use crate::place::{App, AppDirs};
 use crate::profile::{self, Decision, Installed, Traits};
+use crate::refusals::Refusals;
 use crate::select::{self, Variant};
 use crate::store::Store;
 use anyhow::{Result, bail};
@@ -321,6 +322,8 @@ pub fn local_variants(
         content.insert(&e.path, db.blob_for_entry(e)?.map(|b| b.sha256));
     }
     let sha_of = |path: &str| content.get(path).and_then(|s| s.as_deref());
+    // What an app said when it was asked about this model before.
+    let refusals = Refusals::load(store.home());
     Ok(select::variants(entries)
         .into_iter()
         .filter(|v| !v.files.is_empty())
@@ -342,7 +345,15 @@ pub fn local_variants(
                 traits =
                     traits.with_bits(widths(store, &v.files, |p| sha_of(p).map(str::to_string)));
             }
-            let decisions = profile::decisions(&traits, installed);
+            let config = v
+                .files
+                .iter()
+                .find(|e| e.path == "config.json")
+                .and_then(|e| sha_of(&e.path));
+            let decisions: Vec<_> = profile::decisions(&traits, installed)
+                .into_iter()
+                .map(|d| d.unless_refused(&refusals, config))
+                .collect();
             LocalVariant {
                 spec: spec_of(repo, &v),
                 usable_by: decisions
