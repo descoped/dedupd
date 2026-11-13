@@ -20,6 +20,8 @@ export default defineKranthoConfig({
   // The markdown files are the content: no database, every page written at build
   persistence: { provider: 'filesystem' },
   cache: { pages: 'none' },
+  // The docs hold names such as org/repo@revision: no @field substitution
+  content: { atNotation: false },
   // The structured data each page carries
   seo: { identity: 'SoftwareApplication', collections: { docs: ['TechArticle'] } },
 })

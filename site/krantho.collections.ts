@@ -3,13 +3,14 @@ import { defineCollection, defineDocumentArchetype } from '@krantho/schema'
 import { z } from 'zod'
 
 // One page per markdown file in the repository's docs/ folder, the same files
-// GitHub shows. index.md is the home page, and every other file is served at
-// /<file name>/. The path ends in a slash: each page is a folder in the static
-// output.
+// GitHub shows. README.md is the home page, as it is the folder's page on
+// GitHub, and every other file is served at /<file name>/. The path ends in a
+// slash: each page is a folder in the static output.
 const docs = defineCollection({
   name: 'docs',
   source: 'filesystem',
   directory: join(process.cwd(), '..', 'docs'),
+  indexFile: 'README.md',
   path: '/:slug/',
   archetype: defineDocumentArchetype({
     id: 'site/docs',
