@@ -12,6 +12,7 @@ use dedupd_core::db::PROVIDER_HF;
 use dedupd_core::place::App;
 use dedupd_core::profile::Installed;
 use dedupd_core::pull::{self, PullRequest};
+use dedupd_core::refusals::Refusals;
 use dedupd_core::safetensors::{self, Notes, Tensor};
 use dedupd_core::select::Selection;
 use dedupd_core::{Home, adopt, library, maintain, ollama_mlx};
@@ -64,11 +65,18 @@ struct Model {
     /// Every tensor's bytes by the name MLX gave it.
     tensors: BTreeMap<String, Vec<u8>>,
     shards: Vec<Vec<u8>>,
+    /// The sha256 of its `config.json`.
+    config: String,
 }
 
 /// A fake Hub with a made-up MLX model of two weights files. The second
 /// file mixes 4-bit and 8-bit layers.
 async fn model(dir: &Path) -> Model {
+    model_of(dir, "Qwen3_5ForConditionalGeneration", "qwen3_5").await
+}
+
+/// The same model, said to be of another architecture.
+async fn model_of(dir: &Path, architecture: &str, model_type: &str) -> Model {
     let mut first = layer("model.layers.0.proj", 4, 1);
     first.push((
         "model.norm.weight".to_string(),
@@ -89,8 +97,8 @@ async fn model(dir: &Path) -> Model {
     let shards = vec![weights_file(dir, &first), weights_file(dir, &second)];
 
     let config = serde_json::to_vec_pretty(&json!({
-        "architectures": ["Qwen3_5ForConditionalGeneration"],
-        "model_type": "qwen3_5",
+        "architectures": [architecture],
+        "model_type": model_type,
         "quantization": {
             "group_size": 64, "bits": 4, "mode": "affine",
             "model.layers.1.mlp": {"group_size": 64, "bits": 8},
@@ -142,6 +150,7 @@ async fn model(dir: &Path) -> Model {
         server,
         tensors,
         shards,
+        config: sha256(&config),
     }
 }
 
@@ -388,9 +397,12 @@ async fn a_width_ollama_cannot_run_is_not_placed() {
     let refused = ollama_mlx::place(&dest, Path::new(OLLAMA), "latest", &items)
         .unwrap()
         .unwrap_err();
+    // Ollama's own answer, which dedupd keeps.
     assert_eq!(
         refused,
-        "this Ollama has no name for 5-bit layers, so it cannot run this model"
+        ollama_mlx::NotPlaced::Ollama(
+            "this Ollama has no name for 5-bit layers, so it cannot run this model".into()
+        )
     );
     // Nothing was written into Ollama's folder, and nothing is left of the
     // asking.
@@ -398,4 +410,74 @@ async fn a_width_ollama_cannot_run_is_not_placed() {
     assert!(e.db().placements().unwrap().is_empty());
     let left: Vec<_> = fs::read_dir(home.tmp_dir()).unwrap().flatten().collect();
     assert!(left.is_empty(), "{left:?}");
+}
+
+#[tokio::test]
+async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
+    if !Path::new(OLLAMA).is_file() {
+        eprintln!("skipped: Ollama is not installed in /Applications");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let up = model_of(dir.path(), "NoSuchModelForCausalLM", "no_such_model").await;
+    let home = Home::new(dir.path().join("home"));
+    let mut e = engine(&home, &up.server.uri(), &dir.path().join("apps"), None);
+    Arc::get_mut(&mut e).unwrap().dirs.apps = PathBuf::from("/Applications");
+    let installed = Installed::detect(&e.dirs);
+    let version = installed.version(App::Ollama).unwrap().to_string();
+
+    // Ollama is asked, says no, and nothing is placed.
+    let first = pull::pull(&e, &request(false), &Arc::default())
+        .await
+        .unwrap();
+    assert!(first.placed.is_empty());
+    assert_eq!(first.notes.len(), 1);
+    assert!(
+        first.notes[0].starts_with("not placed into Ollama: Ollama would not import a stand-in"),
+        "{:?}",
+        first.notes
+    );
+    assert!(!first.notes[0].contains("Error:"), "{:?}", first.notes);
+    assert!(!e.dirs.ollama.join("manifests").exists());
+
+    // Its answer is kept for this model's config.json and this version.
+    let known = Refusals::load(&home);
+    let kept = known
+        .find("ollama", &version, ollama_mlx::METHOD, &up.config)
+        .expect("the refusal is kept");
+    assert!(kept.reason.starts_with("Ollama would not import"));
+
+    // The library shows Ollama as unable to take it, with the reason.
+    let library = library::model(&e.db(), &e.store, REPO, &installed)
+        .unwrap()
+        .unwrap();
+    let ollama = library.variants[0]
+        .decisions
+        .iter()
+        .find(|d| d.app == "ollama")
+        .unwrap();
+    assert_eq!(ollama.state, "no");
+    assert!(
+        ollama
+            .reason
+            .ends_with(&format!("(asked with Ollama {version})")),
+        "{}",
+        ollama.reason
+    );
+    assert!(
+        !library.variants[0]
+            .usable_by
+            .contains(&"ollama".to_string())
+    );
+
+    // A second try is answered from what is kept, without asking Ollama.
+    let second = pull::pull(&e, &request(false), &Arc::default())
+        .await
+        .unwrap();
+    assert!(second.placed.is_empty());
+    assert!(
+        second.notes[0].ends_with(&format!("(asked with Ollama {version})")),
+        "{:?}",
+        second.notes
+    );
 }

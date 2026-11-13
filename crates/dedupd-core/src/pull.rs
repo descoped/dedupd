@@ -9,6 +9,7 @@ use crate::ollama;
 use crate::ollama_mlx;
 use crate::place::{self, App, AppDirs, Dest, Item, Placed};
 use crate::profile::{self, Installed, Traits};
+use crate::refusals::{Refusal, Refusals};
 use crate::select::{self, Selection};
 use crate::store::Store;
 use anyhow::{Context, Result, anyhow, bail};
@@ -417,14 +418,21 @@ async fn place_into_ollama(
     let weights = select::weights(entries);
     let info: serde_json::Value = serde_json::from_str(&snap.info_json).unwrap_or_default();
     let mut traits = Traits::of_files(weights.len(), &ModelMeta::from_info(&info).formats);
+    let config = items
+        .iter()
+        .find(|i| i.rel_path == "config.json")
+        .map(|i| i.sha256.clone());
     if weights.is_empty() {
-        let config = items.iter().find(|i| i.rel_path == "config.json");
         traits = traits.with_bits(
-            config.and_then(|i| profile::quantization_of(&engine.store.blob_path(&i.sha256))),
+            config
+                .as_deref()
+                .and_then(|sha| profile::quantization_of(&engine.store.blob_path(sha))),
         );
     }
     let installed = Installed::detect(&engine.dirs);
-    let decision = profile::profile(App::Ollama).decide(&traits, installed.version(App::Ollama));
+    let decision = profile::profile(App::Ollama)
+        .decide(&traits, installed.version(App::Ollama))
+        .unless_refused(&Refusals::load(engine.store.home()), config.as_deref());
     if decision.state != "ready" {
         return Ok(Err(format!("not placed into Ollama: {}", decision.reason)));
     }
@@ -444,6 +452,23 @@ async fn place_into_ollama(
             )
         })
         .await?;
+        if let (Err(ollama_mlx::NotPlaced::Ollama(why)), Some(version), Some(config)) =
+            (&placed, installed.version(App::Ollama), config)
+        {
+            // Ollama's answer holds for this model and this version; keep it,
+            // so the model is not offered to it again.
+            let refusal = Refusal {
+                app: App::Ollama.as_str().to_string(),
+                version: version.to_string(),
+                method: ollama_mlx::METHOD.to_string(),
+                config,
+                reason: why.clone(),
+                at: crate::now(),
+            };
+            if let Err(e) = Refusals::record(engine.store.home(), refusal) {
+                eprintln!("dedupd: could not keep Ollama's answer: {e:#}");
+            }
+        }
         return Ok(placed.map_err(|why| format!("not placed into Ollama: {why}")));
     }
     let tag = req

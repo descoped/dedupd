@@ -703,11 +703,22 @@ impl Queue {
         let files = items.len();
         match pull::place(engine, &req, &plan, items).await {
             Ok((placed, notes)) => {
+                // Asked for apps and got into none of them: that needs the
+                // owner, not a quiet "done".
+                let missed = !req.apps.is_empty() && placed.is_empty() && !notes.is_empty();
                 let outcome = pull::outcome(&req, plan, files, downloaded, placed, notes);
                 {
                     let mut r = job.record();
                     r.bytes_done = r.bytes_total;
                     r.outcome = serde_json::to_value(&outcome).ok();
+                    if !missed {
+                        for note in &outcome.notes {
+                            r.note(note.clone());
+                        }
+                    }
+                }
+                if missed {
+                    return self.set(job, State::NeedsAttention, Some(outcome.notes.join("; ")));
                 }
                 self.set(job, State::Done, None);
                 self.forget_old();

@@ -35,6 +35,10 @@ Constraints:
 - Ollama runs 4-bit and 8-bit MLX models. Other bit widths are refused, because Ollama imports them and then fails
   to load them.
 - Ollama must be installed. dedupd queries its command line tool for the settings it would write for the model.
+- Ollama runs only the MLX architectures it knows; Ollama 0.40.16 refuses DeepSeek V4, for example. This is known
+  only once Ollama has been asked. When Ollama refuses a model, dedupd records the answer for that model and that
+  version of Ollama in `~/.dedupd/refusals.json`, and from then on reports Ollama as unable to use the model, with
+  Ollama's reason. A different version of Ollama is asked again.
 - The method relies on behaviour Ollama does not document. It was tested with Ollama 0.40.16.
 
 ## Limitations

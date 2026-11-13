@@ -19,6 +19,7 @@ pub mod place;
 pub mod profile;
 pub mod pull;
 pub mod queue;
+pub mod refusals;
 pub mod safetensors;
 pub mod select;
 pub mod sources;
