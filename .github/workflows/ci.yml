@@ -16,6 +16,8 @@ on:
       - 'macos-app/**'
       - 'scripts/**'
       - 'spikes/**'
+      - 'site/**'
+      - '.github/workflows/pages.yml'
       - '.github/renovate.json'
       - '.gitignore'
   pull_request:
@@ -26,6 +28,8 @@ on:
       - 'macos-app/**'
       - 'scripts/**'
       - 'spikes/**'
+      - 'site/**'
+      - '.github/workflows/pages.yml'
       - '.github/renovate.json'
       - '.gitignore'
   # To run the gate on any branch by hand.

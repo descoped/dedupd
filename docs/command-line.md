@@ -1,3 +1,10 @@
+---
+title: "The command line"
+description: "Reference for the dedupd command: every command, its options and the settings in config.toml."
+group: Guide
+order: 3
+---
+
 # The command line
 
 `dedupd` is one command. `cargo build --release` leaves it at `target/release/dedupd`; `dedupd install` copies it to

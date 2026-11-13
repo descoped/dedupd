@@ -1,3 +1,10 @@
+---
+title: "The macOS app"
+description: "The screens of the dedupd menu bar app: Library, Discover, Downloads, Storage and Daemon."
+group: Guide
+order: 2
+---
+
 # The macOS app
 
 The app is a menu bar app for the dedupd daemon. It shows what the daemon holds and is used to find, download,

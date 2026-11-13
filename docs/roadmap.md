@@ -1,3 +1,10 @@
+---
+title: "Roadmap"
+description: "What dedupd has today and what is planned: the catalogue, ModelScope, Linux with NVIDIA GPUs and more apps."
+group: Project
+order: 6
+---
+
 # Roadmap
 
 dedupd keeps one copy of each model file and shares it with every app that can use it. The goal is the least disk

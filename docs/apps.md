@@ -1,3 +1,10 @@
+---
+title: "Apps and formats"
+description: "Which app can use which model format in dedupd, by which method and at what cost in disk space, and the known limitations."
+group: Guide
+order: 4
+---
+
 # Apps and formats
 
 dedupd determines from data which application can be given which model, by which method and at what cost in disk
