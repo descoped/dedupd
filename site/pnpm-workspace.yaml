@@ -1,17 +1,5 @@
 packages:
   - .
+# krantho is Descoped's own; its releases are used the day they come out
 minimumReleaseAgeExclude:
-  - '@krantho/ai@1.1.0 || 1.1.1'
-  - '@krantho/api@1.1.0 || 1.1.1'
-  - '@krantho/config@1.1.0 || 1.1.1'
-  - '@krantho/core@1.1.0 || 1.1.1'
-  - '@krantho/persistence-fs@1.1.0 || 1.1.1'
-  - '@krantho/persistence-sqlite@1.1.0 || 1.1.1'
-  - '@krantho/persistence@1.1.0 || 1.1.1'
-  - '@krantho/schema@1.1.0 || 1.1.1'
-  - '@krantho/seo-shared@1.1.0 || 1.1.1'
-  - '@krantho/seo@1.1.0 || 1.1.1'
-  - '@krantho/server@1.1.0 || 1.1.1'
-  - '@krantho/static@1.1.0 || 1.1.1'
-  - '@krantho/studio@1.1.0 || 1.1.1'
-  - '@krantho/ui-react@1.1.0 || 1.1.1'
+  - '@krantho/*'
