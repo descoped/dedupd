@@ -1,0 +1,55 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "display-p3:0.015,0.025,0.070,1.00000",
+      "display-p3:0.030,0.110,0.220,1.00000"
+    ]
+  },
+  "groups": [
+    {
+      "name": "Monogram",
+      "layers": [
+        {
+          "name": "monogram",
+          "image-name": "monogram.svg",
+          "glass": true,
+          "fill": {
+            "linear-gradient": [
+              "display-p3:0.80,0.97,1.00,1.00000",
+              "display-p3:0.25,0.75,1.00,1.00000"
+            ]
+          }
+        }
+      ],
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.6
+      },
+      "translucency": {
+        "enabled": true,
+        "value": 0.2
+      },
+      "specular": true
+    },
+    {
+      "name": "Instrument",
+      "layers": [
+        {
+          "name": "instrument",
+          "image-name": "instrument.svg",
+          "glass": false
+        }
+      ],
+      "shadow": {
+        "kind": "none",
+        "opacity": 0
+      },
+      "specular": false
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

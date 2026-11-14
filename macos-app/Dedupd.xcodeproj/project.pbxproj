@@ -19,6 +19,7 @@
 		253C79B4B28DCFB84DB7F2A8 /* DiscoverStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0AD0E3AA1965269EEFB6C82E /* DiscoverStore.swift */; };
 		2B6F664956DD0C96C3135FCB /* DedupdApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76CC33F4082B1B7B0120941C /* DedupdApp.swift */; };
 		32EF2DEE71FA1557985E08D8 /* DownloadInspector.swift in Sources */ = {isa = PBXBuildFile; fileRef = E533CE30DADD3B746C72CADC /* DownloadInspector.swift */; };
+		3AC454FCBA296C2903BDFC1A /* AppIcon.icon in Resources */ = {isa = PBXBuildFile; fileRef = 635A38C2BD7A47A2216655A9 /* AppIcon.icon */; };
 		41A06DFAF3DFB77E7A2F6162 /* DaemonClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBAF6E2E67E61B1088FCFEBD /* DaemonClient.swift */; };
 		41CE9B8500DE113519CE7C8C /* FixtureData.swift in Sources */ = {isa = PBXBuildFile; fileRef = A9516F41E38D52026256E24B /* FixtureData.swift */; };
 		449528589E2D233EDBD70AB5 /* ByteFormatTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D0B83263644996DDF22EDAD /* ByteFormatTests.swift */; };
@@ -113,6 +114,7 @@
 		5DCAAA009058C3B3F26CC977 /* StorageView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageView.swift; sourceTree = "<group>"; };
 		5EA85EADE217A1B6FA7E11F7 /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
 		61CB12C4DB760C3543423C3A /* ModelAddressTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelAddressTests.swift; sourceTree = "<group>"; };
+		635A38C2BD7A47A2216655A9 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = wrapper.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		688891337580B00E6FFA11F5 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		6AC2644252BF5A44B57280BF /* ScreenStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScreenStoreTests.swift; sourceTree = "<group>"; };
 		6D0B83263644996DDF22EDAD /* ByteFormatTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ByteFormatTests.swift; sourceTree = "<group>"; };
@@ -359,6 +361,7 @@
 		B41611E64B8E82ED73551250 /* Dedupd */ = {
 			isa = PBXGroup;
 			children = (
+				635A38C2BD7A47A2216655A9 /* AppIcon.icon */,
 				EF1D391E62A6369A837F8BEB /* Assets.xcassets */,
 				688891337580B00E6FFA11F5 /* Info.plist */,
 				1CB444F0E4B4925CA3A75151 /* App */,
@@ -564,6 +567,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				3AC454FCBA296C2903BDFC1A /* AppIcon.icon in Resources */,
 				6CA3A4A0C7623D56CE4B3142 /* Assets.xcassets in Resources */,
 				14E2B9DC3023A3BB56D4F792 /* LICENSE in Resources */,
 			);
