@@ -36,14 +36,34 @@ a {
 }
 
 .site-header {
+  align-items: center;
   border-bottom: 1px solid var(--line);
-  padding: 1rem 1.5rem;
+  display: flex;
+  justify-content: space-between;
+  padding: 0.5rem 1.5rem;
 }
 
 .site-name {
   color: var(--fg);
-  font-weight: 700;
+  display: flex;
   text-decoration: none;
+}
+
+/* The monogram's height; the wordmark is about two fifths of it */
+.logo {
+  display: block;
+  height: 3.75rem;
+  width: auto;
+}
+
+.github {
+  color: var(--muted);
+  display: flex;
+}
+
+.github:hover,
+.github:focus-visible {
+  color: var(--fg);
 }
 
 .site-body {

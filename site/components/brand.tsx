@@ -1,0 +1,50 @@
+// The logo and the GitHub link of the site's header, drawn in the text colour
+// so they follow the light and dark theme. The logo is the one in
+// docs/images/logo.svg: the monogram, then the wordmark, which ends in the
+// monogram so it reads dedupd.
+
+/** The monogram and the wordmark side by side */
+export function Logo(): React.ReactElement {
+  return (
+    <svg
+      className="logo"
+      viewBox="0 0 498 252"
+      role="img"
+      aria-label="dedupd"
+      fill="none"
+      stroke="currentColor"
+      strokeLinecap="round"
+    >
+      <g transform="translate(54 126)" strokeWidth="12">
+        <circle r="48" />
+        <path d="M-48 -48V120M48 48V-120" />
+      </g>
+      <g transform="translate(236 126)" strokeWidth="4">
+        <circle r="20" />
+        <path d="M20 20V-50" />
+        <path d="M40 0H80A20 20 0 1 0 74.142 14.142" />
+        <circle cx="120" r="20" />
+        <path d="M140 20V-50" />
+        <path d="M160 -20V0A20 20 0 0 0 200 0M200 -20V20" />
+        <circle cx="240" r="20" />
+        <path d="M220 -20V50M260 20V-50" />
+      </g>
+    </svg>
+  )
+}
+
+/** The repository on GitHub, by GitHub's mark (Octicons mark-github, MIT) */
+export function GitHubLink(): React.ReactElement {
+  return (
+    <a
+      className="github"
+      href="https://github.com/descoped/dedupd"
+      aria-label="dedupd on GitHub"
+      title="dedupd on GitHub"
+    >
+      <svg viewBox="0 0 16 16" width="24" height="24" fill="currentColor" aria-hidden="true">
+        <path d="M8 0c4.42 0 8 3.58 8 8a8.013 8.013 0 0 1-5.45 7.59c-.4.08-.55-.17-.55-.38 0-.27.01-1.13.01-2.2 0-.75-.25-1.23-.54-1.48 1.78-.2 3.65-.88 3.65-3.95 0-.88-.31-1.59-.82-2.15.08-.2.36-1.02-.08-2.12 0 0-.67-.22-2.2.82-.64-.18-1.32-.27-2-.27-.68 0-1.36.09-2 .27-1.53-1.03-2.2-.82-2.2-.82-.44 1.1-.16 1.92-.08 2.12-.51.56-.82 1.28-.82 2.15 0 3.06 1.86 3.75 3.64 3.95-.23.2-.44.55-.51 1.07-.46.21-1.61.55-2.33-.66-.15-.24-.6-.83-1.23-.82-.67.01-.27.38.01.53.34.19.73.9.82 1.13.16.45.68 1.31 2.69.94 0 .67.01 1.3.01 1.49 0 .21-.15.45-.55.38A7.995 7.995 0 0 1 0 8c0-4.42 3.58-8 8-8Z" />
+      </svg>
+    </a>
+  )
+}

@@ -46,4 +46,13 @@ pnpm build      # the whole site as static files in out/
 | `lib/krantho.ts` | `createStaticSite()` and the sidebar's reading order |
 | `app/` | The layout, the pages, `sitemap.xml`, `llms.txt` and `robots.txt` |
 | `components/doc-page.tsx` | One page; it shows the file's own `# Title` |
+| `components/brand.tsx` | The header's logo and GitHub link, drawn in the text colour |
+| `app/icon.svg` | The tab icon: a copy of `docs/images/monogram.svg` |
 | `next.config.ts` | The static export, served under the path of the site's address |
+
+## The logo
+
+`docs/images/logo.svg` is the logo, `monogram.svg` and `wordmark.svg` its two parts. They are drawn with strokes
+only: circles of one radius and straight stems with round ends. The monogram is one bowl with a stem down on the
+left and a stem up on the right, a p and a d sharing the bowl, and the wordmark ends in it, so it reads dedupd. The
+files are black, and white in dark mode; the header draws the same shapes in the text colour.

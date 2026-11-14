@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-54 -126 108 252" role="img" aria-label="dedupd">
+  <title>dedupd</title>
+  <style>g{stroke:#141414}@media (prefers-color-scheme:dark){g{stroke:#f2f2f2}}</style>
+  <!-- One bowl shared by two stems: a p (stem down from the bowl's top) and a d
+       (stem up from the bowl's bottom). Bowl radius 48, stroke 12, each stem
+       reaching 72 past the bowl; the figure is the same turned half a turn. -->
+  <g fill="none" stroke-width="12" stroke-linecap="round">
+    <circle r="48"/>
+    <path d="M-48 -48V120M48 48V-120"/>
+  </g>
+</svg>
