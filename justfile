@@ -132,6 +132,6 @@ app-package: app-gen
 app-release: app-gen
     sh macos-app/scripts/release.sh
 
-# Redraw the app icon
+# Open the app icon in Icon Composer (macos-app/Dedupd/AppIcon.icon: the monogram and the instrument behind it, as SVG layers)
 app-icon:
-    swift macos-app/scripts/make-icon.swift macos-app/Dedupd/Assets.xcassets/AppIcon.appiconset
+    open -a "/Applications/Xcode.app/Contents/Applications/Icon Composer.app" macos-app/Dedupd/AppIcon.icon
