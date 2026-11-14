@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
+import { GitHubLink, Logo } from '../components/brand'
 import { docLinks, site } from '../lib/krantho'
 import './globals.css'
 
@@ -23,9 +24,10 @@ export default async function RootLayout({
     <html lang="en">
       <body>
         <header className="site-header">
-          <Link href="/" className="site-name">
-            {name}
+          <Link href="/" className="site-name" aria-label={`${name} home`}>
+            <Logo />
           </Link>
+          <GitHubLink />
         </header>
         <div className="site-body">
           <nav className="sidebar" aria-label="Documentation">

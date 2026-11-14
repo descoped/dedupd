@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 498 252" role="img" aria-label="dedupd">
+  <title>dedupd</title>
+  <style>g{stroke:#141414}@media (prefers-color-scheme:dark){g{stroke:#f2f2f2}}</style>
+  <g fill="none" stroke-linecap="round">
+    <!-- The monogram, centred on the wordmark's middle line -->
+    <g transform="translate(54 126)" stroke-width="12">
+      <circle r="48"/><path d="M-48 -48V120M48 48V-120"/>
+    </g>
+    <!-- The wordmark, its first bowl 182 to the right of the monogram's -->
+    <g transform="translate(236 126)" stroke-width="4">
+      <circle r="20"/><path d="M20 20V-50"/>
+      <path d="M40 0H80A20 20 0 1 0 74.142 14.142"/>
+      <circle cx="120" r="20"/><path d="M140 20V-50"/>
+      <path d="M160 -20V0A20 20 0 0 0 200 0M200 -20V20"/>
+      <circle cx="240" r="20"/><path d="M220 -20V50M260 20V-50"/>
+    </g>
+  </g>
+</svg>
