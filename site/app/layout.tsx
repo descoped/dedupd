@@ -50,6 +50,17 @@ export default async function RootLayout({
           </nav>
           <main>{children}</main>
         </div>
+        <footer className="site-footer">
+          <div className="site-footer-inner">
+            <span>
+              {name} is open source under the{' '}
+              <a href="https://github.com/descoped/dedupd/blob/main/LICENSE">MIT licence</a>
+            </span>
+            <span>
+              Built with <a href="https://krantho.com">Krantho</a>
+            </span>
+          </div>
+        </footer>
       </body>
     </html>
   )
