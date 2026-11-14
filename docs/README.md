@@ -84,5 +84,3 @@ agent so far. To build dedupd from source, see [Development](development.md).
 
 dedupd is MIT licensed. Copyright © 2026 Descoped. The source is at
 [github.com/descoped/dedupd](https://github.com/descoped/dedupd).
-
-The models you download keep their own licences.

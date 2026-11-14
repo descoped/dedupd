@@ -91,5 +91,3 @@ just app-run                          # build the app and start it in the menu b
 ## Licence
 
 [MIT](LICENSE). Copyright © 2026 Descoped.
-
-The models you download keep their own licences.
