@@ -24,10 +24,12 @@ export default async function RootLayout({
     <html lang="en">
       <body>
         <header className="site-header">
-          <Link href="/" className="site-name" aria-label={`${name} home`}>
-            <Logo />
-          </Link>
-          <GitHubLink />
+          <div className="site-header-inner">
+            <Link href="/" className="site-name" aria-label={`${name} home`}>
+              <Logo />
+            </Link>
+            <GitHubLink />
+          </div>
         </header>
         <div className="site-body">
           <nav className="sidebar" aria-label="Documentation">

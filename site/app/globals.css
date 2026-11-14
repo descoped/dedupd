@@ -36,11 +36,17 @@ a {
 }
 
 .site-header {
-  align-items: center;
   border-bottom: 1px solid var(--line);
+}
+
+/* The page's column: the logo above the sidebar, GitHub's mark at its right edge */
+.site-header-inner {
+  align-items: center;
   display: flex;
   justify-content: space-between;
-  padding: 0.5rem 1.5rem;
+  margin: 0 auto;
+  max-width: 72rem;
+  padding: 0.5rem 2rem 0.5rem 1.5rem;
 }
 
 .site-name {
@@ -181,6 +187,10 @@ main {
 @media (max-width: 48rem) {
   .site-body {
     grid-template-columns: 1fr;
+  }
+
+  .site-header-inner {
+    padding: 0.5rem 1rem;
   }
 
   .sidebar {
