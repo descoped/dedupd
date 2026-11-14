@@ -4,7 +4,7 @@ description: "One copy of each AI model on disk, shared by every app that runs i
 order: 0
 ---
 
-# dedupd
+# Introduction
 
 One copy of each AI model on disk, shared by every app that runs it.
 
@@ -13,10 +13,10 @@ One copy of each AI model on disk, shared by every app that runs it.
 Ollama, Bionic and LM Studio, the MLX tools, llama.cpp and `huggingface_hub` clients each keep their own copy of a
 model in their own folder. A model used by several apps is therefore stored several times.
 
-dedupd is a daemon that keeps each model file once, in a content-addressed store, and gives every app a *clone* of
-it. To the app a clone is an ordinary file in the expected place; on disk it shares its blocks with the stored file
-and takes no additional space. dedupd also acts as a local endpoint for Hugging Face tools and Ollama, and comes with
-a command line and a macOS app.
+dedupd, pronounced *deduped* (/diːˈduːpt/), is a daemon that keeps each model file once, in a content-addressed
+store, and gives every app a *clone* of it. To the app a clone is an ordinary file in the expected place; on disk it
+shares its blocks with the stored file and takes no additional space. dedupd also acts as a local endpoint for
+Hugging Face tools and Ollama, and comes with a command line and a macOS app.
 
 ## Features
 
