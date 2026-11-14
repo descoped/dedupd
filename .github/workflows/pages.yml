@@ -2,7 +2,9 @@ name: Documentation site
 
 # Builds the documentation site (site/, a krantho static site whose pages are
 # the markdown files in docs/) and publishes it to GitHub Pages when either
-# changes on main. Pages is set to publish from GitHub Actions.
+# changes on main, and when a release is published, so the home page's
+# download button leads to the new disk image. Pages is set to publish from
+# GitHub Actions.
 on:
   push:
     branches: [main]
@@ -10,21 +12,35 @@ on:
       - 'docs/**'
       - 'site/**'
       - '.github/workflows/pages.yml'
+  release:
+    types: [published]
   workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+permissions: {}
 
 # One deployment at a time, and one that has started always finishes
 concurrency:
-  group: pages
+  group: pages-${{ github.event_name == 'release' && 'release' || 'build' }}
   cancel-in-progress: false
 
 jobs:
-  build:
+  # A release runs on its tag, and only main may deploy to Pages: start this
+  # workflow again on main, which then builds with the new release
+  on-release:
+    if: github.event_name == 'release'
     runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+  build:
+    if: github.event_name != 'release'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
     defaults:
       run:
         working-directory: site
@@ -44,13 +60,15 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - id: pages
         uses: actions/configure-pages@v6
-      # Where Pages serves the site (https://docs.dedupd.com), which every page's
+      # Where Pages serves the site (https://dedupd.com), which every page's
       # canonical link, the sitemap and robots.txt name. Pages reports the
       # address with http:// until HTTPS is enforced on the custom domain; the
       # site is served over https either way, so the build always says https.
+      # The token lets the build ask GitHub for the latest release's disk image.
       - run: KRANTHO_SITE_BASE_URL="https://${BASE_URL#*://}" pnpm run build
         env:
           BASE_URL: ${{ steps.pages.outputs.base_url }}
+          GITHUB_TOKEN: ${{ github.token }}
       - uses: actions/upload-pages-artifact@v5
         with:
           path: site/out
@@ -58,6 +76,9 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
