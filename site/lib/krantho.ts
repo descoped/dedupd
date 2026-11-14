@@ -44,8 +44,8 @@ export async function docLinks(): Promise<DocLink[]> {
   }
   const links = sorted.map((doc) => ({
     slug: doc.slug,
-    // The home page is titled after the product, which the header already names
-    title: doc.slug === 'index' ? 'Overview' : String(doc.fields.title),
+    // The home page, titled dedupd for the browser tab, is the introduction
+    title: doc.slug === 'index' ? 'Introduction' : String(doc.fields.title),
     href: docHref(doc.slug),
     group: typeof doc.fields.group === 'string' ? doc.fields.group : '',
   }))
