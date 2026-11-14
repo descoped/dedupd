@@ -10,3 +10,6 @@ out/
 
 # A copy of ../docs/images, made by `pnpm run images` before each build
 /public/images/
+
+# The latest release's disk image, found by `pnpm run download` before each build
+/generated/

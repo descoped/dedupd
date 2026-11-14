@@ -1,24 +1,21 @@
-// Points the home page's download button at the disk image of the latest
-// release, so a click downloads the app. Runs after `next build`.
+// Finds the disk image of the latest release, so the home page's download
+// button can download the app. Runs before `next build` (and `next dev`) and
+// writes generated/download.json, which lib/download.ts reads.
 //
 // docs/README.md links the button to the latest release's page on GitHub,
-// which is also what the button keeps when GitHub cannot be asked: offline, or
-// a release without a disk image. Otherwise every copy of that link in out/
-// (the page, and the data Next loads when a reader comes to the page from
-// another one) becomes the address of the release's .dmg, as GitHub lists it.
-// The Pages workflow builds again when a release is published.
+// which is what the button keeps when GitHub cannot be asked (offline, or a
+// release without a disk image): the file then names no address. The Pages
+// workflow builds again when a release is published.
 
-import { readdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
 const repo = 'descoped/dedupd'
-const latest = `https://github.com/${repo}/releases/latest`
-const out = join(import.meta.dirname, '..', 'out')
+const file = join(import.meta.dirname, '..', 'generated', 'download.json')
 
 // Only a disk image attached to this repository's own release is used
-const downloadAddress = new RegExp(
-  `^https://github\\.com/${repo.replace('/', '\\/')}/releases/download/v[0-9][0-9A-Za-z.+-]*/dedupd-[0-9][0-9A-Za-z.+-]*\\.dmg$`,
-)
+const downloadAddress =
+  /^https:\/\/github\.com\/descoped\/dedupd\/releases\/download\/v[0-9][0-9A-Za-z.+-]*\/dedupd-[0-9][0-9A-Za-z.+-]*\.dmg$/
 
 async function latestDiskImage() {
   const headers = { Accept: 'application/vnd.github+json', 'User-Agent': 'dedupd-site-build' }
@@ -37,26 +34,12 @@ async function latestDiskImage() {
   return image
 }
 
-async function filesIn(dir) {
-  const entries = await readdir(dir, { recursive: true, withFileTypes: true })
-  return entries
-    .filter((entry) => entry.isFile() && /\.(html|txt)$/.test(entry.name))
-    .map((entry) => join(entry.parentPath, entry.name))
-}
-
-let image
+let image = null
 try {
   image = await latestDiskImage()
+  console.log(`download button: ${image}`)
 } catch (error) {
-  console.warn(`download button: kept ${latest} (${error.message})`)
-  process.exit(0)
+  console.warn(`download button: the latest release's page (${error.message})`)
 }
-
-let changed = 0
-for (const file of await filesIn(out)) {
-  const text = await readFile(file, 'utf8')
-  if (!text.includes(latest)) continue
-  await writeFile(file, text.replaceAll(latest, image))
-  changed += 1
-}
-console.log(`download button: ${image} (${changed} files)`)
+await mkdir(join(file, '..'), { recursive: true })
+await writeFile(file, `${JSON.stringify({ image }, null, 2)}\n`)
