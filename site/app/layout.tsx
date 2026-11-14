@@ -1,6 +1,7 @@
-import type { Metadata } from 'next'
+import type { Metadata, Viewport } from 'next'
 import Link from 'next/link'
 import { GitHubLink, Logo } from '../components/brand'
+import { MenuButton } from '../components/menu-button'
 import { docLinks, site } from '../lib/krantho'
 import './globals.css'
 
@@ -11,6 +12,17 @@ export const metadata: Metadata = {
   metadataBase: new URL(`${baseUrl.replace(/\/$/, '')}/`),
   title: { default: name, template: `%s — ${name}` },
   description,
+}
+
+// A phone lays the page out at its own width; its browser bars take the
+// page's background, light or dark
+export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#ffffff' },
+    { media: '(prefers-color-scheme: dark)', color: '#111418' },
+  ],
 }
 
 export default async function RootLayout({
@@ -28,11 +40,14 @@ export default async function RootLayout({
             <Link href="/" className="site-name" aria-label={`${name} home`}>
               <Logo />
             </Link>
-            <GitHubLink />
+            <div className="header-actions">
+              <GitHubLink />
+              <MenuButton />
+            </div>
           </div>
         </header>
         <div className="site-body">
-          <nav className="sidebar" aria-label="Documentation">
+          <nav id="site-nav" className="sidebar" aria-label="Documentation">
             {groups.map((group) => (
               <section key={group}>
                 {group && <h2>{group}</h2>}

@@ -27,6 +27,12 @@
   box-sizing: border-box;
 }
 
+html {
+  /* iOS and Android keep the text at the size set here when turned sideways */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -74,6 +80,33 @@ a {
   color: var(--fg);
 }
 
+.header-actions {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Shown on a narrow screen only */
+.menu-button {
+  align-items: center;
+  background: none;
+  border: 0;
+  border-radius: 0.5rem;
+  color: var(--fg);
+  cursor: pointer;
+  display: none;
+  height: 2.75rem;
+  justify-content: center;
+  margin-right: -0.5rem;
+  padding: 0;
+  width: 2.75rem;
+}
+
+.menu-button:hover,
+.menu-button:focus-visible {
+  background: var(--code-bg);
+}
+
 .site-body {
   display: grid;
   grid-template-columns: 16rem minmax(0, 1fr);
@@ -114,7 +147,24 @@ a {
 }
 
 main {
+  min-width: 0;
   padding: 1.5rem 2rem 4rem;
+}
+
+/* A long word, address or command breaks rather than widening the page */
+.prose {
+  overflow-wrap: break-word;
+}
+
+.prose :not(pre) > code {
+  overflow-wrap: anywhere;
+}
+
+/* A table scrolls on its own, so a command in it stays on one line */
+.prose td code,
+.prose th code {
+  overflow-wrap: normal;
+  white-space: nowrap;
 }
 
 .doc {
@@ -248,9 +298,10 @@ main {
   margin-left: auto;
 }
 
+/* A phone or a narrow window: one column, the links behind the menu button */
 @media (max-width: 48rem) {
   .site-body {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .site-header-inner,
@@ -259,12 +310,45 @@ main {
     padding-right: 1rem;
   }
 
+  .logo {
+    height: 2.75rem;
+  }
+
+  .menu-button {
+    display: flex;
+  }
+
   .sidebar {
     border-bottom: 1px solid var(--line);
     border-right: none;
+    display: none;
+    padding: 0.5rem 1rem 1rem;
+  }
+
+  .menu-open .sidebar {
+    display: block;
+  }
+
+  /* Room for a finger on each link */
+  .sidebar li {
+    margin: 0;
+  }
+
+  .sidebar li a {
+    display: block;
+    padding: 0.45rem 0;
   }
 
   main {
-    padding: 1.5rem 1rem 3rem;
+    padding: 1.25rem 1rem 3rem;
+  }
+
+  .doc h1 {
+    font-size: 1.85rem;
+  }
+
+  .pager {
+    flex-wrap: wrap;
+    gap: 1rem;
   }
 }
