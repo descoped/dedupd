@@ -5,6 +5,7 @@
   --muted: #5b6370;
   --line: #e3e6ea;
   --accent: #2f6fdb;
+  --on-accent: #ffffff;
   --code-bg: #f4f5f7;
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
   line-height: 1.6;
@@ -17,6 +18,7 @@
     --muted: #9aa3ae;
     --line: #2a3038;
     --accent: #7aa7f5;
+    --on-accent: #0d1626;
     --code-bg: #1b2027;
   }
 }
@@ -172,6 +174,68 @@ main {
   background: var(--code-bg);
 }
 
+/* The download button under the picture on the home page (docs/README.md) */
+.prose .download {
+  margin: 1.75rem 0 2.25rem;
+  text-align: center;
+}
+
+.prose .download-button {
+  align-items: center;
+  background: var(--accent);
+  border-radius: 0.6rem;
+  color: var(--on-accent);
+  display: inline-flex;
+  font-size: 1.05rem;
+  font-weight: 600;
+  gap: 0.55rem;
+  padding: 0.75rem 1.6rem;
+  text-decoration: none;
+  transition: filter 0.15s;
+}
+
+/* An arrow into a tray, drawn in the button's text colour */
+.prose .download-button::before {
+  background: currentColor;
+  content: '';
+  height: 1.15em;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v12M7 10l5 5 5-5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  width: 1.15em;
+}
+
+.prose .download-button:hover,
+.prose .download-button:focus-visible {
+  filter: brightness(1.1);
+}
+
+.prose .download-note {
+  color: var(--muted);
+  display: inline-block;
+  font-size: 0.85rem;
+  margin-top: 0.6rem;
+}
+
+.site-footer {
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.site-footer-inner {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  justify-content: space-between;
+  margin: 0 auto;
+  max-width: 72rem;
+  padding: 1.25rem 2rem 1.5rem 1.5rem;
+}
+
+.site-footer a {
+  color: var(--fg);
+}
+
 .pager {
   border-top: 1px solid var(--line);
   display: flex;
@@ -189,8 +253,10 @@ main {
     grid-template-columns: 1fr;
   }
 
-  .site-header-inner {
-    padding: 0.5rem 1rem;
+  .site-header-inner,
+  .site-footer-inner {
+    padding-left: 1rem;
+    padding-right: 1rem;
   }
 
   .sidebar {

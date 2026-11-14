@@ -12,6 +12,8 @@ One copy of each AI model on disk, shared by every app that runs it.
 
 ![The Library screen of the dedupd app: five models, the apps each one is in, and one model in full](images/library.png)
 
+<p class="download"><a class="download-button" href="https://github.com/descoped/dedupd/releases/latest">Download for macOS</a><br><span class="download-note">macOS 26 or later on Apple silicon</span></p>
+
 Ollama, Bionic and LM Studio, the MLX tools, llama.cpp and `huggingface_hub` clients each keep their own copy of a
 model in their own folder. A model used by several apps is therefore stored several times.
 
