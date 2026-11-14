@@ -6,8 +6,9 @@
   "packageManager": "pnpm@12.16.1",
   "scripts": {
     "images": "rm -rf public/images && mkdir -p public && cp -R ../docs/images public/images",
-    "dev": "pnpm run images && next dev --port 3000",
-    "build": "pnpm run images && next build && node scripts/download-link.mjs"
+    "dev": "pnpm run images && pnpm run download && next dev --port 3000",
+    "build": "pnpm run images && pnpm run download && next build",
+    "download": "node scripts/download-link.mjs"
   },
   "dependencies": {
     "@krantho/config": "^1.1.1",

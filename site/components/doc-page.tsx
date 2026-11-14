@@ -1,7 +1,8 @@
 import type { Metadata } from 'next'
 import Link from 'next/link'
 import { notFound } from 'next/navigation'
-import { CMSMarkdownServer, resolveSeoContent, SeoJsonLd } from '@krantho/ui-react/server'
+import { getCMSContent, resolveSeoContent, SeoJsonLd } from '@krantho/ui-react/server'
+import { withDownloadLink } from '../lib/download'
 import { docHref, docLinks, site } from '../lib/krantho'
 
 /** A docs page's title, description and canonical address */
@@ -26,12 +27,15 @@ export async function DocPage({ slug }: { slug: string }): Promise<React.ReactEl
   // The files in docs/ are also read on GitHub, so each starts with its own
   // `# Title`; the page then shows that and not the title from the frontmatter
   const ownHeading = /^\s*# /.test(doc.body)
+  // The markdown as krantho renders it (as CMSMarkdownServer would), with the
+  // download button's link set here, before Next records the page
+  const html = await withDownloadLink((await getCMSContent('docs', slug)).html)
   return (
     <article className="doc">
       <SeoJsonLd collection="docs" slug={slug} />
       {!ownHeading && <h1>{String(doc.fields.title)}</h1>}
       {!ownHeading && <p className="lead">{String(doc.fields.description)}</p>}
-      <CMSMarkdownServer collection="docs" slug={slug} className="prose" />
+      <div className="cms-markdown prose" dangerouslySetInnerHTML={{ __html: html }} />
       <nav className="pager" aria-label="Pages">
         {previous && (
           <Link href={previous.href} rel="prev">
