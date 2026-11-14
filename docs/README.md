@@ -79,8 +79,3 @@ agent so far. To build dedupd from source, see [Development](development.md).
 - [Apps and formats](apps.md): compatibility per application and format, cost in disk space, limitations.
 - [Development](development.md): building, testing and code layout.
 - [Roadmap](roadmap.md): what is available and what is planned: the catalogue, ModelScope, Linux with NVIDIA GPUs.
-
-## Licence
-
-dedupd is MIT licensed. Copyright © 2026 Descoped. The source is at
-[github.com/descoped/dedupd](https://github.com/descoped/dedupd).
