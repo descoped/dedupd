@@ -92,5 +92,4 @@ just app-run                          # build the app and start it in the menu b
 
 [MIT](LICENSE). Copyright © 2026 Descoped.
 
-dedupd is not affiliated with Hugging Face, Ollama, LM Studio or Apple. The models you download keep their own
-licences.
+The models you download keep their own licences.

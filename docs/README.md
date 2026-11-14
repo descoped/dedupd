@@ -85,5 +85,4 @@ agent so far. To build dedupd from source, see [Development](development.md).
 dedupd is MIT licensed. Copyright © 2026 Descoped. The source is at
 [github.com/descoped/dedupd](https://github.com/descoped/dedupd).
 
-dedupd is not affiliated with Hugging Face, Ollama, LM Studio or Apple. The models you download keep their own
-licences.
+The models you download keep their own licences.
