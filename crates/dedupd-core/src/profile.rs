@@ -730,6 +730,7 @@ mod tests {
                 method: ready.method.clone().unwrap(),
                 config: "c0".into(),
                 reason: r#"unsupported MLX architecture: model "NoSuchForCausalLM""#.into(),
+                lasting: true,
                 at: 1,
             },
         )

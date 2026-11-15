@@ -128,7 +128,7 @@ pub struct Item {
     pub etag: String,
 }
 
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct Placed {
     /// Files created as clones.
     pub cloned: usize,

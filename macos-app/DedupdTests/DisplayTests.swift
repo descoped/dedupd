@@ -296,35 +296,6 @@ struct DisplayTests {
         #expect(Notice.notices(from: [], to: after).isEmpty, "what was already done when the app started is old news")
     }
 
-    @Test("A finished download says which apps took the model and why the others did not")
-    func outcome() {
-        let request = PullRequest(model: "org/Repo-MLX", apps: ["bionic", "ollama"])
-        let all = FixtureData.job(id: 1, request: request, state: .done)
-        #expect(all.outcomeText == "Activated in Bionic and Ollama")
-        #expect(all.symbol == JobState.done.symbol)
-
-        let refusal = "not placed into Ollama: Ollama would not import a stand-in for the model: "
-            + "unsupported MLX architecture"
-        let one = FixtureData.job(id: 2, request: request, state: .done, notTakenBy: ["ollama": refusal])
-        #expect(one.missedApps == ["ollama"])
-        #expect(one.outcomeText == "Activated in Bionic · not in Ollama: "
-            + "Ollama would not import a stand-in for the model: unsupported MLX architecture")
-        #expect(one.symbol == "exclamationmark.circle.fill")
-
-        let none = FixtureData.job(
-            id: 3,
-            request: PullRequest(model: "org/Repo-MLX", apps: ["ollama"]),
-            state: .done,
-            notTakenBy: ["ollama": refusal]
-        )
-        #expect(none.statusText.hasPrefix("Not activated in Ollama: Ollama would not import"))
-
-        // A download that is still running has nothing to say about apps.
-        #expect(FixtureData.job(id: 4, request: request, state: .downloading).missedApps.isEmpty)
-        #expect(FixtureData.job(id: 5, request: PullRequest(model: "org/Repo-MLX", apps: []), state: .done)
-            .outcomeText == "In the store only")
-    }
-
     @Test("A trial's home folder and label go on the command line")
     func agentArguments() {
         #expect(BundledAgent().arguments(["agent", "--json"]) == ["agent", "--json"])

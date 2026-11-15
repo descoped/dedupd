@@ -13,7 +13,9 @@ struct MenuPanel: View {
             if daemon.connection == .notRunning {
                 notRunning
             } else {
-                if !daemon.downloadJobs.isEmpty {
+                // What is downloading, and whatever explains a warning in
+                // the menu bar, an activation included.
+                if !daemon.activeJobs.isEmpty || daemon.needsOwner {
                     MenuDownloads()
                 }
                 if let status = daemon.status {
@@ -236,13 +238,13 @@ private struct MenuTile: View {
 private struct MenuDownloads: View {
     @Environment(DaemonStore.self) private var daemon
 
-    private var shown: [Job] {
-        Array((daemon.activeJobs + daemon.attentionJobs).prefix(3))
-    }
+    /// The jobs that wait for the owner first, then the downloads under way.
+    private var listed: [Job] { daemon.waitingJobs + daemon.activeJobs }
 
     var body: some View {
-        let shown = shown
-        let more = daemon.activeJobs.count + daemon.attentionJobs.count - shown.count
+        let listed = listed
+        let shown = Array(listed.prefix(3))
+        let more = listed.count - shown.count
         if !shown.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(shown) { job in

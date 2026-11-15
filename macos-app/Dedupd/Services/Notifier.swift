@@ -22,7 +22,7 @@ struct Notice: Equatable, Sendable {
             case .done where job.isActivation:
                 // An activation is seen where it was asked for; the owner
                 // hears only when an app did not take the model.
-                guard !job.missedApps.isEmpty else {
+                guard !job.missed.isEmpty else {
                     return nil
                 }
                 return Notice(id: "download-\(job.id)", title: job.repo, body: Self.sentence(job.outcomeText))
