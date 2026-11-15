@@ -281,7 +281,7 @@ impl Fetcher {
         format!(
             "{}/{repo}/resolve/{commit}/{}",
             self.endpoint,
-            encode_path(path)
+            dedupd_api::url::encode_path(path)
         )
     }
 
@@ -718,18 +718,4 @@ fn io_error(e: std::io::Error, path: &Path) -> anyhow::Error {
         return NoSpace { needed: 0, free: 0 }.into();
     }
     anyhow::Error::new(e).context(format!("writing {}", path.display()))
-}
-
-/// Percent-encode a repository path for a URL, keeping `/`.
-pub fn encode_path(path: &str) -> String {
-    let mut out = String::with_capacity(path.len());
-    for b in path.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }

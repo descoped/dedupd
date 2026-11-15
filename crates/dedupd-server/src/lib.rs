@@ -191,7 +191,9 @@ impl Call {
 
     /// The first value given for `name` in the query string, decoded.
     pub fn param(&self, name: &str) -> Option<String> {
-        self.query_params(name).next().map(percent_decode)
+        self.query_params(name)
+            .next()
+            .map(dedupd_api::url::decode_query)
     }
 
     /// The values given for `name` in the query string, undecoded.
@@ -208,40 +210,6 @@ impl Call {
             body.into()
         }
     }
-}
-
-/// Undo the percent-encoding of a query value; `+` is a space.
-pub(crate) fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let hex = |i: usize| bytes.get(i).and_then(|b| (*b as char).to_digit(16));
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match (bytes[i], hex(i + 1), hex(i + 2)) {
-            (b'%', Some(high), Some(low)) => {
-                out.push((high * 16 + low) as u8);
-                i += 2;
-            }
-            (b'+', _, _) => out.push(b' '),
-            (b, _, _) => out.push(b),
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// Percent-encode a value for a query string.
-pub(crate) fn percent_encode(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for b in text.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 pub(crate) fn plain(status: StatusCode, text: impl Into<String>) -> Response {

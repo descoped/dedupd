@@ -3,7 +3,7 @@
 //! Everything the app shows comes from here, and everything it does goes
 //! through here: the daemon owns the store, the database and the downloads.
 
-use crate::{Call, Server, daemon, json, moves, percent_decode, plain};
+use crate::{Call, Server, daemon, json, moves, plain};
 use axum::body::{Body, Bytes};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
@@ -15,9 +15,9 @@ use dedupd_api::daemon::{
 use dedupd_api::jobs::{Cleared, Enqueued, JobAction, JobRef, JobState, PullBody};
 use dedupd_api::library::{ModelList, RepoBody, UpstreamCheck, UpstreamState};
 use dedupd_api::moves::{GcBody, MoveBody, MoveKind, UnplaceBody};
+use dedupd_api::url::{decode_path, encode_path};
 use dedupd_core::config::Config;
 use dedupd_core::db::PROVIDER_HF;
-use dedupd_core::fetch::encode_path;
 use dedupd_core::hub::{HubClient, HubError};
 use dedupd_core::profile::{self, Installed};
 use dedupd_core::{activity, archive, library, maintain, status};
@@ -459,7 +459,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
             .await,
         ),
         (&Method::GET, ["models", name @ ..]) if !name.is_empty() => {
-            let repo = percent_decode(&name.join("/"));
+            let repo = decode_path(&name.join("/"));
             let found = {
                 let repo = repo.clone();
                 blocking(move || {

@@ -6,14 +6,14 @@
 //! already here.
 
 use crate::control::{error, hub_error, ok};
-use crate::{Call, Server, percent_decode, percent_encode, plain};
+use crate::{Call, Server, plain};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
 use dedupd_api::app::App;
 use dedupd_api::hub::{HubFile, HubModel, SearchHit, SearchPage};
 use dedupd_api::library::ModelMeta;
+use dedupd_api::url::{decode_path, decode_query, encode_component, encode_path};
 use dedupd_core::db::PROVIDER_HF;
-use dedupd_core::fetch::encode_path;
 use dedupd_core::hub::{HubError, TreeEntry, model_meta, next_link};
 use dedupd_core::library;
 use dedupd_core::profile::Installed;
@@ -50,7 +50,7 @@ fn search_query(call: &Call) -> String {
     let mut query = Vec::new();
     let mut add = |name: &str, value: &str| {
         if !value.is_empty() {
-            query.push(format!("{name}={}", percent_encode(value)));
+            query.push(format!("{name}={}", encode_component(value)));
         }
     };
     let param = |name: &str| call.param(name).unwrap_or_default();
@@ -145,7 +145,7 @@ async fn search(server: &Arc<Server>, call: &Call) -> Response {
                 .and_then(|url| {
                     let query = url.split_once('?')?.1.to_string();
                     let cursor = query.split('&').find_map(|p| p.strip_prefix("cursor="))?;
-                    Some(percent_decode(cursor))
+                    Some(decode_query(cursor))
                 });
             let models = match resp.json::<Vec<Value>>().await {
                 Ok(models) => models,
@@ -207,7 +207,7 @@ async fn related(server: &Arc<Server>, repo: &str, meta: &ModelMeta) -> Vec<Sear
     let base = meta.base_model.as_deref().unwrap_or(repo);
     let mut query = format!(
         "filter={}&sort=downloads&direction=-1&limit=30",
-        percent_encode(&format!("base_model:{base}"))
+        encode_component(&format!("base_model:{base}"))
     );
     for field in EXPAND {
         query.push_str(&format!("&expand[]={field}"));
@@ -362,7 +362,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
             // The name goes into the provider's address and into the
             // database, so it is a repository's name or nothing: no part of
             // it can climb to another path on the provider.
-            let repo = percent_decode(&format!("{org}/{name}"));
+            let repo = decode_path(&format!("{org}/{name}"));
             if !dedupd_core::pull::is_repo_name(&repo) {
                 return plain(StatusCode::BAD_REQUEST, "that is not a model's name");
             }
