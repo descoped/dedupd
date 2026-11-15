@@ -26,8 +26,21 @@ pub struct AppDirs {
 
 impl AppDirs {
     /// The folders the apps use by default, honouring the environment
-    /// variables each app itself reads, then the config file.
+    /// variables each app itself reads, then the config file. Each is taken
+    /// as its real path, without symbolic links, because a scan names files
+    /// by their real paths and a placement by the folder: one file must have
+    /// one name in the database.
     pub fn resolve(config: &crate::config::Config) -> Result<Self> {
+        let dirs = Self::named(config)?;
+        Ok(Self {
+            bionic: real_path(&dirs.bionic),
+            ollama: real_path(&dirs.ollama),
+            hf_cache: real_path(&dirs.hf_cache),
+            apps: dirs.apps,
+        })
+    }
+
+    fn named(config: &crate::config::Config) -> Result<Self> {
         let home = PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?);
         let env = |k: &str| {
             std::env::var_os(k)
@@ -70,6 +83,25 @@ impl AppDirs {
             App::Bionic => &self.bionic,
             App::Ollama => &self.ollama,
             App::Hf => &self.hf_cache,
+        }
+    }
+}
+
+/// `path` without symbolic links. A part that does not exist yet is kept
+/// as it is, after the real path of the part that does.
+fn real_path(path: &Path) -> PathBuf {
+    let mut rest = Vec::new();
+    let mut existing = path;
+    loop {
+        if let Ok(real) = fs::canonicalize(existing) {
+            return rest.iter().rev().fold(real, |p, name| p.join(name));
+        }
+        match (existing.parent(), existing.file_name()) {
+            (Some(parent), Some(name)) => {
+                rest.push(name);
+                existing = parent;
+            }
+            _ => return path.to_path_buf(),
         }
     }
 }
@@ -317,4 +349,24 @@ pub fn place_ollama(
         fs::rename(&tmp, &path)?;
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_app_folder_is_named_by_its_real_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = fs::canonicalize(dir.path()).unwrap();
+        fs::create_dir_all(real.join("disk/hub")).unwrap();
+        std::os::unix::fs::symlink(real.join("disk"), real.join("cache")).unwrap();
+        assert_eq!(real_path(&real.join("cache/hub")), real.join("disk/hub"));
+        // Not there yet: the part that exists is resolved, the rest kept.
+        assert_eq!(
+            real_path(&real.join("cache/new/hub")),
+            real.join("disk/new/hub")
+        );
+        assert_eq!(real_path(Path::new("relative")), PathBuf::from("relative"));
+    }
 }
