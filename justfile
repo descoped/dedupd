@@ -32,9 +32,11 @@ check:
     cargo clippy --workspace --all-targets -- -D warnings
     cargo test --workspace
 
-# Re-record the control API answers the app's contract tests read
+# Re-record the control API answers the app's contract tests read, and the
+# app profiles' answers the canned daemon gives
 fixtures:
     DEDUPD_UPDATE_FIXTURES=1 cargo test -p dedupd-server --test frontends control_api_answers_match_the_recorded_ones
+    DEDUPD_UPDATE_FIXTURES=1 cargo test -p dedupd-core --test canned_profiles
 
 # Copy the version in Cargo.toml to the app
 sync-version:

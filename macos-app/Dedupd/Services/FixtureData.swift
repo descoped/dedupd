@@ -290,87 +290,53 @@ extension FixtureData {
     }
 
     private static func variants(of model: LibraryModel) -> [Variant] {
+        let judged = judged(model.repo, formats: model.meta.formats, stored: true)
         if model.meta.formats.contains("gguf") {
             return [
                 Variant(
-                    kind: .gguf,
-                    name: "Q4_K_M",
-                    spec: "\(model.repo):Q4_K_M",
-                    files: 4,
-                    bytes: model.storedBytes,
-                    storedBytes: model.storedBytes,
-                    usableBy: ModelApp.allCases,
-                    placedIn: model.appNames,
-                    decisions: decisions(usableBy: ModelApp.allCases)
+                    kind: .gguf, format: judged.format, name: "Q4_K_M", spec: "\(model.repo):Q4_K_M", files: 4,
+                    bytes: model.storedBytes, storedBytes: model.storedBytes, usableBy: judged.usableBy,
+                    placedIn: model.appNames, decisions: judged.decisions
                 ),
             ]
         }
         return [
             Variant(
-                kind: .files,
-                name: "all files",
-                spec: model.repo,
-                files: model.storedFiles,
-                bytes: model.storedBytes,
-                storedBytes: model.storedBytes,
-                usableBy: usableBy(mlxBits: mlxBits(model.repo, formats: model.meta.formats)),
-                placedIn: model.appNames,
-                decisions: decisions(
-                    usableBy: usableBy(mlxBits: mlxBits(model.repo, formats: model.meta.formats)),
-                    mlxBits: mlxBits(model.repo, formats: model.meta.formats)
-                )
+                kind: .files, format: judged.format, name: "all files", spec: model.repo, files: model.storedFiles,
+                bytes: model.storedBytes, storedBytes: model.storedBytes, usableBy: judged.usableBy,
+                placedIn: model.appNames, decisions: judged.decisions
             ),
         ]
     }
 
-    /// The bit width an MLX repository names itself with (`-4bit`), which
-    /// is what the canned daemon goes by; nil for a model that is not MLX.
-    static func mlxBits(_ repo: String, formats: [String]) -> Int? {
+    /// What the app profiles answer for a variant: its format, every
+    /// app's decision, and the apps that can take it (those answered
+    /// `ready`), as the daemon puts them on a variant.
+    struct Judged {
+        var format: ModelFormat
+        var decisions: [Decision]
+        var usableBy: [ModelApp] { decisions.filter { $0.state == .ready }.map(\.app) }
+    }
+
+    /// What the app profiles answer for a repository the canned daemon
+    /// knows, recorded from the real profiles (`RecordedProfiles`). The bit
+    /// width of an MLX model is known once its `config.json` is stored; the
+    /// canned daemon reads it from the name (`-4bit`).
+    static func judged(_ repo: String, formats: [String], stored: Bool) -> Judged {
+        if formats.contains("gguf") {
+            return Judged(format: .gguf, decisions: RecordedProfiles.gguf)
+        }
         guard formats.contains("mlx") else {
-            return nil
+            return Judged(format: .other, decisions: RecordedProfiles.other)
         }
-        let width = repo.lowercased().firstMatch(of: /(\d+)-?bit/).flatMap { Int($0.1) }
-        return width ?? 4
-    }
-
-    /// The apps a model that is not GGUF can be given to: the Hugging Face
-    /// cache takes anything, Bionic takes MLX, and Ollama takes MLX with
-    /// 4-bit or 8-bit weights.
-    static func usableBy(mlxBits: Int?) -> [ModelApp] {
-        switch mlxBits {
-        case nil: [.huggingFace]
-        case 4, 8: ModelApp.allCases
-        default: [.bionic, .huggingFace]
+        let bits = stored ? repo.lowercased().firstMatch(of: /(\d+)-?bit/).flatMap { Int($0.1) } : nil
+        let decisions = switch bits {
+        case 4: RecordedProfiles.mlx4
+        case 6: RecordedProfiles.mlx6
+        case 8: RecordedProfiles.mlx8
+        default: RecordedProfiles.mlxUnknownBits
         }
-    }
-
-    /// What the daemon's app profiles answer for a variant these apps can
-    /// be given, in short, in the profiles' own words.
-    static func decisions(usableBy: [ModelApp], mlxBits: Int? = nil) -> [Decision] {
-        ModelApp.allCases.map { app in
-            var decision = Decision(
-                app: app, state: .ready, method: "clone", cost: .nothing, reason: "Shares the stored files",
-                version: nil, versionState: .unknown
-            )
-            if usableBy.contains(app) {
-                if app == .ollama, mlxBits != nil {
-                    decision.method = "clone-with-rewritten-index"
-                    decision.cost = .megabytes
-                    decision.reason = "Shares the stored files; only the index of each weights file is new"
-                }
-                return decision
-            }
-            decision.state = .no
-            decision.method = nil
-            decision.cost = nil
-            if app == .ollama, let mlxBits {
-                decision.reason = "Ollama could not run \(mlxBits)-bit MLX models when dedupd tried it (0.40.16); "
-                    + "it ran 4-bit and 8-bit ones"
-            } else {
-                decision.reason = "\(app.title) cannot run this format"
-            }
-            return decision
-        }
+        return Judged(format: .mlx, decisions: decisions)
     }
 
     static func folder(of app: ModelApp) -> String {

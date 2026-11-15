@@ -72,16 +72,11 @@ extension FixtureData {
             let stem = name.replacingOccurrences(of: "-GGUF", with: "")
             variants = quants.map { quant, bytes in
                 let here = local != nil && quant == "Q4_K_M"
+                let judged = judged(repo, formats: meta.formats, stored: here)
                 return Variant(
-                    kind: .gguf,
-                    name: quant,
-                    spec: "\(repo):\(quant)",
-                    files: 4,
-                    bytes: bytes,
-                    storedBytes: here ? bytes : 0,
-                    usableBy: ModelApp.allCases,
-                    placedIn: here ? local?.appNames ?? [] : [],
-                    decisions: decisions(usableBy: ModelApp.allCases)
+                    kind: .gguf, format: judged.format, name: quant, spec: "\(repo):\(quant)", files: 4,
+                    bytes: bytes, storedBytes: here ? bytes : 0, usableBy: judged.usableBy,
+                    placedIn: here ? local?.appNames ?? [] : [], decisions: judged.decisions
                 )
             }
             files = quants.map { quant, bytes in
@@ -95,18 +90,12 @@ extension FixtureData {
             ]
         } else {
             let bytes: UInt64 = local?.storedBytes ?? 5_420_000_000
-            let bits = mlxBits(repo, formats: meta.formats)
+            let judged = judged(repo, formats: meta.formats, stored: local != nil)
             variants = [
                 Variant(
-                    kind: .files,
-                    name: "all files",
-                    spec: repo,
-                    files: 8,
-                    bytes: bytes,
-                    storedBytes: local == nil ? 0 : bytes,
-                    usableBy: usableBy(mlxBits: bits),
-                    placedIn: local?.appNames ?? [],
-                    decisions: decisions(usableBy: usableBy(mlxBits: bits), mlxBits: bits)
+                    kind: .files, format: judged.format, name: "all files", spec: repo, files: 8, bytes: bytes,
+                    storedBytes: local == nil ? 0 : bytes, usableBy: judged.usableBy,
+                    placedIn: local?.appNames ?? [], decisions: judged.decisions
                 ),
             ]
             files = [

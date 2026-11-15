@@ -22,6 +22,8 @@ protocol DaemonClient: Sendable {
     /// Have the daemon look at the app folders now.
     func scan(at address: String) async throws -> ScanResult
 
+    /// Every app, its installed version and the formats it takes.
+    func apps(at address: String) async throws -> [AppInfo]
     func models(at address: String) async throws -> [LibraryModel]
     func model(_ repo: String, at address: String) async throws -> ModelDetail
     func locations(at address: String) async throws -> Locations
@@ -83,6 +85,10 @@ struct LiveDaemonClient: DaemonClient {
 
     func scan(at address: String) async throws -> ScanResult {
         try await Self.blocking { try DedupdClient.scan(address: address) }
+    }
+
+    func apps(at address: String) async throws -> [AppInfo] {
+        try await Self.blocking { try DedupdClient.apps(address: address) }
     }
 
     func models(at address: String) async throws -> [LibraryModel] {

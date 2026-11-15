@@ -30,6 +30,9 @@ final class DaemonStore {
     /// The daemon's last status; kept while it is away, so the window does
     /// not go blank during a restart.
     private(set) var status: DaemonStatus?
+    /// Every app, its installed version and the formats dedupd can give
+    /// it; read when the daemon comes, and kept while it is away.
+    private(set) var apps: [AppInfo] = []
     /// The download queue and the rate governor, as of the last event.
     private(set) var downloads: Downloads?
     /// The daemon is hashing its store.
@@ -154,6 +157,7 @@ final class DaemonStore {
         following = address
         connection = .connecting
         status = nil
+        apps = []
         downloads = nil
         library = nil
         follower = Task { [weak self, client] in
@@ -215,6 +219,7 @@ final class DaemonStore {
         }
         connection = .running
         await refreshStatus()
+        await refreshApps()
         revision += 1
     }
 
@@ -225,6 +230,16 @@ final class DaemonStore {
             return
         }
         status = answer
+    }
+
+    /// Read the apps and what they take. The installed versions change
+    /// when an app is updated, which the daemon only notices when asked.
+    func refreshApps() async {
+        let address = settings.address
+        guard let answer = try? await client.apps(at: address), address == settings.address else {
+            return
+        }
+        apps = answer
     }
 
     // MARK: - Asking the daemon

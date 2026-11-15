@@ -68,36 +68,50 @@ extension ModelApp: @retroactive Identifiable {
     }
 }
 
-/// The kinds of model the owner chooses apps for. The choice is remembered
-/// for each kind, because each app takes different kinds.
-enum ModelKind: String, CaseIterable, Identifiable, Sendable {
-    /// One GGUF file: every app can use it.
-    case gguf
-    /// A GGUF in several parts, which Ollama cannot use.
-    case splitGGUF = "gguf-split"
-    /// An MLX repository, for Bionic and the MLX tools.
-    case mlx
-    /// Anything else: only tools that read the Hugging Face cache.
-    case other
+/// The formats the owner chooses apps for. The choice is remembered for
+/// each format, because each app takes different formats; which ones is
+/// the daemon's answer (`AppInfo`), from the app profiles.
+extension ModelFormat: @retroactive Identifiable {
+    public var id: String { name }
 
-    var id: String { rawValue }
+    /// The name the choice is remembered by.
+    var name: String {
+        switch self {
+        case .gguf: "gguf"
+        case .mlx: "mlx"
+        case .other: "other"
+        }
+    }
+
+    init?(name: String) {
+        guard let format = Self.allCases.first(where: { $0.name == name }) else {
+            return nil
+        }
+        self = format
+    }
 
     var title: String {
         switch self {
         case .gguf: "GGUF"
-        case .splitGGUF: "GGUF in several parts"
         case .mlx: "MLX"
         case .other: "Other formats"
         }
     }
+}
 
-    /// Where a model of this kind goes unless the owner chose otherwise.
-    var defaultApps: Set<ModelApp> {
-        switch self {
-        case .gguf: [.bionic, .ollama]
-        case .splitGGUF: [.bionic]
-        case .mlx: [.bionic]
-        case .other: [.huggingFace]
-        }
+extension [AppInfo] {
+    /// The apps dedupd can give a model of this format, in the daemon's
+    /// order.
+    func apps(taking format: ModelFormat) -> [ModelApp] {
+        filter { $0.takes.contains { $0.format == format } }.map(\.app)
+    }
+
+    /// Where a new model of this format goes until the owner chooses: the
+    /// apps that share the stored files at no cost. The Hugging Face cache,
+    /// which serves developer tools, only when no other app takes the format.
+    func defaultApps(for format: ModelFormat) -> Set<ModelApp> {
+        let free = filter { $0.takes.contains(Taken(format: format, cost: .nothing)) }.map(\.app)
+        let apps = free.filter { $0 != .huggingFace }
+        return Set(apps.isEmpty ? free : apps)
     }
 }

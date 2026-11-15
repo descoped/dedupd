@@ -8,9 +8,9 @@
 
 use crate::place::AppDirs;
 use crate::refusals::Refusals;
-use crate::select::Variant;
-use dedupd_api::app::App;
-use dedupd_api::library::{Cost, Decision, DecisionState, VariantKind, VersionState};
+use crate::store::Store;
+use dedupd_api::app::{App, AppInfo, Taken};
+use dedupd_api::library::{Cost, Decision, DecisionState, Format, VersionState};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,27 +21,6 @@ const SOURCES: [&str; 3] = [
     include_str!("../profiles/ollama.toml"),
     include_str!("../profiles/hf.toml"),
 ];
-
-/// The form a model's weights are in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Format {
-    Gguf,
-    Mlx,
-    /// Anything else: plain safetensors, ONNX and so on.
-    Other,
-}
-
-impl Format {
-    /// The format's name in a sentence.
-    pub fn label(self) -> &'static str {
-        match self {
-            Format::Gguf => "GGUF",
-            Format::Mlx => "MLX",
-            Format::Other => "other",
-        }
-    }
-}
 
 /// New disk space a method takes, in words.
 pub fn cost_label(cost: Cost) -> &'static str {
@@ -123,16 +102,6 @@ pub struct Traits {
 }
 
 impl Traits {
-    /// The traits of one variant of a repository whose provider lists
-    /// `formats` for it.
-    pub fn of(variant: &Variant, formats: &[String]) -> Self {
-        let ggufs = match variant.kind {
-            VariantKind::Gguf => variant.weights.len(),
-            VariantKind::Files => 0,
-        };
-        Self::of_files(ggufs, formats)
-    }
-
     /// The traits of a set of files with `ggufs` GGUF weight files among
     /// them.
     pub fn of_files(ggufs: usize, formats: &[String]) -> Self {
@@ -163,7 +132,7 @@ impl Traits {
 
 /// The quantization widths of the model whose `config.json` is at `path`;
 /// `None` when the file cannot be read.
-pub fn quantization_of(path: &Path) -> Option<Vec<u32>> {
+fn quantization_of(path: &Path) -> Option<Vec<u32>> {
     let config = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
     Some(quantization_bits(&config))
 }
@@ -432,17 +401,108 @@ impl Installed {
 }
 
 /// The answer of every app for one model.
-pub fn decisions(traits: &Traits, installed: &Installed) -> Vec<Decision> {
+fn decisions(traits: &Traits, installed: &Installed) -> Vec<Decision> {
     profiles()
         .iter()
         .map(|p| p.decide(traits, installed.version(p.app)))
         .collect()
 }
 
+/// What every app says about one variant, and the format it was judged
+/// as. The one way to decide: the Library, Discover and a pull all ask here.
+///
+/// `ggufs` is the number of GGUF weight files, `formats` what the provider
+/// lists for the repository, and `config` the sha256 of the variant's
+/// `config.json`. The bit widths are read from that file once it is in the
+/// store; before that they are not known.
+pub fn decide_for(
+    store: &Store,
+    installed: &Installed,
+    refusals: &Refusals,
+    ggufs: usize,
+    formats: &[String],
+    config: Option<&str>,
+) -> Judged {
+    let mut traits = Traits::of_files(ggufs, formats);
+    if ggufs == 0 {
+        traits = traits.with_bits(
+            config
+                .filter(|sha| store.contains(sha))
+                .and_then(|sha| quantization_of(&store.blob_path(sha))),
+        );
+    }
+    Judged {
+        format: traits.format,
+        decisions: decisions(&traits, installed)
+            .into_iter()
+            .map(|d| unless_refused(d, refusals, config))
+            .collect(),
+    }
+}
+
+/// The answer of [`decide_for`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Judged {
+    pub format: Format,
+    /// One per app, in the order of `App::ALL`.
+    pub decisions: Vec<Decision>,
+}
+
+impl Judged {
+    /// The apps that can take the variant now.
+    pub fn ready(&self) -> Vec<App> {
+        self.decisions
+            .iter()
+            .filter(|d| d.state == DecisionState::Ready)
+            .map(|d| d.app)
+            .collect()
+    }
+
+    /// One app's answer.
+    pub fn of(&self, app: App) -> &Decision {
+        self.decisions
+            .iter()
+            .find(|d| d.app == app)
+            .expect("every app has a profile")
+    }
+}
+
+/// Every app with its installed version and the formats dedupd can put
+/// into it.
+pub fn apps(installed: &Installed) -> Vec<AppInfo> {
+    profiles()
+        .iter()
+        .map(|p| AppInfo {
+            app: p.app,
+            name: p.name.clone(),
+            version: installed.version(p.app).map(str::to_string),
+            takes: taken(p),
+        })
+        .collect()
+}
+
+/// The formats an app can be given now (those a built method takes), each
+/// with its cheapest method's cost. Methods are listed cheapest first.
+fn taken(profile: &Profile) -> Vec<Taken> {
+    Format::ALL
+        .into_iter()
+        .filter_map(|format| {
+            profile
+                .methods
+                .iter()
+                .find(|m| m.built && m.formats.contains(&format))
+                .map(|m| Taken {
+                    format,
+                    cost: m.cost,
+                })
+        })
+        .collect()
+}
+
 /// Turn a `ready` answer into `no` when this version of the app said no to
 /// the model (known by the sha256 of its `config.json`) when it was asked
 /// before.
-pub fn unless_refused(mut d: Decision, refusals: &Refusals, config: Option<&str>) -> Decision {
+fn unless_refused(mut d: Decision, refusals: &Refusals, config: Option<&str>) -> Decision {
     if d.state != DecisionState::Ready {
         return d;
     }

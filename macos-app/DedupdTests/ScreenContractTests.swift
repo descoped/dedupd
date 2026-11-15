@@ -59,7 +59,7 @@ struct ScreenContractTests {
         #expect(detail.revisions.first?.files.map(\.path) == ["model.gguf", "sub/config.json"])
         #expect(detail.placements.count == 4)
         let variant = try #require(detail.variants.first)
-        #expect(variant.kind(formats: model.meta.formats) == .gguf)
+        #expect(variant.format == .gguf)
         #expect(variant.isStored)
         #expect(variant.placedIn == [.bionic, .huggingFace])
         #expect(detail.infoJson?.contains("\"siblings\"") == true)
@@ -158,6 +158,19 @@ struct ScreenContractTests {
             #expect(signal == .disconnected)
             break
         }
+    }
+
+    @Test("Settings: which apps take which formats, from the profiles")
+    func apps() async throws {
+        let server = try await Recorded.daemon(["GET /dedupd/v1/apps": "apps"])
+        defer { server.stop() }
+
+        let apps = try await client.apps(at: server.address)
+        #expect(apps.map(\.app) == [.bionic, .ollama, .huggingFace])
+        #expect(apps.map(\.version) == [nil, nil, nil], "the scratch daemon finds no app installed")
+        #expect(apps.apps(taking: .other) == [.huggingFace])
+        #expect(apps.defaultApps(for: .gguf) == [.bionic, .ollama])
+        #expect(apps.defaultApps(for: .mlx) == [.bionic])
     }
 
     @Test("Storage: the places, the clean-up plan and the store check")

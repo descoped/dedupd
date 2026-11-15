@@ -4,15 +4,15 @@
 use crate::db::{Db, PROVIDER_HF, app_column};
 use crate::hub::{TreeEntry, model_meta};
 use crate::place::AppDirs;
-use crate::profile::{self, Installed, Traits};
+use crate::profile::{self, Installed};
 use crate::refusals::Refusals;
 use crate::select;
 use crate::store::Store;
 use anyhow::{Result, bail};
 use dedupd_api::app::App;
 use dedupd_api::library::{
-    AppPresence, DecisionState, LibraryModel, Location, LocationKind, Locations, ModelDetail,
-    Origin, Placement, Revision, RevisionFile, UpstreamState, Variant, VariantKind, VerifyState,
+    AppPresence, LibraryModel, Location, LocationKind, Locations, ModelDetail, Origin, Placement,
+    Revision, RevisionFile, UpstreamState, Variant, VariantKind, VerifyState,
 };
 use rusqlite::{OptionalExtension, params};
 use std::collections::{BTreeMap, BTreeSet};
@@ -169,21 +169,6 @@ pub fn models(db: &Db) -> Result<Vec<LibraryModel>> {
         .collect()
 }
 
-/// The quantization widths of a model that is not GGUF, from its
-/// `config.json`; `None` while the store does not have that file.
-fn widths(
-    store: &Store,
-    entries: &[TreeEntry],
-    sha_of: impl Fn(&str) -> Option<String>,
-) -> Option<Vec<u32>> {
-    entries
-        .iter()
-        .find(|e| e.path == "config.json")
-        .and_then(|e| sha_of(&e.path))
-        .filter(|sha| store.contains(sha))
-        .and_then(|sha| profile::quantization_of(&store.blob_path(&sha)))
-}
-
 /// `org/repo:quant` for a variant of a GGUF repository, else `org/repo`.
 pub fn spec_of(repo: &str, variant: &select::Variant) -> String {
     match &variant.quant {
@@ -234,29 +219,22 @@ pub fn local_variants(
                         })
                 })
                 .collect();
-            let mut traits = Traits::of(&v, formats);
-            if v.kind != VariantKind::Gguf {
-                traits =
-                    traits.with_bits(widths(store, &v.files, |p| sha_of(p).map(str::to_string)));
-            }
+            let ggufs = match v.kind {
+                VariantKind::Gguf => v.weights.len(),
+                VariantKind::Files => 0,
+            };
             let config = v
                 .files
                 .iter()
                 .find(|e| e.path == "config.json")
                 .and_then(|e| sha_of(&e.path));
-            let decisions: Vec<_> = profile::decisions(&traits, installed)
-                .into_iter()
-                .map(|d| profile::unless_refused(d, &refusals, config))
-                .collect();
+            let judged = profile::decide_for(store, installed, &refusals, ggufs, formats, config);
             Variant {
                 spec: spec_of(repo, &v),
-                usable_by: decisions
-                    .iter()
-                    .filter(|d| d.state == DecisionState::Ready)
-                    .map(|d| d.app)
-                    .collect(),
+                usable_by: judged.ready(),
+                format: judged.format,
                 placed_in,
-                decisions,
+                decisions: judged.decisions,
                 files: v.files.len() as u64,
                 bytes: v.bytes,
                 stored_bytes: v
