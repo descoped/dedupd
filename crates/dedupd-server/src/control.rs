@@ -138,7 +138,13 @@ fn events(server: &Arc<Server>) -> Response {
 }
 
 /// Queue a download, or name the one already queued for the same thing.
+/// Refused while the model is being archived or restored: the job would
+/// fetch or place the files the move is taking away or bringing back.
 fn enqueue(server: &Arc<Server>, body: PullBody) -> Result<(i64, bool), Refused> {
+    let _starting = server.starting.lock().expect("lock");
+    if let Some(why) = moves::refuses_job(server.moving.borrow().as_ref(), &body.model) {
+        return Err(Box::new(error(StatusCode::CONFLICT, why)));
+    }
     server
         .queue
         .add_or_find(

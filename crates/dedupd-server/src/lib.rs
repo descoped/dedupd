@@ -45,6 +45,9 @@ pub struct Server {
     pub(crate) check: Mutex<dedupd_api::daemon::StoreCheck>,
     /// The archive or restore of one model that is running, or the last one.
     pub(crate) moving: watch::Sender<Option<dedupd_api::moves::ModelMove>>,
+    /// Held while a job is added to the queue and while a move starts, so
+    /// neither begins for a model the other has just begun with.
+    pub(crate) starting: Mutex<()>,
     /// Counts up whenever what the store or the apps hold has changed.
     library: watch::Sender<u64>,
     /// Answers from the provider's search, kept for a few minutes.
@@ -81,6 +84,7 @@ impl Server {
             passes: daemon::PassState::default(),
             check: Mutex::new(dedupd_api::daemon::StoreCheck::default()),
             moving: watch::Sender::new(None),
+            starting: Mutex::new(()),
             library: watch::Sender::new(0),
             searches: Mutex::new(HashMap::new()),
             started_at: std::time::SystemTime::now()
