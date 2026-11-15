@@ -227,6 +227,11 @@ final class DaemonStore {
             }
             let changed = library != event.library
             library = event.library
+            // The apps could not be read when the daemon came; ask again,
+            // since a download needs them to know where it goes.
+            if apps.isEmpty {
+                await refreshApps()
+            }
             if !first, changed || finished {
                 await refreshStatus()
                 revision += 1

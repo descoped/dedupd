@@ -185,6 +185,7 @@ private struct TargetPicker: View {
                 ForEach(usable) { app in
                     Toggle(app.shortTitle, isOn: binding(app))
                         .toggleStyle(.checkbox)
+                        .disabled(daemon.apps.isEmpty)
                         .help(app.detail)
                         .accessibilityIdentifier("target-\(format.name)-\(app.name)")
                 }
@@ -208,6 +209,9 @@ private struct TargetPicker: View {
     private var note: String {
         let others = ModelApp.allCases.filter { !usable.contains($0) }.map(\.shortTitle)
         let remembered = "Remembered for \(format.title) models."
+        if daemon.apps.isEmpty {
+            return "Waiting for dedupd to say which apps take \(format.title) models."
+        }
         if settings.apps(for: format, usable: usable, known: daemon.apps).isEmpty {
             return "With no app chosen the files are kept in the store only. \(remembered)"
         }
@@ -292,7 +296,10 @@ private struct HubVariantRow: View {
                 Task { await discover.download(variant, into: variant.isStored ? missing : chosen) }
             }
             .controlSize(.small)
-            .help(help)
+            // Until the daemon has said which apps take the model, the apps
+            // it would go to are not known; it would go to none.
+            .disabled(daemon.apps.isEmpty)
+            .help(daemon.apps.isEmpty ? "Waiting for dedupd to say which apps take this model" : help)
             .accessibilityIdentifier("download-\(variant.name)")
         }
     }
