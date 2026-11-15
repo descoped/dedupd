@@ -60,14 +60,29 @@ pub async fn pass_with(
     };
     report.forgotten = scanned.forgotten as u64;
     adopt_new(server, repos, &scanned.files, &mut report).await?;
+    recognise_stored(server, &mut report).await?;
     if server.config.reclaim() {
         reclaim_duplicates(server, reclaim_age, &mut report).await?;
     }
     update_archive(server, &mut report).await?;
-    if report.forgotten + report.adopted + report.reclaimed + report.archived > 0 {
+    if report.forgotten + report.adopted + report.recognised + report.reclaimed + report.archived
+        > 0
+    {
         server.touch();
     }
     Ok(report)
+}
+
+/// Record the files the store holds and the database does not know.
+async fn recognise_stored(server: &Arc<Server>, report: &mut ScanResult) -> anyhow::Result<()> {
+    let engine = server.engine.clone();
+    let found =
+        tokio::task::spawn_blocking(move || adopt::recognise_stored(&engine.db, &engine.store))
+            .await??;
+    // A file that does not match its name is `verify`'s to report, not
+    // every pass's.
+    report.recognised = found.files;
+    Ok(())
 }
 
 /// What a look at the app folders found.
@@ -318,10 +333,10 @@ pub async fn run(server: Arc<Server>) {
     loop {
         match pass(&server).await {
             Ok(r) => {
-                if r.adopted + r.reclaimed + r.archived + r.forgotten > 0 {
+                if r.adopted + r.recognised + r.reclaimed + r.archived + r.forgotten > 0 {
                     eprintln!(
-                        "dedupd: adopted {} files, swapped {} duplicates for clones, archived {}, forgot {} removed files",
-                        r.adopted, r.reclaimed, r.archived, r.forgotten
+                        "dedupd: adopted {} files, recognised {} stored files, swapped {} duplicates for clones, archived {}, forgot {} removed files",
+                        r.adopted, r.recognised, r.reclaimed, r.archived, r.forgotten
                     );
                 }
                 for e in r.errors {

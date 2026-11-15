@@ -11,7 +11,7 @@ use crate::store::{Added, Fingerprint, Store};
 use anyhow::Result;
 use dedupd_api::app::App;
 use dedupd_api::library::VerifyState;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -446,6 +446,53 @@ pub async fn adopt(
         outcome.files.sort_by(|a, b| a.rel_path.cmp(&b.rel_path));
     }
     Ok(outcomes)
+}
+
+/// What `recognise_stored` found.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Recognised {
+    /// Files recorded again.
+    pub files: u64,
+    pub bytes: u64,
+    /// Files whose content does not hash to their name; left alone.
+    pub damaged: u64,
+}
+
+/// Record the files that are in the store but not in the database. After
+/// the database is removed (there are no migrations), a scan of the app
+/// folders finds only what the apps hold; the store also has the files no
+/// app downloaded, such as a model's README, and a model without them
+/// would count as not fully stored. Each such file is read in full and
+/// recorded only when its content hashes to its name; one that does not is
+/// left for `verify` and `gc`.
+pub fn recognise_stored(db: &Mutex<Db>, store: &Store) -> Result<Recognised> {
+    let known: HashSet<String> = lock(db)
+        .all_blobs()?
+        .into_iter()
+        .map(|b| b.sha256)
+        .collect();
+    let mut found = Recognised::default();
+    for sha in store.stored_hashes() {
+        if known.contains(&sha) {
+            continue;
+        }
+        let path = store.blob_path(&sha);
+        let Ok(size) = std::fs::metadata(&path).map(|m| m.len()) else {
+            continue;
+        };
+        // Read now and gone a moment later (`gc`), or unreadable: not recorded.
+        let Ok(hashes) = hash_file(&path, size <= GIT_OID_WITHOUT_TREE_MAX) else {
+            continue;
+        };
+        if hashes.sha256 != sha {
+            found.damaged += 1;
+            continue;
+        }
+        lock(db).upsert_blob(&sha, hashes.size, hashes.git_oid.as_deref())?;
+        found.files += 1;
+        found.bytes += hashes.size;
+    }
+    Ok(found)
 }
 
 /// List what the given apps hold, and archive the Ollama manifests found

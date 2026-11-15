@@ -520,6 +520,22 @@ async fn cmd_adopt(
         println!("  {}: {}/{}", f.verify.as_str(), f.repo, f.rel_path);
     }
     if !dry_run {
+        // The files the store holds that no app folder has, such as a
+        // model's README, after the database was removed.
+        let found = adopt::recognise_stored(&o.engine.db, &o.engine.store)?;
+        if found.files > 0 {
+            println!(
+                "Recorded {} files that were already in the store ({}).",
+                found.files,
+                human(found.bytes)
+            );
+        }
+        if found.damaged > 0 {
+            println!(
+                "{} files in the store do not match their names; run `dedupd verify`.",
+                found.damaged
+            );
+        }
         backup_if_attached(o);
     }
     if errors > 0 {
