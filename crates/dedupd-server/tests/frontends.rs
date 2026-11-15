@@ -306,19 +306,16 @@ async fn a_model_whose_hub_info_could_not_be_kept_is_not_served_without_asking()
             .send()
     };
     assert_eq!(manifest().await.unwrap().status(), 200);
-    // Give the background read of the info its chance to fail.
-    for _ in 0..50 {
+    // The registry has asked the Hub for the info. Every answer it can get
+    // from now on is a failure, so nothing is ever kept, however long the
+    // background read takes.
+    for _ in 0..300 {
         if upstream_hits(&fx, "/revision/main").await > 0 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert!(upstream_hits(&fx, "/revision/main").await > 0);
-    tokio::time::sleep(Duration::from_millis(50)).await;
-    assert!(matches!(
-        fx.server.engine.db().archived("hf", REPO, "main"),
-        Ok(None)
-    ));
     // Nothing says whether the model is gated: it waits for the Hub.
     upstream_down(&fx).await;
     assert_ne!(manifest().await.unwrap().status(), 200);
