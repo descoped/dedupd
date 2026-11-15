@@ -10,6 +10,9 @@ enum DaemonSignal: Sendable, Equatable {
     /// The daemon's state as of now: its downloads, and a number that changes
     /// when the library does.
     case event(DaemonEvent)
+    /// The daemon answers in a form this app cannot read: it is another
+    /// build. The reason says what did not fit.
+    case unreadable(String)
 }
 
 /// The daemon's control API as the app uses it. The live implementation calls
@@ -226,6 +229,10 @@ private final class SignalListener: EventListener {
 
     func onConnection(connected: Bool) {
         continuation.yield(connected ? .connected : .disconnected)
+    }
+
+    func onUnreadable(reason: String) {
+        continuation.yield(.unreadable(reason))
     }
 }
 

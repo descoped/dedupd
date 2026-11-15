@@ -64,6 +64,13 @@ private struct DaemonStateCard: View {
                     FactRow("Fetches from", status.endpoint)
                     FactRow("Hugging Face token", token(info))
                 }
+            } else if case .otherBuild = daemon.connection {
+                Text(
+                    "A daemon answers at \(daemon.address), but it is another build of dedupd and this app cannot read "
+                        + "what it says. Update it to this app's build with Update on this screen."
+                )
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             } else if daemon.connection == .notRunning {
                 Text(
                     "No daemon answers at \(daemon.address). Your models are untouched and the apps keep using them; "

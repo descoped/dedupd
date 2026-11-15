@@ -607,6 +607,13 @@ public protocol EventListener: AnyObject, Sendable {
      */
     func onConnection(connected: Bool) 
     
+    /**
+     * The daemon answers, but this client cannot read what it says: it is
+     * another build of dedupd, with other types. `reason` says what did
+     * not fit. Told once until a line can be read again.
+     */
+    func onUnreadable(reason: String) 
+    
 }
 /**
  * Receives what the daemon says. Called on a background thread.
@@ -691,6 +698,20 @@ open func onConnection(connected: Bool)  {try! rustCall() {
 }
 }
     
+    /**
+     * The daemon answers, but this client cannot read what it says: it is
+     * another build of dedupd, with other types. `reason` says what did
+     * not fit. Told once until a line can be read again.
+     */
+open func onUnreadable(reason: String)  {try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_method_eventlistener_on_unreadable(
+            self.uniffiCloneHandle(),
+        FfiConverterString.lower(reason),uniffiCallStatus
+    )
+}
+}
+    
 
     
 }
@@ -756,6 +777,30 @@ fileprivate struct UniffiCallbackInterfaceEventListener {
                 }
                 return uniffiObj.onConnection(
                      connected: try FfiConverterBool.lift(connected)
+                )
+            }
+
+            
+            let writeReturn = { () }
+            uniffiTraitInterfaceCall(
+                callStatus: uniffiCallStatus,
+                makeCall: makeCall,
+                writeReturn: writeReturn
+            )
+        },
+        onUnreadable: { (
+            uniffiHandle: UInt64,
+            reason: RustBuffer,
+            uniffiOutReturn: UnsafeMutableRawPointer,
+            uniffiCallStatus: UnsafeMutablePointer<RustCallStatus>
+        ) in
+            let makeCall = {
+                () throws -> () in
+                guard let uniffiObj = try? FfiConverterTypeEventListener.handleMap.get(handle: uniffiHandle) else {
+                    throw UniffiInternalError.unexpectedStaleHandle
+                }
+                return uniffiObj.onUnreadable(
+                     reason: try FfiConverterString.lift(reason)
                 )
             }
 
@@ -1814,6 +1859,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_method_eventlistener_on_connection() != 4620) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dedupd_client_checksum_method_eventlistener_on_unreadable() != 53521) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_method_eventsubscription_cancel() != 31300) {

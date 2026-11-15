@@ -99,6 +99,7 @@ private struct SidebarStatus: View {
         switch daemon.connection {
         case .running: .green
         case .notRunning: .red
+        case .otherBuild: .orange
         case .connecting: .secondary
         }
     }

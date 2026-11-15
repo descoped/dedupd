@@ -10,7 +10,7 @@ struct MenuPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             header
-            if daemon.connection == .notRunning {
+            if daemon.connection == .notRunning || daemon.isOtherBuild {
                 notRunning
             } else {
                 // What is downloading, and whatever explains a warning in
@@ -55,7 +55,11 @@ struct MenuPanel: View {
 
     private var notRunning: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("No dedupd daemon answers at \(daemon.address). Your models are untouched; the apps keep using them.")
+            Text(
+                daemon.isOtherBuild
+                    ? "The daemon at \(daemon.address) is another build of dedupd. Update it on the Daemon screen."
+                    : "No dedupd daemon answers at \(daemon.address). Your models are untouched; the apps keep using them."
+            )
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

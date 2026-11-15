@@ -257,6 +257,13 @@ typedef void (*UniffiCallbackInterfaceEventListenerMethod1)(uint64_t, int8_t, vo
     );
 
 #endif
+#ifndef UNIFFI_FFIDEF_CALLBACK_INTERFACE_EVENT_LISTENER_METHOD2
+#define UNIFFI_FFIDEF_CALLBACK_INTERFACE_EVENT_LISTENER_METHOD2
+typedef void (*UniffiCallbackInterfaceEventListenerMethod2)(uint64_t, RustBuffer, void* _Nonnull, 
+        RustCallStatus *_Nonnull uniffiCallStatus
+    );
+
+#endif
 #ifndef UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_EVENT_LISTENER
 #define UNIFFI_FFIDEF_V_TABLE_CALLBACK_INTERFACE_EVENT_LISTENER
 typedef struct UniffiVTableCallbackInterfaceEventListener {
@@ -264,6 +271,7 @@ typedef struct UniffiVTableCallbackInterfaceEventListener {
     UniffiCallbackInterfaceClone _Nonnull uniffiClone;
     UniffiCallbackInterfaceEventListenerMethod0 _Nonnull onEvent;
     UniffiCallbackInterfaceEventListenerMethod1 _Nonnull onConnection;
+    UniffiCallbackInterfaceEventListenerMethod2 _Nonnull onUnreadable;
 } UniffiVTableCallbackInterfaceEventListener;
 
 #endif
@@ -290,6 +298,11 @@ void uniffi_dedupd_client_fn_method_eventlistener_on_event(uint64_t ptr, RustBuf
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_METHOD_EVENTLISTENER_ON_CONNECTION
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_METHOD_EVENTLISTENER_ON_CONNECTION
 void uniffi_dedupd_client_fn_method_eventlistener_on_connection(uint64_t ptr, int8_t connected, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_METHOD_EVENTLISTENER_ON_UNREADABLE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_METHOD_EVENTLISTENER_ON_UNREADABLE
+void uniffi_dedupd_client_fn_method_eventlistener_on_unreadable(uint64_t ptr, RustBuffer reason, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_CLONE_EVENTSUBSCRIPTION
@@ -940,6 +953,12 @@ uint16_t uniffi_dedupd_client_checksum_method_eventlistener_on_event(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_METHOD_EVENTLISTENER_ON_CONNECTION
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_METHOD_EVENTLISTENER_ON_CONNECTION
 uint16_t uniffi_dedupd_client_checksum_method_eventlistener_on_connection(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_METHOD_EVENTLISTENER_ON_UNREADABLE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_METHOD_EVENTLISTENER_ON_UNREADABLE
+uint16_t uniffi_dedupd_client_checksum_method_eventlistener_on_unreadable(void
     
 );
 #endif

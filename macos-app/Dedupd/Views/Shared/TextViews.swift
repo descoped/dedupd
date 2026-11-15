@@ -181,6 +181,23 @@ struct DaemonAwayView: View {
         if daemon.connection == .connecting {
             ProgressView("Looking for the daemon…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if case let .otherBuild(reason) = daemon.connection {
+            ContentUnavailableView {
+                Label("The daemon is another build", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(
+                    "The daemon at \(daemon.address) is another build of dedupd, and this app cannot read what it says. "
+                        + "Update it on the Daemon screen. Your models are untouched."
+                )
+                Text(reason)
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            } actions: {
+                Button("Go to the Daemon Screen") {
+                    navigation.pane = .daemon
+                }
+                .accessibilityIdentifier("go-to-daemon")
+            }
         } else {
             ContentUnavailableView {
                 Label("The daemon is not running", systemImage: "square.stack.3d.up.slash")

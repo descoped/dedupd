@@ -1150,6 +1150,7 @@ async fn the_client_reads_everything_the_daemon_sends() {
     struct Seen {
         events: Mutex<Vec<DaemonEvent>>,
         connections: Mutex<Vec<bool>>,
+        unreadable: Mutex<Vec<String>>,
     }
     impl client::events::EventListener for Seen {
         fn on_event(&self, event: DaemonEvent) {
@@ -1157,6 +1158,9 @@ async fn the_client_reads_everything_the_daemon_sends() {
         }
         fn on_connection(&self, connected: bool) {
             self.connections.lock().unwrap().push(connected);
+        }
+        fn on_unreadable(&self, reason: String) {
+            self.unreadable.lock().unwrap().push(reason);
         }
     }
 
@@ -1336,6 +1340,9 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
             self.0.lock().unwrap().push(event);
         }
         fn on_connection(&self, _connected: bool) {}
+        fn on_unreadable(&self, reason: String) {
+            panic!("the daemon's own line could not be read: {reason}");
+        }
     }
 
     // Without an archive disk the daemon says so and starts nothing.

@@ -27,6 +27,10 @@ pub trait EventListener: Send + Sync {
     /// (`false`). After that the subscription keeps trying; `on_event`
     /// follows when it succeeds.
     fn on_connection(&self, connected: bool);
+    /// The daemon answers, but this client cannot read what it says: it is
+    /// another build of dedupd, with other types. `reason` says what did
+    /// not fit. Told once until a line can be read again.
+    fn on_unreadable(&self, reason: String);
 }
 
 /// A running subscription. It ends when `cancel` is called or the last
@@ -71,6 +75,8 @@ fn follow(address: &str, listener: &dyn EventListener, stopped: &AtomicBool) {
     // What the listener was told last; nothing yet, so that a daemon that
     // is away from the start is reported too.
     let mut connected: Option<bool> = None;
+    // Whether the listener was told that the daemon's lines cannot be read.
+    let mut unreadable = false;
     let mut backoff = Duration::from_millis(250);
     while !done() {
         if let Some(lines) = open(address) {
@@ -85,9 +91,17 @@ fn follow(address: &str, listener: &dyn EventListener, stopped: &AtomicBool) {
                 if done() {
                     return;
                 }
-                let Ok(event) = serde_json::from_str::<DaemonEvent>(&line) else {
-                    continue;
+                let event = match serde_json::from_str::<DaemonEvent>(&line) {
+                    Ok(event) => event,
+                    Err(e) => {
+                        if !unreadable {
+                            unreadable = true;
+                            listener.on_unreadable(e.to_string());
+                        }
+                        continue;
+                    }
                 };
+                unreadable = false;
                 if connected != Some(true) {
                     connected = Some(true);
                     listener.on_connection(true);
@@ -101,6 +115,7 @@ fn follow(address: &str, listener: &dyn EventListener, stopped: &AtomicBool) {
         }
         if connected != Some(false) {
             connected = Some(false);
+            unreadable = false;
             listener.on_connection(false);
         }
         // Wait in short steps, so a cancel does not have to wait it out.
@@ -119,4 +134,62 @@ fn open(address: &str) -> Option<impl std::io::Read> {
     // fifteen seconds, and a daemon that dies closes the connection.
     let resp = agent(None).get(url(address, "events")).call().ok()?;
     (resp.status().as_u16() == 200).then(|| resp.into_body().into_reader())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Heard {
+        events: Mutex<u32>,
+        unreadable: Mutex<Vec<String>>,
+        connections: Mutex<Vec<bool>>,
+    }
+
+    impl EventListener for Heard {
+        fn on_event(&self, _event: DaemonEvent) {
+            *self.events.lock().unwrap() += 1;
+        }
+        fn on_connection(&self, connected: bool) {
+            self.connections.lock().unwrap().push(connected);
+        }
+        fn on_unreadable(&self, reason: String) {
+            self.unreadable.lock().unwrap().push(reason);
+        }
+    }
+
+    /// A daemon of another build: its lines carry a job state this build
+    /// does not know.
+    #[test]
+    fn a_daemon_whose_lines_cannot_be_read_is_reported_once() {
+        let server = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = server.local_addr().unwrap().to_string();
+        std::thread::spawn(move || {
+            let (mut stream, _) = server.accept().unwrap();
+            let line = r#"{"seq":1,"library":0,"checking":false,"downloads":{"jobs":[{"state":"teleporting"}]}}"#;
+            let body = format!("{line}\n{line}\n{line}\n");
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/x-ndjson\r\ncontent-length: {}\r\n\r\n{body}",
+                body.len()
+            );
+            std::thread::sleep(Duration::from_millis(300));
+        });
+        let heard = Arc::new(Heard::default());
+        let subscription = subscribe(address, heard.clone());
+        for _ in 0..100 {
+            if !heard.unreadable.lock().unwrap().is_empty() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        std::thread::sleep(Duration::from_millis(50));
+        subscription.cancel();
+        assert_eq!(heard.unreadable.lock().unwrap().len(), 1);
+        assert_eq!(*heard.events.lock().unwrap(), 0);
+        assert!(!heard.connections.lock().unwrap().contains(&true));
+    }
 }
