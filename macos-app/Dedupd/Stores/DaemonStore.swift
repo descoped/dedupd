@@ -79,8 +79,11 @@ final class DaemonStore {
     /// The downloads that wait for the owner.
     var attentionJobs: [Job] { downloadJobs.filter { $0.phase == .needsAttention } }
 
-    /// Downloads or activations that wait for the owner.
-    var needsOwner: Bool { jobs.contains { $0.phase == .needsAttention } }
+    /// Downloads and activations that wait for the owner.
+    var waitingJobs: [Job] { jobs.filter { $0.phase == .needsAttention } }
+
+    /// Something waits for the owner; the menu bar shows a warning.
+    var needsOwner: Bool { !waitingJobs.isEmpty }
 
     var isScanning: Bool { scanActivity == .running }
 

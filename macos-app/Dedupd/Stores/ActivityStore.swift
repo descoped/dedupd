@@ -2,6 +2,13 @@ import DedupdClient
 import Foundation
 import Observation
 
+/// A line of the Activity list: an activation under way, or an entry of
+/// the history.
+enum ActivityLine: Hashable, Sendable {
+    case job(Int64)
+    case entry(Int64)
+}
+
 /// What happened to the models in the apps: the Activity screen's list, and
 /// the failures the owner has not seen yet, for the sidebar's badge.
 @MainActor
@@ -24,6 +31,14 @@ final class ActivityStore {
     /// Activations the daemon is working on, or that wait for the owner.
     var running: [Job] {
         daemon.activationJobs.filter { !$0.phase.isFinished }
+    }
+
+    /// The model a line is about.
+    func repo(of line: ActivityLine) -> String? {
+        switch line {
+        case let .job(id): running.first { $0.id == id }?.repo
+        case let .entry(id): entries.first { $0.id == id }?.repo
+        }
     }
 
     /// Read the list again. Quiet on failure: the list is history, and the

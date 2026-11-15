@@ -28,8 +28,12 @@ pub struct Refusal {
     /// The sha256 of the model's `config.json`: the same model in another
     /// repository gets the same answer, and a changed one is asked again.
     pub config: String,
-    /// Why, in one sentence.
+    /// What the app said, in its own words.
     pub reason: String,
+    /// Checked to be about the model when it was kept. Answers kept by older
+    /// builds are not, and count only if what they say passes the check now.
+    #[serde(default)]
+    pub lasting: bool,
     /// When, in seconds since 1970.
     pub at: i64,
 }
@@ -47,10 +51,14 @@ impl Refusals {
     /// What is known in `home`; nothing when the file is missing or cannot
     /// be read.
     pub fn load(home: &Home) -> Self {
-        let list = std::fs::read(path(home))
+        let list: Vec<Refusal> = std::fs::read(path(home))
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
+        let list = list
+            .into_iter()
+            .filter(|r| r.lasting || is_about_the_model(own_words(&r.reason)))
+            .collect();
         Self { list }
     }
 
@@ -88,18 +96,28 @@ impl Refusals {
 /// What older builds put in front of Ollama's words when they kept them.
 const OLDER_WORDS: &str = "Ollama would not import a stand-in for the model: ";
 
+/// What the app said, without the words older builds put in front.
+fn own_words(reason: &str) -> &str {
+    reason.strip_prefix(OLDER_WORDS).unwrap_or(reason).trim()
+}
+
 /// Whether what Ollama said when it would not import the model is about the
-/// model, and so holds until Ollama changes: worth keeping. Anything else
-/// (a full disk, a crash, a signal) is about the moment, and the next
-/// activation asks again.
+/// model, and so holds until Ollama changes: worth keeping. Only Ollama's
+/// own phrases about a model's kind count; anything else (a full disk, a
+/// crash, a signal, "operation not supported" from the system) is about the
+/// moment, and the next activation asks again.
 pub fn is_about_the_model(said: &str) -> bool {
     let said = said.to_lowercase();
     [
-        "unsupported",
-        "not supported",
+        "unsupported mlx architecture",
+        "unsupported architecture",
         "unknown architecture",
         "unknown model architecture",
+        "unsupported model architecture",
+        "unsupported quantization",
+        "unsupported data type",
         "unknown data type",
+        "unsupported dtype",
         "unknown dtype",
     ]
     .iter()
@@ -110,8 +128,7 @@ pub fn is_about_the_model(said: &str) -> bool {
 /// reads: "Ollama 0.40.16 can't run this model: it doesn't support the
 /// model type DeepseekV4ForCausalLM for MLX models."
 pub fn sentence(app: &str, version: &str, said: &str) -> String {
-    let said = said.strip_prefix(OLDER_WORDS).unwrap_or(said).trim();
-    let said = said.trim_end_matches('.');
+    let said = own_words(said).trim_end_matches('.');
     let why = match architecture(said) {
         Some(kind) => format!("it doesn't support the model type {kind} for MLX models"),
         None => said.to_string(),
@@ -138,6 +155,7 @@ mod tests {
             method: "clone-with-rewritten-index".into(),
             config: "c0".into(),
             reason: reason.into(),
+            lasting: true,
             at: 1,
         }
     }
@@ -208,5 +226,38 @@ mod tests {
         assert!(!is_about_the_model("write /tmp/x: no space left on device"));
         assert!(!is_about_the_model("signal: killed"));
         assert!(!is_about_the_model("it gave no reason"));
+        // The system's words, which only happen to say "not supported".
+        assert!(!is_about_the_model(
+            "clonefile: operation not supported (os error 45)"
+        ));
+        assert!(!is_about_the_model(
+            "address family not supported by protocol"
+        ));
+        assert!(!is_about_the_model("unsupported value for OLLAMA_HOST"));
+    }
+
+    #[test]
+    fn an_answer_kept_by_an_older_build_counts_only_if_it_is_about_the_model() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let older = |config: &str, said: &str| Refusal {
+            config: config.into(),
+            reason: format!("{OLDER_WORDS}{said}"),
+            lasting: false,
+            ..refusal("0.40.16", "")
+        };
+        std::fs::write(
+            path(&home),
+            serde_json::to_vec(&[
+                older("c0", r#"unsupported MLX architecture: model "X""#),
+                older("c1", "signal: killed"),
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+        let known = Refusals::load(&home);
+        let method = "clone-with-rewritten-index";
+        assert!(known.find("ollama", "0.40.16", method, "c0").is_some());
+        assert!(known.find("ollama", "0.40.16", method, "c1").is_none());
     }
 }

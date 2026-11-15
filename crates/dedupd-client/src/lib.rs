@@ -107,6 +107,8 @@ pub struct PullResult {
     pub bytes: u64,
     pub downloaded: u64,
     pub placed: Vec<PlacedApp>,
+    /// The apps asked for that did not take the model, each with why.
+    pub skipped: Vec<NotActivated>,
     pub notes: Vec<String>,
 }
 
@@ -172,6 +174,8 @@ struct WirePull {
     bytes: u64,
     downloaded: u64,
     placed: Vec<(String, WirePlaced)>,
+    #[serde(default)]
+    skipped: Vec<NotActivated>,
     notes: Vec<String>,
 }
 
@@ -194,6 +198,7 @@ impl From<WirePull> for PullResult {
                     conflicts: p.conflicts,
                 })
                 .collect(),
+            skipped: w.skipped,
             notes: w.notes,
         }
     }

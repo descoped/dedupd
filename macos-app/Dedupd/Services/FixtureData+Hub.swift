@@ -170,7 +170,10 @@ extension FixtureData {
             filesDone: finished ? 4 : (done > 0 ? 3 : 0),
             kind: request.activation ? "activation" : "download",
             activated: finished ? request.apps.filter { notTakenBy[$0] == nil } : [],
-            notes: finished ? notTakenBy.sorted { $0.key < $1.key }.map(\.value) : [],
+            notActivated: finished
+                ? notTakenBy.sorted { $0.key < $1.key }.map { NotActivated(app: $0.key, reason: $0.value, temporary: false) }
+                : [],
+            notes: [],
             createdAt: 1_794_003_000 + id,
             updatedAt: 1_794_003_600 + id,
             finishedAt: finished ? 1_794_003_600 + id : nil

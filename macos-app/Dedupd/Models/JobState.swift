@@ -138,9 +138,14 @@ extension Job {
     /// The job puts a stored model into apps, rather than fetching one.
     var isActivation: Bool { kind == "activation" }
 
-    /// The apps asked for that did not take the model, once the job is done.
-    var missedApps: [String] {
-        phase == .done ? apps.filter { !activated.contains($0) } : []
+    /// The daemon says what a finished job did. One older than the app sends
+    /// no kind and no answer per app; its jobs are not judged.
+    private var saysOutcome: Bool { !kind.isEmpty }
+
+    /// The apps asked for that did not take the model, each with why, once
+    /// the job is done.
+    var missed: [NotActivated] {
+        phase == .done && saysOutcome ? notActivated : []
     }
 
     /// What a finished job did: "Activated in Bionic", "Not activated in
@@ -149,18 +154,19 @@ extension Job {
         if apps.isEmpty {
             return "In the store only"
         }
-        var parts: [String] = []
-        let took = apps.filter(activated.contains)
-        if !took.isEmpty {
-            parts.append("Activated in \(Self.list(took))")
+        guard saysOutcome else {
+            return phase.title
         }
-        let missed = missedApps
+        var parts: [String] = []
+        if !activated.isEmpty {
+            parts.append("Activated in \(Self.list(activated))")
+        }
+        let missed = missed
         if !missed.isEmpty {
-            let not = took.isEmpty ? "Not activated in" : "not in"
-            // With one app missed the note need not name it again.
-            let reasons = missed.count == 1 ? notes.map(Self.reason(from:)) : notes
-            let why = reasons.isEmpty ? "" : ": \(reasons.joined(separator: "; "))"
-            parts.append("\(not) \(Self.list(missed))\(why)")
+            let not = activated.isEmpty ? "Not activated in" : "not in"
+            // Each app with its own reason, so two reasons are not mixed up.
+            let why = missed.map { missed.count == 1 ? $0.reason : "\(ModelApp.shortTitle(for: $0.app)): \($0.reason)" }
+            parts.append("\(not) \(Self.list(missed.map(\.app))): \(why.joined(separator: "; "))")
         }
         return parts.joined(separator: " · ")
     }
@@ -168,27 +174,16 @@ extension Job {
     /// The row's symbol: a finished job that an app did not take is marked,
     /// so it does not pass for a success.
     var symbol: String {
-        missedApps.isEmpty ? phase.symbol : "exclamationmark.circle.fill"
+        missed.isEmpty ? phase.symbol : "exclamationmark.circle.fill"
     }
 
     var tint: Color {
-        missedApps.isEmpty ? phase.tint : .orange
+        missed.isEmpty ? phase.tint : .orange
     }
 
     /// "Bionic and Ollama", or "the store only".
     var appList: String {
         apps.isEmpty ? "the store only" : Self.list(apps)
-    }
-
-    /// A note without the daemon's "not placed into Ollama: " in front, which
-    /// the row already says in its own words.
-    static func reason(from note: String) -> String {
-        for start in ["not placed into ", "not fully placed into "] where note.hasPrefix(start) {
-            if let colon = note.range(of: ": ") {
-                return String(note[colon.upperBound...])
-            }
-        }
-        return note
     }
 
     private static func list(_ apps: [String]) -> String {

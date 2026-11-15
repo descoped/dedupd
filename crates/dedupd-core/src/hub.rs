@@ -27,6 +27,20 @@ pub enum HubError {
     Malformed(String),
 }
 
+/// Whether trying again later may get another answer: the Hub was busy, out
+/// of reach, or failed on its side.
+pub fn is_temporary(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<HubError>(),
+            Some(HubError::Busy { .. } | HubError::Transport(_))
+        ) || matches!(
+            cause.downcast_ref::<HubError>(),
+            Some(HubError::Status { status, .. }) if *status >= 500 || *status == 429
+        )
+    })
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TreeEntry {
     pub path: String,

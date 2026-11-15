@@ -386,6 +386,39 @@ fn hf_links(repo_dir: &Path, going: &HashSet<&str>) -> Vec<String> {
 
 /// Carry out a plan made by `unplace_plan`. A file that has changed since
 /// the plan was made is left alone. Returns the files removed.
+/// Take a model out of an app as the owner agreed (`unplace_apply`), and
+/// say so in the activity list: deactivated, partly, or why not. Nothing is
+/// told when nothing was removed.
+pub fn deactivate(
+    db: &Mutex<Db>,
+    store: &Store,
+    dirs: &AppDirs,
+    plan: &UnplacePlan,
+) -> Result<usize> {
+    let app: App = plan.app.parse()?;
+    let done = unplace_apply(db, dirs, plan);
+    let left = || -> usize {
+        lock(db).placements().map_or(0, |all| {
+            all.iter()
+                .filter(|p| p.repo == plan.repo && p.app == plan.app)
+                .count()
+        })
+    };
+    crate::activity::record_result(
+        store.home(),
+        crate::activity::Action::Deactivate,
+        &plan.repo,
+        Some(app),
+        &done,
+        |removed| match (*removed, left()) {
+            (0, _) => None,
+            (_, 0) => Some(crate::activity::deactivated(app)),
+            (removed, left) => Some(crate::activity::partly_deactivated(app, removed, left)),
+        },
+    );
+    done
+}
+
 pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Result<usize> {
     let app: App = plan.app.parse()?;
     let recorded: std::collections::HashMap<String, Fingerprint> = lock(db)

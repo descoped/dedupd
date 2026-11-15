@@ -339,18 +339,19 @@ async fn cmd_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
     } else {
         // One mapping serves both paths: the outcome is read as the daemon
         // would have sent it.
+        // `pull` tells the activity list what it placed; an activation that
+        // stops before placing is told here, as the daemon's queue would.
         pull::pull(&o.engine, &req, &progress)
             .await
-            .inspect(|out| {
-                // What the daemon's queue would have noted, so the app's
-                // Activity list holds this too.
-                dedupd_core::activity::record_activations(
-                    &o.home,
-                    &out.repo,
-                    &req.apps,
-                    &out.placed,
-                    &out.notes,
-                );
+            .inspect_err(|e| {
+                if offline {
+                    dedupd_core::activity::record_stopped_activation(
+                        &o.home,
+                        &req.repo,
+                        &req.apps,
+                        &format!("{e:#}"),
+                    );
+                }
             })
             .and_then(|out| {
                 let sent = serde_json::to_string(&out)?;
@@ -382,6 +383,9 @@ async fn cmd_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
             "  {:<7} activated: {} files cloned, {} already there",
             placed.app, placed.cloned, placed.present
         );
+    }
+    for skipped in &out.skipped {
+        println!("  {:<7} not activated: {}", skipped.app, skipped.reason);
     }
     for note in &out.notes {
         println!("  note: {note}");
@@ -694,6 +698,11 @@ mod tests {
                     conflicts: vec!["a".into()],
                 },
             )],
+            skipped: vec![dedupd_core::pull::Skipped {
+                app: App::Ollama,
+                reason: "it cannot run this model".into(),
+                temporary: false,
+            }],
             notes: vec!["n".into()],
         };
         let sent = serde_json::to_string(&out).unwrap();
@@ -703,6 +712,8 @@ mod tests {
         assert_eq!(read.placed[0].app, App::Hf.as_str());
         assert_eq!((read.placed[0].cloned, read.placed[0].present), (2, 1));
         assert_eq!(read.placed[0].conflicts, ["a"]);
+        assert_eq!(read.skipped[0].app, App::Ollama.as_str());
+        assert_eq!(read.skipped[0].reason, "it cannot run this model");
         assert_eq!(read.notes, ["n"]);
     }
 }

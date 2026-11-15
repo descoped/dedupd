@@ -4,7 +4,7 @@
 use crate::db::{self, Db, PROVIDER_HF};
 use crate::fetch::{Expect, Fetcher, Progress, Unavailable, Unwatched, Wait, Watch};
 use crate::governor::Governor;
-use crate::hub::{HubClient, ModelMeta, Snapshot, TreeEntry};
+use crate::hub::{HubClient, HubError, ModelMeta, Snapshot, TreeEntry};
 use crate::ollama;
 use crate::ollama_mlx;
 use crate::place::{self, App, AppDirs, Dest, Item, Placed};
@@ -75,7 +75,7 @@ impl PullRequest {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PullOutcome {
     pub repo: String,
     pub commit: String,
@@ -86,8 +86,56 @@ pub struct PullOutcome {
     pub bytes: u64,
     /// Files that had to be downloaded in this run.
     pub downloaded: usize,
+    /// Each app the files were put into. One with conflicts did not take
+    /// the model as a whole, and is in `skipped` too.
     pub placed: Vec<(App, Placed)>,
+    /// The apps asked for that did not take the model, each with why.
+    #[serde(default)]
+    pub skipped: Vec<Skipped>,
     /// Things that did not stop the pull but the owner should know.
+    #[serde(default)]
+    pub notes: Vec<String>,
+}
+
+impl PullOutcome {
+    /// The apps that took the model: placed, with nothing left in the way.
+    pub fn activated(&self) -> impl Iterator<Item = App> + '_ {
+        self.placed
+            .iter()
+            .filter(|(app, placed)| {
+                placed.conflicts.is_empty() && !self.skipped.iter().any(|s| s.app == *app)
+            })
+            .map(|(app, _)| *app)
+    }
+}
+
+/// An app that did not take the model, and why.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct Skipped {
+    pub app: App,
+    /// Why, in a sentence that does not repeat the app's name in front.
+    pub reason: String,
+    /// Trying again may work (the provider out of reach, a full disk);
+    /// otherwise the same answer would come again.
+    #[serde(default)]
+    pub temporary: bool,
+}
+
+impl Skipped {
+    fn lasting(app: App, reason: impl Into<String>) -> Self {
+        Self {
+            app,
+            reason: reason.into(),
+            temporary: false,
+        }
+    }
+}
+
+/// What placing a pull's files did, app by app.
+#[derive(Debug, Default)]
+pub struct Placement {
+    pub placed: Vec<(App, Placed)>,
+    pub skipped: Vec<Skipped>,
     pub notes: Vec<String>,
 }
 
@@ -102,6 +150,8 @@ pub trait PullWatch: Send + Sync {
     fn verifying(&self, _index: usize) {}
     /// File `index` is in the store.
     fn stored(&self, _index: usize) {}
+    /// This many files are not in the store and are about to be downloaded.
+    fn fetching(&self, _files: usize) {}
 }
 
 impl PullWatch for Progress {
@@ -262,6 +312,7 @@ pub async fn fetch(
     }
 
     let downloaded = missing.len();
+    watch.fetching(downloaded);
     let limit = Arc::new(Semaphore::new(req.jobs.max(1)));
     let mut running: JoinSet<Result<Item>> = JoinSet::new();
     for (index, e) in missing {
@@ -342,13 +393,21 @@ pub async fn ollama_manifest(
                     .save_manifest(repo_id, tag, ollama::USER_AGENT, &media_type, &text)?;
                 fetched = Some((manifest, text));
             }
+            // Typed, so a caller can tell a passing trouble from an answer.
             Ok(resp) => {
-                upstream_error = Some(anyhow!(
-                    "Hugging Face has no Ollama manifest for {repo}:{tag} (HTTP {})",
-                    resp.status().as_u16()
-                ))
+                let status = resp.status().as_u16();
+                upstream_error = Some(
+                    anyhow::Error::new(HubError::Status { status, url }).context(format!(
+                        "Hugging Face has no Ollama manifest for {repo}:{tag} (HTTP {status})"
+                    )),
+                )
             }
-            Err(e) => upstream_error = Some(anyhow!("could not reach Hugging Face: {e}")),
+            Err(e) => {
+                upstream_error = Some(
+                    anyhow::Error::new(HubError::Transport(e))
+                        .context("could not reach Hugging Face"),
+                )
+            }
         }
     }
     let (manifest, body) = match fetched {
@@ -404,7 +463,7 @@ pub async fn ollama_manifest(
     Ok((manifest, body))
 }
 
-/// Place the selection into Ollama. The inner `Err` is the reason it was not
+/// Place the selection into Ollama. The inner `Err` is why it was not
 /// placed, which does not fail the pull.
 async fn place_into_ollama(
     engine: &Arc<Engine>,
@@ -413,7 +472,8 @@ async fn place_into_ollama(
     snap: &Snapshot,
     entries: &[TreeEntry],
     items: &Arc<Vec<Item>>,
-) -> Result<Result<Placed, String>> {
+) -> Result<Result<Placed, Skipped>> {
+    let skip = |reason: String| Skipped::lasting(App::Ollama, reason);
     // The app's profile says whether this selection can go in, and why not.
     let weights = select::weights(entries);
     let info: serde_json::Value = serde_json::from_str(&snap.info_json).unwrap_or_default();
@@ -434,13 +494,11 @@ async fn place_into_ollama(
         .decide(&traits, installed.version(App::Ollama))
         .unless_refused(&Refusals::load(engine.store.home()), config.as_deref());
     if decision.state != "ready" {
-        return Ok(Err(format!("not placed into Ollama: {}", decision.reason)));
+        return Ok(Err(skip(decision.reason)));
     }
     if decision.method.as_deref() == Some(ollama_mlx::METHOD) {
         let Some(command) = installed.command(App::Ollama).map(Path::to_path_buf) else {
-            return Ok(Err(
-                "not placed into Ollama: its command line tool was not found".into(),
-            ));
+            return Ok(Err(skip("Ollama's command line tool was not found".into())));
         };
         let (repo, items) = (req.repo.clone(), items.clone());
         let placed = blocking(engine, move |engine| {
@@ -464,20 +522,22 @@ async fn place_into_ollama(
                 method: ollama_mlx::METHOD.to_string(),
                 config,
                 reason: said.clone(),
+                lasting: true,
                 at: crate::now(),
             };
             if let Err(e) = Refusals::record(engine.store.home(), refusal) {
                 eprintln!("dedupd: could not keep Ollama's answer: {e:#}");
             }
         }
-        return Ok(placed.map_err(|why| {
-            let why = match (&why, version) {
-                (ollama_mlx::NotPlaced::Ollama(said), Some(version)) => {
-                    crate::refusals::sentence("Ollama", version, said)
-                }
-                _ => why.to_string(),
-            };
-            format!("not placed into Ollama: {why}")
+        return Ok(placed.map_err(|why| match (&why, version) {
+            (ollama_mlx::NotPlaced::Ollama(said), Some(version)) => {
+                skip(crate::refusals::sentence("Ollama", version, said))
+            }
+            (ollama_mlx::NotPlaced::Trouble(_), _) => Skipped {
+                temporary: true,
+                ..skip(why.to_string())
+            },
+            _ => skip(why.to_string()),
         }));
     }
     let tag = req
@@ -497,17 +557,22 @@ async fn place_into_ollama(
     .await;
     let (manifest, body) = match found {
         Ok(m) => m,
-        Err(e) => return Ok(Err(format!("not placed into Ollama: {e:#}"))),
+        Err(e) => {
+            // The sentence on top says it; the causes under it repeat it.
+            return Ok(Err(Skipped {
+                temporary: crate::hub::is_temporary(&e),
+                ..skip(e.to_string())
+            }));
+        }
     };
     // Without a named quantization the tag is Hugging Face's choice, which
     // need not be the file the patterns selected.
     let wanted = weights[0].lfs_sha256.as_deref();
     if !manifest.all().any(|l| l.sha256().ok() == wanted) {
-        return Ok(Err(format!(
-            "not placed into Ollama: its tag {tag} is a different file than {}; \
-             name the quantization, as in {}:Q8_0",
+        return Ok(Err(skip(format!(
+            "its tag {tag} is a different file than {}; name the quantization, as in {}:Q8_0",
             weights[0].path, req.repo
-        )));
+        ))));
     }
     let (repo, tag) = (req.repo.clone(), tag.to_string());
     let placed = blocking(engine, move |engine| {
@@ -556,14 +621,13 @@ pub async fn place(
     req: &PullRequest,
     plan: &Plan,
     items: Vec<Item>,
-) -> Result<(Vec<(App, Placed)>, Vec<String>)> {
+) -> Result<Placement> {
     let (repo_id, snap) = (plan.repo_id, &plan.snap);
     // The files are in the store again, so the model is no longer archived.
     engine.db().set_archived(repo_id, None)?;
-    let mut notes = Vec::new();
+    let mut done = Placement::default();
     // Placement hashes and copies files, so it runs off the async runtime.
     let items = Arc::new(items);
-    let mut placed = Vec::new();
     for app in &req.apps {
         let (repo, commit, items) = (req.repo.clone(), snap.commit.clone(), items.clone());
         let result = match app {
@@ -588,19 +652,36 @@ pub async fn place(
             App::Ollama => {
                 match place_into_ollama(engine, req, repo_id, snap, &plan.entries, &items).await? {
                     Ok(result) => result,
-                    Err(note) => {
-                        notes.push(note);
+                    Err(skipped) => {
+                        done.skipped.push(skipped);
                         continue;
                     }
                 }
             }
         };
-        for c in &result.conflicts {
-            notes.push(format!("left alone: {c}"));
+        if !result.conflicts.is_empty() {
+            for c in &result.conflicts {
+                done.notes.push(format!("left alone: {c}"));
+            }
+            done.skipped.push(Skipped::lasting(
+                *app,
+                format!(
+                    "files in its folder with other content were left alone ({})",
+                    result.conflicts.len()
+                ),
+            ));
         }
-        placed.push((*app, result));
+        done.placed.push((*app, result));
     }
-    Ok((placed, notes))
+    // Every caller's activations are in the owner's history.
+    let (repo, apps) = (req.repo.clone(), req.apps.clone());
+    let (placed, skipped) = (done.placed.clone(), done.skipped.clone());
+    blocking(engine, move |engine| {
+        crate::activity::record_activations(engine.store.home(), &repo, &apps, &placed, &skipped);
+        Ok(())
+    })
+    .await?;
+    Ok(done)
 }
 
 /// Fetch a revision into the store and place it into `req.apps`.
@@ -615,8 +696,8 @@ pub async fn pull(
         .await
         .map_err(|e| gone_upstream(e, req, &plan))?;
     let files = items.len();
-    let (placed, notes) = place(engine, req, &plan, items).await?;
-    Ok(outcome(req, plan, files, downloaded, placed, notes))
+    let placement = place(engine, req, &plan, items).await?;
+    Ok(outcome(req, plan, files, downloaded, placement))
 }
 
 /// Say why a file could not be had when the repository itself is gone.
@@ -636,8 +717,7 @@ pub fn outcome(
     plan: Plan,
     files: usize,
     downloaded: usize,
-    placed: Vec<(App, Placed)>,
-    notes: Vec<String>,
+    placement: Placement,
 ) -> PullOutcome {
     PullOutcome {
         repo: req.repo.clone(),
@@ -646,8 +726,9 @@ pub fn outcome(
         files,
         bytes: plan.bytes,
         downloaded,
-        placed,
-        notes: plan.note.into_iter().chain(notes).collect(),
+        placed: placement.placed,
+        skipped: placement.skipped,
+        notes: plan.note.into_iter().chain(placement.notes).collect(),
     }
 }
 

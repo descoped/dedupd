@@ -33,6 +33,7 @@
       "text": "done"
     }
   ],
+  "fetches": false,
   "files": [
     {
       "done": 300000,
@@ -74,7 +75,8 @@
         }
       ]
     ],
-    "repo": "org/Repo-GGUF"
+    "repo": "org/Repo-GGUF",
+    "skipped": []
   },
   "quant": "model",
   "repo": "org/Repo-GGUF",

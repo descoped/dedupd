@@ -2532,13 +2532,16 @@ public struct Job: Equatable, Hashable {
      */
     public var kind: String
     /**
-     * Once the job is done: the apps asked for that took the model. One in
-     * `apps` and not here did not, and `notes` says why.
+     * Once the job is done: the apps asked for that took the model.
      */
     public var activated: [String]
     /**
-     * Once the job is done: why an app did not take the model, and
-     * anything else worth knowing.
+     * Once the job is done: the apps asked for that did not, each with why.
+     */
+    public var notActivated: [NotActivated]
+    /**
+     * Once the job is done: anything else worth knowing (the kept copy was
+     * used, files were left alone).
      */
     public var notes: [String]
     public var createdAt: Int64
@@ -2567,12 +2570,14 @@ public struct Job: Equatable, Hashable {
          * apps (also one asked as a download that found every file stored).
          */kind: String, 
         /**
-         * Once the job is done: the apps asked for that took the model. One in
-         * `apps` and not here did not, and `notes` says why.
+         * Once the job is done: the apps asked for that took the model.
          */activated: [String], 
         /**
-         * Once the job is done: why an app did not take the model, and
-         * anything else worth knowing.
+         * Once the job is done: the apps asked for that did not, each with why.
+         */notActivated: [NotActivated], 
+        /**
+         * Once the job is done: anything else worth knowing (the kept copy was
+         * used, files were left alone).
          */notes: [String], createdAt: Int64, updatedAt: Int64, finishedAt: Int64?) {
         self.id = id
         self.model = model
@@ -2593,6 +2598,7 @@ public struct Job: Equatable, Hashable {
         self.filesDone = filesDone
         self.kind = kind
         self.activated = activated
+        self.notActivated = notActivated
         self.notes = notes
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -2634,6 +2640,7 @@ public struct FfiConverterTypeJob: FfiConverterRustBuffer {
                 filesDone: FfiConverterUInt64.read(from: &buf), 
                 kind: FfiConverterString.read(from: &buf), 
                 activated: FfiConverterSequenceString.read(from: &buf), 
+                notActivated: FfiConverterSequenceTypeNotActivated.read(from: &buf), 
                 notes: FfiConverterSequenceString.read(from: &buf), 
                 createdAt: FfiConverterInt64.read(from: &buf), 
                 updatedAt: FfiConverterInt64.read(from: &buf), 
@@ -2661,6 +2668,7 @@ public struct FfiConverterTypeJob: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.filesDone, into: &buf)
         FfiConverterString.write(value.kind, into: &buf)
         FfiConverterSequenceString.write(value.activated, into: &buf)
+        FfiConverterSequenceTypeNotActivated.write(value.notActivated, into: &buf)
         FfiConverterSequenceString.write(value.notes, into: &buf)
         FfiConverterInt64.write(value.createdAt, into: &buf)
         FfiConverterInt64.write(value.updatedAt, into: &buf)
@@ -3672,6 +3680,85 @@ public func FfiConverterTypeModelMove_lower(_ value: ModelMove) -> RustBuffer {
 }
 
 
+/**
+ * An app that did not take a model, and why.
+ */
+public struct NotActivated: Equatable, Hashable {
+    /**
+     * `bionic`, `ollama` or `hf`.
+     */
+    public var app: String
+    /**
+     * Why, in a sentence that does not name the app in front.
+     */
+    public var reason: String
+    /**
+     * Trying again may work; otherwise the same answer would come again.
+     */
+    public var temporary: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `bionic`, `ollama` or `hf`.
+         */app: String, 
+        /**
+         * Why, in a sentence that does not name the app in front.
+         */reason: String, 
+        /**
+         * Trying again may work; otherwise the same answer would come again.
+         */temporary: Bool) {
+        self.app = app
+        self.reason = reason
+        self.temporary = temporary
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension NotActivated: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeNotActivated: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> NotActivated {
+        return
+            try NotActivated(
+                app: FfiConverterString.read(from: &buf), 
+                reason: FfiConverterString.read(from: &buf), 
+                temporary: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: NotActivated, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.app, into: &buf)
+        FfiConverterString.write(value.reason, into: &buf)
+        FfiConverterBool.write(value.temporary, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotActivated_lift(_ buf: RustBuffer) throws -> NotActivated {
+    return try FfiConverterTypeNotActivated.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeNotActivated_lower(_ value: NotActivated) -> RustBuffer {
+    return FfiConverterTypeNotActivated.lower(value)
+}
+
+
 public struct PlacedApp: Equatable, Hashable {
     public var app: String
     public var cloned: UInt64
@@ -3883,11 +3970,18 @@ public struct PullResult: Equatable, Hashable {
     public var bytes: UInt64
     public var downloaded: UInt64
     public var placed: [PlacedApp]
+    /**
+     * The apps asked for that did not take the model, each with why.
+     */
+    public var skipped: [NotActivated]
     public var notes: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(repo: String, commit: String, fromArchive: Bool, files: UInt64, bytes: UInt64, downloaded: UInt64, placed: [PlacedApp], notes: [String]) {
+    public init(repo: String, commit: String, fromArchive: Bool, files: UInt64, bytes: UInt64, downloaded: UInt64, placed: [PlacedApp], 
+        /**
+         * The apps asked for that did not take the model, each with why.
+         */skipped: [NotActivated], notes: [String]) {
         self.repo = repo
         self.commit = commit
         self.fromArchive = fromArchive
@@ -3895,6 +3989,7 @@ public struct PullResult: Equatable, Hashable {
         self.bytes = bytes
         self.downloaded = downloaded
         self.placed = placed
+        self.skipped = skipped
         self.notes = notes
     }
 
@@ -3921,6 +4016,7 @@ public struct FfiConverterTypePullResult: FfiConverterRustBuffer {
                 bytes: FfiConverterUInt64.read(from: &buf), 
                 downloaded: FfiConverterUInt64.read(from: &buf), 
                 placed: FfiConverterSequenceTypePlacedApp.read(from: &buf), 
+                skipped: FfiConverterSequenceTypeNotActivated.read(from: &buf), 
                 notes: FfiConverterSequenceString.read(from: &buf)
         )
     }
@@ -3933,6 +4029,7 @@ public struct FfiConverterTypePullResult: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.bytes, into: &buf)
         FfiConverterUInt64.write(value.downloaded, into: &buf)
         FfiConverterSequenceTypePlacedApp.write(value.placed, into: &buf)
+        FfiConverterSequenceTypeNotActivated.write(value.skipped, into: &buf)
         FfiConverterSequenceString.write(value.notes, into: &buf)
     }
 }
@@ -5790,6 +5887,31 @@ fileprivate struct FfiConverterSequenceTypeLocation: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeLocation.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeNotActivated: FfiConverterRustBuffer {
+    typealias SwiftType = [NotActivated]
+
+    public static func write(_ value: [NotActivated], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeNotActivated.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [NotActivated] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [NotActivated]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeNotActivated.read(from: &buf))
         }
         return seq
     }

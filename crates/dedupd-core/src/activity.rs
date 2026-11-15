@@ -3,12 +3,19 @@
 //! the Activity list.
 //!
 //! Kept in `<home>/activity.jsonl`, one entry per line, so the database
-//! schema stays as it is and the command line and the daemon can both add
-//! to it: a line is appended in one write. A line that cannot be read is
-//! skipped; a missing file means nothing has happened yet. The file is cut
-//! back to the newest entries when it grows long.
+//! schema stays as it is. The daemon and the command line both add to it,
+//! one at a time: `<home>/activity.lock` is held while an entry is added,
+//! which also keeps the ids unique. A line that cannot be read is skipped,
+//! and one cut short by a crash does not take the next entry with it; a
+//! missing file means nothing has happened yet. The file is cut back to the
+//! newest entries when it grows long.
+//!
+//! The sentences are written here and nowhere else, and the operations that
+//! change an app or the store add their own entries (`pull::place`,
+//! `maintain::deactivate`, `archive::archive_apply`, `archive::restore`), so
+//! every caller leaves the same history.
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
@@ -16,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::Home;
 use crate::place::{App, Placed};
+use crate::pull::Skipped;
 
 /// Entries kept when the file is cut back, and the length that starts it.
 const KEEP: usize = 500;
@@ -47,137 +55,240 @@ pub struct Entry {
     pub text: String,
 }
 
+/// An entry before it has an id and a time.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Happened {
+    pub action: Action,
+    pub repo: String,
+    pub app: Option<App>,
+    /// What happened, or why it did not.
+    pub result: std::result::Result<String, String>,
+}
+
+/// The sentences of the list.
+pub fn activated(app: App) -> String {
+    format!("Activated in {}", app.title())
+}
+
+pub fn deactivated(app: App) -> String {
+    format!("Deactivated in {}", app.title())
+}
+
+pub fn partly_deactivated(app: App, removed: usize, left: usize) -> String {
+    format!(
+        "Partly deactivated in {}: {removed} files removed, {left} left there",
+        app.title()
+    )
+}
+
+pub const ARCHIVED: &str = "Moved to the archive disk";
+pub const RESTORED: &str = "Brought back from the archive disk";
+
 fn path(home: &Home) -> PathBuf {
     home.root().join("activity.jsonl")
 }
 
-fn read(home: &Home) -> Vec<Entry> {
-    std::fs::read_to_string(path(home))
-        .unwrap_or_default()
-        .lines()
+fn lock_path(home: &Home) -> PathBuf {
+    home.root().join("activity.lock")
+}
+
+fn parse(text: &str) -> Vec<Entry> {
+    text.lines()
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect()
 }
 
 /// The newest entries first, at most `limit` of them.
 pub fn recent(home: &Home, limit: usize) -> Vec<Entry> {
-    let mut entries = read(home);
+    let mut entries = parse(&std::fs::read_to_string(path(home)).unwrap_or_default());
     entries.reverse();
     entries.truncate(limit);
     entries
 }
 
-/// Add an entry. A failure to write is reported, not passed on: the
+/// Add one entry. A failure to write is reported, not passed on: the
 /// history must not stop the work it describes.
-pub fn record(
-    home: &Home,
-    action: Action,
-    repo: &str,
-    app: Option<&str>,
-    result: std::result::Result<String, String>,
-) {
-    if let Err(e) = append(home, action, repo, app, result) {
+pub fn record(home: &Home, happened: Happened) {
+    record_all(home, vec![happened]);
+}
+
+/// Add entries, in this order, in one go.
+pub fn record_all(home: &Home, happened: Vec<Happened>) {
+    if happened.is_empty() {
+        return;
+    }
+    if let Err(e) = append(home, happened) {
         eprintln!("dedupd: could not add to the activity list: {e:#}");
     }
 }
 
-fn append(
+/// Add the outcome of an operation: `ok` words a success, an error is its
+/// own reason.
+pub fn record_result<T>(
     home: &Home,
     action: Action,
     repo: &str,
-    app: Option<&str>,
-    result: std::result::Result<String, String>,
-) -> Result<()> {
-    let known = read(home);
+    app: Option<App>,
+    result: &Result<T>,
+    ok: impl FnOnce(&T) -> Option<String>,
+) {
+    let result = match result {
+        Ok(value) => match ok(value) {
+            Some(text) => Ok(text),
+            // Nothing happened, so there is nothing to tell.
+            None => return,
+        },
+        Err(e) => Err(format!("{e:#}")),
+    };
+    record(
+        home,
+        Happened {
+            action,
+            repo: repo.to_string(),
+            app,
+            result,
+        },
+    );
+}
+
+fn append(home: &Home, happened: Vec<Happened>) -> Result<()> {
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(lock_path(home))
+        .context("opening the activity lock")?;
+    lock.lock().context("waiting for the activity lock")?;
+
+    let target = path(home);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(&target)
+        .with_context(|| format!("opening {}", target.display()))?;
+    let mut text = String::new();
+    file.read_to_string(&mut text)
+        .with_context(|| format!("reading {}", target.display()))?;
+    let known = parse(&text);
+
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
-    let millis = now.as_millis() as i64;
-    let id = known.last().map_or(millis, |last| millis.max(last.id + 1));
-    let (ok, text) = match result {
-        Ok(text) => (true, text),
-        Err(text) => (false, text),
-    };
-    let entry = Entry {
-        id,
-        at: now.as_secs() as i64,
-        action,
-        repo: repo.to_string(),
-        app: app.map(str::to_string),
-        ok,
-        text,
-    };
-    let target = path(home);
-    if known.len() + 1 >= CUT_AT {
-        // Keep the newest entries and this one; the file is replaced in one
-        // step.
-        let mut lines = String::new();
-        for e in known.iter().skip(known.len() + 1 - KEEP).chain([&entry]) {
-            lines.push_str(&serde_json::to_string(e)?);
-            lines.push('\n');
+    // One more than the last entry, or the time now when that is later.
+    let first = known
+        .last()
+        .map_or(0, |last| last.id)
+        .max(now.as_millis() as i64 - 1)
+        + 1;
+    let mut lines = String::new();
+    for (id, h) in (first..).zip(happened) {
+        let (ok, text) = match h.result {
+            Ok(text) => (true, text),
+            Err(text) => (false, text),
+        };
+        let entry = Entry {
+            id,
+            at: now.as_secs() as i64,
+            action: h.action,
+            repo: h.repo,
+            app: h.app.map(|a| a.as_str().to_string()),
+            ok,
+            text,
+        };
+        lines.push_str(&serde_json::to_string(&entry)?);
+        lines.push('\n');
+    }
+
+    if known.len() + lines.lines().count() >= CUT_AT {
+        // Keep the newest entries and the new ones; the file is replaced in
+        // one step, under the lock.
+        let mut kept = String::new();
+        for e in known.iter().skip(known.len().saturating_sub(KEEP)) {
+            kept.push_str(&serde_json::to_string(e)?);
+            kept.push('\n');
         }
-        let tmp = home.root().join(".activity.jsonl.tmp");
-        std::fs::write(&tmp, lines).with_context(|| format!("writing {}", tmp.display()))?;
+        kept.push_str(&lines);
+        let tmp = home
+            .root()
+            .join(format!(".activity.jsonl.{}.tmp", std::process::id()));
+        std::fs::write(&tmp, kept).with_context(|| format!("writing {}", tmp.display()))?;
         std::fs::rename(&tmp, &target).with_context(|| format!("writing {}", target.display()))?;
         return Ok(());
     }
-    let mut line = serde_json::to_string(&entry)?;
-    line.push('\n');
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&target)
-        .and_then(|mut f| f.write_all(line.as_bytes()))
-        .with_context(|| format!("writing {}", target.display()))
+    // A line cut short by a crash gets its end, so the new entries start on
+    // a line of their own.
+    if !text.is_empty() && !text.ends_with('\n') {
+        lines.insert(0, '\n');
+    }
+    file.seek(SeekFrom::End(0))?;
+    file.write_all(lines.as_bytes())
+        .with_context(|| format!("writing {}", target.display()))?;
+    // The lock is let go when `lock` is closed, after the write.
+    drop(file);
+    drop(lock);
+    Ok(())
 }
 
 /// Add one entry per app a pull was asked to put the model into: activated,
-/// or why not. The reason comes from the pull's notes, which name the app.
+/// or why not.
 pub fn record_activations(
     home: &Home,
     repo: &str,
     apps: &[App],
     placed: &[(App, Placed)],
-    notes: &[String],
+    skipped: &[Skipped],
 ) {
-    for app in apps {
-        let took = placed
-            .iter()
-            .any(|(a, p)| a == app && p.conflicts.is_empty());
-        let result = if took {
-            Ok(format!("Activated in {}", app.title()))
-        } else {
-            Err(reason_for(*app, placed, notes))
-        };
-        record(home, Action::Activate, repo, Some(app.as_str()), result);
-    }
+    let happened = apps
+        .iter()
+        .map(|app| {
+            let result = match skipped.iter().find(|s| s.app == *app) {
+                Some(s) => Err(s.reason.clone()),
+                None if placed.iter().any(|(a, _)| a == app) => Ok(activated(*app)),
+                None => Err("no reason was given".to_string()),
+            };
+            Happened {
+                action: Action::Activate,
+                repo: repo.to_string(),
+                app: Some(*app),
+                result,
+            }
+        })
+        .collect();
+    record_all(home, happened);
 }
 
-/// Why `app` did not take the model, in a sentence.
-fn reason_for(app: App, placed: &[(App, Placed)], notes: &[String]) -> String {
-    let start = format!("not placed into {}: ", app.title());
-    if let Some(why) = notes.iter().find_map(|n| n.strip_prefix(&start)) {
-        return capital(why);
-    }
-    if let Some((_, p)) = placed.iter().find(|(a, _)| *a == app) {
-        return format!(
-            "{} files in its folder have other content; dedupd left them alone",
-            p.conflicts.len()
-        );
-    }
-    format!("{} did not take the model", capital(app.title()))
-}
-
-fn capital(text: &str) -> String {
-    let mut chars = text.chars();
-    chars
-        .next()
-        .map_or_else(String::new, |c| c.to_uppercase().chain(chars).collect())
+/// An activation that stopped before anything was placed: one entry per
+/// app, with why.
+pub fn record_stopped_activation(home: &Home, repo: &str, apps: &[App], why: &str) {
+    let happened = apps
+        .iter()
+        .map(|app| Happened {
+            action: Action::Activate,
+            repo: repo.to_string(),
+            app: Some(*app),
+            result: Err(why.to_string()),
+        })
+        .collect();
+    record_all(home, happened);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn happened(
+        action: Action,
+        app: Option<App>,
+        result: std::result::Result<&str, &str>,
+    ) -> Happened {
+        Happened {
+            action,
+            repo: "org/a".into(),
+            app,
+            result: result.map(str::to_string).map_err(str::to_string),
+        }
+    }
 
     #[test]
     fn keeps_the_newest_entries_first_with_growing_ids() {
@@ -187,24 +298,27 @@ mod tests {
 
         record(
             &home,
-            Action::Activate,
-            "org/a",
-            Some("bionic"),
-            Ok("Activated in Bionic".into()),
+            happened(
+                Action::Activate,
+                Some(App::Bionic),
+                Ok("Activated in Bionic"),
+            ),
         );
         record(
             &home,
-            Action::Activate,
-            "org/a",
-            Some("ollama"),
-            Err("Ollama can't run it".into()),
+            happened(
+                Action::Activate,
+                Some(App::Ollama),
+                Err("Ollama can't run it"),
+            ),
         );
-        record(&home, Action::Archive, "org/b", None, Ok("Archived".into()));
+        record(&home, happened(Action::Archive, None, Ok(ARCHIVED)));
 
         let entries = recent(&home, 10);
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].action, Action::Archive);
         assert_eq!(entries[0].app, None);
+        assert_eq!(entries[1].app.as_deref(), Some("ollama"));
         assert!(!entries[1].ok);
         assert_eq!(entries[1].text, "Ollama can't run it");
         assert!(entries[0].id > entries[1].id && entries[1].id > entries[2].id);
@@ -212,25 +326,53 @@ mod tests {
     }
 
     #[test]
-    fn a_damaged_line_is_skipped_and_a_long_file_is_cut_back() {
+    fn writers_at_the_same_time_lose_nothing_and_share_no_id() {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::new(dir.path());
-        std::fs::write(path(&home), "not json\n").unwrap();
-        record(&home, Action::Restore, "org/a", None, Ok("Restored".into()));
-        assert_eq!(recent(&home, 10).len(), 1);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..25 {
+                        record(
+                            &home,
+                            happened(Action::Deactivate, Some(App::Hf), Ok("Deactivated")),
+                        );
+                    }
+                });
+            }
+        });
+        let entries = recent(&home, usize::MAX);
+        assert_eq!(entries.len(), 200);
+        let mut ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
+        ids.dedup();
+        assert_eq!(ids.len(), 200);
+    }
 
+    #[test]
+    fn a_damaged_line_is_skipped_and_does_not_take_the_next_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        // A write cut short: no end of line.
+        std::fs::write(path(&home), "not json\n{\"id\":17,\"at\"").unwrap();
+        record(&home, happened(Action::Restore, None, Ok(RESTORED)));
+        let entries = recent(&home, 10);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, RESTORED);
+    }
+
+    #[test]
+    fn a_long_file_is_cut_back_to_the_newest_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
         for _ in 0..CUT_AT {
             record(
                 &home,
-                Action::Deactivate,
-                "org/a",
-                Some("hf"),
-                Ok("Deactivated".into()),
+                happened(Action::Deactivate, Some(App::Hf), Ok("Deactivated")),
             );
         }
         let entries = recent(&home, usize::MAX);
         assert!(
-            entries.len() <= CUT_AT && entries.len() >= KEEP,
+            entries.len() < CUT_AT && entries.len() > KEEP,
             "{}",
             entries.len()
         );
@@ -242,20 +384,40 @@ mod tests {
     fn an_activation_says_which_apps_took_the_model_and_why_not() {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::new(dir.path());
-        let placed = vec![(
-            App::Bionic,
-            Placed {
-                cloned: 2,
-                ..Placed::default()
+        let placed = vec![
+            (
+                App::Bionic,
+                Placed {
+                    cloned: 2,
+                    ..Placed::default()
+                },
+            ),
+            (
+                App::Hf,
+                Placed {
+                    conflicts: vec!["x".into()],
+                    ..Placed::default()
+                },
+            ),
+        ];
+        let skipped = vec![
+            Skipped {
+                app: App::Ollama,
+                reason: "Ollama 0.40.16 can't run this model: no.".into(),
+                temporary: false,
             },
-        )];
-        let notes = vec!["not placed into Ollama: Ollama 0.40.16 can't run this model: no.".into()];
+            Skipped {
+                app: App::Hf,
+                reason: "files in its folder with other content were left alone (1)".into(),
+                temporary: false,
+            },
+        ];
         record_activations(
             &home,
             "org/a",
             &[App::Bionic, App::Ollama, App::Hf],
             &placed,
-            &notes,
+            &skipped,
         );
 
         let entries = recent(&home, 10);
@@ -269,9 +431,38 @@ mod tests {
             [
                 (true, "Activated in Bionic"),
                 (false, "Ollama 0.40.16 can't run this model: no."),
-                (false, "The Hugging Face cache did not take the model"),
+                (
+                    false,
+                    "files in its folder with other content were left alone (1)"
+                ),
             ]
         );
-        assert_eq!(entries[1].app.as_deref(), Some("ollama"));
+    }
+
+    #[test]
+    fn a_result_without_anything_done_is_not_told() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let nothing: Result<usize> = Ok(0);
+        record_result(
+            &home,
+            Action::Deactivate,
+            "org/a",
+            Some(App::Bionic),
+            &nothing,
+            |n| (*n > 0).then(|| deactivated(App::Bionic)),
+        );
+        let failed: Result<usize> = Err(anyhow::anyhow!("removing x: permission denied"));
+        record_result(
+            &home,
+            Action::Deactivate,
+            "org/a",
+            Some(App::Bionic),
+            &failed,
+            |_| None,
+        );
+        let entries = recent(&home, 10);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].text, "removing x: permission denied");
     }
 }

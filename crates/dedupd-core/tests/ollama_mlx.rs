@@ -442,13 +442,19 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
         .await
         .unwrap();
     assert!(first.placed.is_empty());
-    assert_eq!(first.notes.len(), 1);
     let plain = format!(
-        "not placed into Ollama: Ollama {version} can't run this model: it doesn't support the \
-         model type NoSuchModelForCausalLM for MLX models."
+        "Ollama {version} can't run this model: it doesn't support the model type \
+         NoSuchModelForCausalLM for MLX models."
     );
-    assert_eq!(first.notes, std::slice::from_ref(&plain));
-    assert!(!first.notes[0].contains("Error:"), "{:?}", first.notes);
+    assert_eq!(
+        first.skipped,
+        [pull::Skipped {
+            app: App::Ollama,
+            reason: plain.clone(),
+            temporary: false
+        }]
+    );
+    assert!(first.notes.is_empty(), "{:?}", first.notes);
     assert!(!e.dirs.ollama.join("manifests").exists());
 
     // Its answer is kept for this model's config.json and this version.
@@ -472,10 +478,7 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
         .find(|d| d.app == "ollama")
         .unwrap();
     assert_eq!(ollama.state, "no");
-    assert_eq!(
-        ollama.reason,
-        plain.trim_start_matches("not placed into Ollama: ")
-    );
+    assert_eq!(ollama.reason, plain);
     assert!(
         !library.variants[0]
             .usable_by
@@ -487,5 +490,10 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
         .await
         .unwrap();
     assert!(second.placed.is_empty());
-    assert_eq!(second.notes, [plain]);
+    assert_eq!(second.skipped[0].reason, plain);
+
+    // Each answer is in the activity list.
+    let entries = dedupd_core::activity::recent(&home, 10);
+    assert_eq!(entries.len(), 2);
+    assert!(entries.iter().all(|e| !e.ok && e.text == plain));
 }

@@ -299,12 +299,14 @@ pub struct Job {
     /// apps (also one asked as a download that found every file stored).
     #[serde(default)]
     pub kind: String,
-    /// Once the job is done: the apps asked for that took the model. One in
-    /// `apps` and not here did not, and `notes` says why.
+    /// Once the job is done: the apps asked for that took the model.
     #[serde(default)]
     pub activated: Vec<String>,
-    /// Once the job is done: why an app did not take the model, and
-    /// anything else worth knowing.
+    /// Once the job is done: the apps asked for that did not, each with why.
+    #[serde(default)]
+    pub not_activated: Vec<NotActivated>,
+    /// Once the job is done: anything else worth knowing (the kept copy was
+    /// used, files were left alone).
     #[serde(default)]
     pub notes: Vec<String>,
     pub created_at: i64,
@@ -343,6 +345,18 @@ pub struct JobDetail {
     pub job: Job,
     pub files: Vec<JobFile>,
     pub events: Vec<JobEvent>,
+}
+
+/// An app that did not take a model, and why.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct NotActivated {
+    /// `bionic`, `ollama` or `hf`.
+    pub app: String,
+    /// Why, in a sentence that does not name the app in front.
+    pub reason: String,
+    /// Trying again may work; otherwise the same answer would come again.
+    #[serde(default)]
+    pub temporary: bool,
 }
 
 /// One thing that happened to a model in the apps.

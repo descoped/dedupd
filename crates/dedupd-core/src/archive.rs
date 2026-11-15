@@ -7,6 +7,7 @@
 //! its files leave the internal disk, so only the archive disk has them
 //! (`archive_plan`, `archive_apply`); `restore` brings them back.
 
+use crate::activity::{self, Action};
 use crate::db::{BlobRow, Db, PROVIDER_HF, lock};
 use crate::hash::{copy_hashing, hash_file};
 use crate::maintain::{self, UnplacePlan};
@@ -328,6 +329,20 @@ pub fn archive_apply(
     repo: &str,
     on_file: &mut dyn FnMut(u64),
 ) -> Result<ArchiveReport> {
+    let done = archive_quietly(db, store, dirs, repo, on_file);
+    activity::record_result(store.home(), Action::Archive, repo, None, &done, |_| {
+        Some(activity::ARCHIVED.to_string())
+    });
+    done
+}
+
+fn archive_quietly(
+    db: &Mutex<Db>,
+    store: &Store,
+    dirs: &AppDirs,
+    repo: &str,
+    on_file: &mut dyn FnMut(u64),
+) -> Result<ArchiveReport> {
     let plan = archive_plan(db, store, dirs, repo)?;
     let archive = attached_archive(store)?;
     let id = repo_id(&lock(db), repo)?;
@@ -435,6 +450,34 @@ pub struct RestoreReport {
 /// each as it is written, and mark the model as no longer archived. The
 /// archive keeps its copies. The model is not put into any app.
 pub fn restore(
+    db: &Mutex<Db>,
+    store: &Store,
+    repo: &str,
+    on_file: &mut dyn FnMut(u64),
+) -> Result<RestoreReport> {
+    let done = restore_quietly(db, store, repo, on_file).and_then(|report| {
+        // Files that are nowhere are a failure of the restore, whoever asked.
+        match report.missing.len() {
+            0 => Ok(report),
+            n => Err(Missing { report, files: n }.into()),
+        }
+    });
+    activity::record_result(store.home(), Action::Restore, repo, None, &done, |r| {
+        (r.files > 0).then(|| activity::RESTORED.to_string())
+    });
+    done
+}
+
+/// A restore that copied what it could, while some files are neither on
+/// the internal disk nor on the archive disk. The report says which.
+#[derive(Debug, thiserror::Error)]
+#[error("{files} files are neither on the internal disk nor on the archive disk")]
+pub struct Missing {
+    pub report: RestoreReport,
+    pub files: usize,
+}
+
+fn restore_quietly(
     db: &Mutex<Db>,
     store: &Store,
     repo: &str,

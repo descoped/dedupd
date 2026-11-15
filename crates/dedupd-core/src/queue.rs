@@ -11,7 +11,7 @@ use crate::governor::GovernorState;
 use crate::hub::{HubError, TreeEntry};
 use crate::now;
 use crate::place::App;
-use crate::pull::{self, Engine, PullRequest, PullWatch};
+use crate::pull::{self, Engine, PullOutcome, PullRequest, PullWatch, Skipped};
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -174,8 +174,12 @@ pub struct JobRecord {
     pub speed: u64,
     pub files: Vec<FileState>,
     pub events: Vec<Event>,
+    /// The job has files to download, as it found when it looked at the
+    /// store; such a job is a download, whatever it was asked as.
+    #[serde(default)]
+    pub fetches: bool,
     /// What the pull did, once it is done.
-    pub outcome: Option<serde_json::Value>,
+    pub outcome: Option<PullOutcome>,
     pub created_at: i64,
     pub updated_at: i64,
     pub finished_at: Option<i64>,
@@ -204,63 +208,58 @@ impl JobRecord {
     }
 
     /// Where the job belongs: with the downloads, or with the activations.
-    /// A job that was asked as a download but found every file stored, and
-    /// so only put the model into apps, is an activation too.
+    /// A job that downloads files is a download, also when it was asked as
+    /// an activation (a model on a detached archive disk is fetched again);
+    /// one asked as a download that found every file stored, and so only
+    /// put the model into apps, is an activation.
     pub fn shown_as(&self) -> JobKind {
-        let fetched = self.outcome.as_ref().and_then(|o| o["downloaded"].as_u64());
-        if self.kind == JobKind::Activation || (fetched == Some(0) && !self.apps.is_empty()) {
+        let fetched = self.outcome.as_ref().map(|o| o.downloaded);
+        if self.fetches || fetched.is_some_and(|n| n > 0) {
+            JobKind::Download
+        } else if self.kind == JobKind::Activation || (fetched == Some(0) && !self.apps.is_empty())
+        {
             JobKind::Activation
         } else {
             JobKind::Download
         }
     }
 
-    /// The apps the finished job put the model into: those that took every
-    /// file. Read from the outcome, so a job kept by an older build answers
-    /// the same.
-    pub fn activated(&self) -> Vec<String> {
-        self.placed()
-            .filter(|(_, conflicts)| *conflicts == 0)
-            .map(|(app, _)| app)
-            .collect()
-    }
-
-    /// What the finished job has to say: why an app did not take the model,
-    /// and anything else the owner should know.
-    pub fn notes(&self) -> Vec<String> {
-        let outcome = self.outcome.as_ref();
-        let mut notes: Vec<String> = outcome
-            .and_then(|o| o["notes"].as_array())
-            .map(|n| {
-                n.iter()
-                    .filter_map(|t| t.as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-        for (app, conflicts) in self.placed().filter(|(_, c)| *c > 0) {
-            let title = app
-                .parse::<App>()
-                .map_or(app.clone(), |a| a.title().to_string());
-            notes.push(format!(
-                "not fully placed into {title}: files in its folder with other content \
-                 were left alone ({conflicts})"
-            ));
-        }
-        notes
-    }
-
-    /// Each app in the outcome, with the number of files it kept of its own.
-    fn placed(&self) -> impl Iterator<Item = (String, usize)> + '_ {
+    /// The apps the finished job put the model into.
+    pub fn activated(&self) -> Vec<App> {
         self.outcome
             .as_ref()
-            .and_then(|o| o["placed"].as_array())
-            .into_iter()
-            .flatten()
-            .filter_map(|pair| {
-                let app = pair[0].as_str()?.to_string();
-                let conflicts = pair[1]["conflicts"].as_array().map_or(0, Vec::len);
-                Some((app, conflicts))
-            })
+            .map(|o| o.activated().collect())
+            .unwrap_or_default()
+    }
+
+    /// The apps the finished job was asked for that did not take the model,
+    /// each with why. A job kept by an older build, which wrote no reasons,
+    /// gets a plain one.
+    pub fn not_activated(&self) -> Vec<Skipped> {
+        let Some(outcome) = self.outcome.as_ref() else {
+            return Vec::new();
+        };
+        let activated: Vec<App> = outcome.activated().collect();
+        let mut skipped = outcome.skipped.clone();
+        for app in &self.apps {
+            if !activated.contains(app) && !skipped.iter().any(|s| s.app == *app) {
+                skipped.push(Skipped {
+                    app: *app,
+                    reason: "no reason was kept".to_string(),
+                    temporary: false,
+                });
+            }
+        }
+        skipped
+    }
+
+    /// What else the finished job has to say (the kept copy was used, files
+    /// were left alone).
+    pub fn notes(&self) -> Vec<String> {
+        self.outcome
+            .as_ref()
+            .map(|o| o.notes.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -437,6 +436,7 @@ impl Queue {
             speed: 0,
             files: Vec::new(),
             events: Vec::new(),
+            fetches: false,
             outcome: None,
             created_at: at,
             updated_at: at,
@@ -735,7 +735,7 @@ impl Queue {
                     if gone {
                         let _ = engine.db().set_upstream(PROVIDER_HF, &req.repo, true);
                     }
-                    return self.set(job, State::NeedsAttention, Some(why));
+                    return self.needs_owner(job, &req, why);
                 }
                 Problem::Busy(seconds) => {
                     job.record().wait_until = Some(now() + seconds as i64);
@@ -781,33 +781,45 @@ impl Queue {
             Ok(done) => done,
             Err(e) => {
                 let why = attention_text(&pull::gone_upstream(e, &req, &plan), &req);
-                return self.set(job, State::NeedsAttention, Some(why));
+                return self.needs_owner(job, &req, why);
             }
         };
 
         self.set(job, State::Placing, None);
         let files = items.len();
         match pull::place(engine, &req, &plan, items).await {
-            Ok((placed, notes)) => {
-                // Every file is stored, so the job is done, also when an app
-                // did not take the model: trying again would get the same
-                // answer. The outcome says which apps took it and why the
-                // others did not (`JobRecord::activated` and `notes`).
-                let outcome = pull::outcome(&req, plan, files, downloaded, placed, notes);
-                crate::activity::record_activations(
-                    self.engine.store.home(),
-                    &req.repo,
-                    &req.apps,
-                    &outcome.placed,
-                    &outcome.notes,
-                );
+            Ok(placement) => {
+                // Every file is stored. An app that did not take the model
+                // for good (it cannot run it, files of its own in the way)
+                // would answer the same again, so the job is done; one that
+                // could not be asked just now (the provider out of reach, a
+                // full disk) waits for the owner to try again. The outcome
+                // says which apps took it and why the others did not.
+                let outcome = pull::outcome(&req, plan, files, downloaded, placement);
+                let retry: Vec<String> = outcome
+                    .skipped
+                    .iter()
+                    .filter(|s| s.temporary)
+                    .map(|s| format!("not activated in {}: {}", s.app.title(), s.reason))
+                    .collect();
                 {
                     let mut r = job.record();
                     r.bytes_done = r.bytes_total;
-                    r.outcome = serde_json::to_value(&outcome).ok();
+                    for skipped in &outcome.skipped {
+                        r.note(format!(
+                            "not activated in {}: {}",
+                            skipped.app.title(),
+                            skipped.reason
+                        ));
+                    }
                     for note in &outcome.notes {
                         r.note(note.clone());
                     }
+                    r.outcome = Some(outcome);
+                }
+                if !retry.is_empty() {
+                    // `place` has told the history already.
+                    return self.set(job, State::NeedsAttention, Some(retry.join("; ")));
                 }
                 self.set(job, State::Done, None);
                 self.forget_old();
@@ -816,8 +828,26 @@ impl Queue {
                     call();
                 }
             }
-            Err(e) => self.set(job, State::NeedsAttention, Some(format!("{e:#}"))),
+            Err(e) => self.needs_owner(job, &req, format!("{e:#}")),
         }
+    }
+
+    /// Stop a job until the owner acts. An activation that stops before
+    /// anything was placed is told in the history too, app by app.
+    fn needs_owner(&self, job: &Job, req: &PullRequest, why: String) {
+        if job.record().kind == JobKind::Activation {
+            // A file write, kept off the async runtime.
+            let (home, repo, apps, text) = (
+                self.engine.store.home().clone(),
+                req.repo.clone(),
+                req.apps.clone(),
+                why.clone(),
+            );
+            tokio::task::spawn_blocking(move || {
+                crate::activity::record_stopped_activation(&home, &repo, &apps, &text);
+            });
+        }
+        self.set(job, State::NeedsAttention, Some(why));
     }
 
     /// Keep the list of finished jobs from growing without end.
@@ -923,6 +953,11 @@ struct JobWatch {
 }
 
 impl PullWatch for JobWatch {
+    fn fetching(&self, _files: usize) {
+        self.job.record().fetches = true;
+        self.queue.changed();
+    }
+
     fn bytes(&self, index: usize, delta: i64) {
         let resumed = {
             let mut r = self.job.record();
@@ -1002,26 +1037,39 @@ mod tests {
 
     /// A finished job as the database keeps it, with the given outcome.
     fn finished(outcome: serde_json::Value) -> JobRecord {
+        let mut whole = serde_json::json!({
+            "repo": "org/model", "commit": "c0", "from_archive": false,
+            "files": 3, "bytes": 3, "downloaded": 0,
+        });
+        whole
+            .as_object_mut()
+            .unwrap()
+            .extend(outcome.as_object().unwrap().clone());
         serde_json::from_value(serde_json::json!({
             "id": 1, "model": "org/model", "repo": "org/model", "revision": "main",
             "quant": null, "include": [], "apps": ["bionic", "ollama"], "offline": false,
             "state": "done", "detail": null, "wait_until": null, "commit": null,
             "bytes_total": 1, "bytes_done": 1, "files": [], "events": [],
-            "outcome": outcome, "created_at": 0, "updated_at": 0, "finished_at": 0,
+            "outcome": whole, "created_at": 0, "updated_at": 0, "finished_at": 0,
         }))
         .unwrap()
     }
 
     #[test]
     fn a_job_kept_by_an_older_build_says_what_it_placed() {
-        // An older build marked a job done when Ollama refused the model;
-        // its outcome shows that nothing was placed.
+        // An older build marked a job done when Ollama refused the model,
+        // and kept the reason only as a note.
         let refused = finished(serde_json::json!({
-            "placed": [],
+            "placed": [["bionic", {"cloned": 3, "present": 0, "conflicts": []}]],
             "notes": ["not placed into Ollama: Ollama would not import a stand-in for the model"],
         }));
-        assert!(refused.activated().is_empty());
-        assert_eq!(refused.notes().len(), 1);
+        assert_eq!(refused.activated(), [App::Bionic]);
+        let not = refused.not_activated();
+        assert_eq!(not.len(), 1);
+        assert_eq!(not[0].app, App::Ollama);
+        assert_eq!(not[0].reason, "no reason was kept");
+        // It downloaded nothing, so it reads as an activation.
+        assert_eq!(refused.shown_as(), JobKind::Activation);
 
         // Files of the app's own in the way: the app did not take the model.
         let blocked = finished(serde_json::json!({
@@ -1031,17 +1079,23 @@ mod tests {
             ],
             "notes": [],
         }));
-        assert_eq!(blocked.activated(), ["bionic"]);
-        assert_eq!(
-            blocked.notes(),
-            [
-                "not fully placed into Ollama: files in its folder with other content were left alone (1)"
-            ]
-        );
+        assert_eq!(blocked.activated(), [App::Bionic]);
+        assert_eq!(blocked.not_activated()[0].app, App::Ollama);
 
         // A job that has not finished has nothing to say yet.
-        let mut working = finished(serde_json::Value::Null);
+        let mut working = blocked.clone();
         working.outcome = None;
-        assert!(working.activated().is_empty() && working.notes().is_empty());
+        assert!(working.activated().is_empty() && working.not_activated().is_empty());
+    }
+
+    #[test]
+    fn a_job_that_downloads_files_is_a_download_whatever_it_was_asked_as() {
+        let mut job = finished(serde_json::json!({"placed": [], "downloaded": 2}));
+        job.kind = JobKind::Activation;
+        assert_eq!(job.shown_as(), JobKind::Download);
+        job.outcome = None;
+        assert_eq!(job.shown_as(), JobKind::Activation);
+        job.fetches = true;
+        assert_eq!(job.shown_as(), JobKind::Download);
     }
 }

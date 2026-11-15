@@ -217,11 +217,15 @@ struct DaemonStoreTests {
         await daemon.receive(.event(event([activating])))
         #expect(daemon.attentionJobs.isEmpty)
         #expect(daemon.menuBarSymbol == "exclamationmark.triangle")
+        // The panel lists it, so the warning is explained there.
+        #expect(daemon.waitingJobs.map(\.id) == [9])
+        #expect(activity.repo(of: .job(9)) == FixtureData.qwen)
 
         // The canned list holds one failure; once seen, it no longer counts.
         await activity.reload()
         #expect(activity.entries.count == FixtureData.activity.count)
         #expect(activity.unseenFailures == 1)
+        #expect(activity.repo(of: .entry(FixtureData.activity[0].id)) == FixtureData.activity[0].repo)
         activity.markSeen()
         #expect(activity.unseenFailures == 0)
         #expect(daemon.settings.activitySeen == FixtureData.activity[0].id)
@@ -234,7 +238,7 @@ struct DaemonStoreTests {
         let took = FixtureData.job(id: 1, request: request, state: .done)
         let refused = FixtureData.job(
             id: 1, request: request, state: .done,
-            notTakenBy: ["ollama": "not placed into Ollama: Ollama 0.40.16 can't run this model: no."]
+            notTakenBy: ["ollama": "Ollama 0.40.16 can't run this model: no."]
         )
         #expect(Notice.notices(from: [running], to: [took]).isEmpty)
         #expect(Notice.notices(from: [running], to: [refused]) == [

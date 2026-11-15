@@ -181,7 +181,7 @@ async fn a_job_downloads_in_parts_verifies_and_places() {
     assert!(record.files.iter().all(|f| f.stage == FileStage::Stored));
     assert_eq!(fs::read(placed(&s.engine)).unwrap(), up.weights);
     let outcome = record.outcome.unwrap();
-    assert_eq!(outcome["downloaded"], 2);
+    assert_eq!(outcome.downloaded, 2);
 
     let mut ranges = up.weight_ranges().await;
     ranges.sort();
@@ -425,12 +425,11 @@ async fn a_job_says_which_apps_took_the_model_and_why_the_others_did_not() {
     assert_eq!(record.state, State::Done, "{}", history(&record));
     assert_eq!(record.detail, None);
     assert!(record.activated().is_empty(), "{:?}", record.activated());
-    let notes = record.notes();
-    assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(
-        notes[0].starts_with("not placed into Ollama: "),
-        "{notes:?}"
-    );
+    let not = record.not_activated();
+    assert_eq!(not.len(), 1, "{not:?}");
+    assert_eq!(not[0].app, App::Ollama);
+    assert!(!not[0].temporary);
+    assert!(not[0].reason.contains("HTTP 404"), "{}", not[0].reason);
     assert_eq!(record.bytes_done, record.bytes_total);
     assert!(s.engine.store.contains(&sha256(&up.weights)));
 
@@ -448,9 +447,9 @@ async fn a_job_says_which_apps_took_the_model_and_why_the_others_did_not() {
         .unwrap();
     let record = settled(&s.queue, id).await;
     assert_eq!(record.state, State::Done, "{}", history(&record));
-    assert_eq!(record.activated(), ["bionic"]);
+    assert_eq!(record.activated(), [App::Bionic]);
     assert!(
-        history(&record).contains("not placed into Ollama: "),
+        history(&record).contains("not activated in Ollama: "),
         "{}",
         history(&record)
     );
@@ -506,6 +505,30 @@ async fn an_activation_cut_off_while_placing_finishes_after_a_restart() {
     restarted.start();
     let record = settled(&restarted, id).await;
     assert_eq!(record.state, State::Done, "{}", history(&record));
-    assert_eq!(record.activated(), ["bionic"]);
+    assert_eq!(record.activated(), [App::Bionic]);
     assert_eq!(fs::read(placed(&s.engine)).unwrap(), up.weights);
+}
+
+#[tokio::test]
+async fn an_app_that_could_not_be_asked_just_now_waits_for_the_owner() {
+    // Hugging Face fails on its side when asked for the Ollama manifest:
+    // trying again may work, so the job waits with Try Again.
+    let up = upstream(true).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/v2/{REPO}/manifests/Q4_K_M")))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&up.server)
+        .await;
+    let s = scene(&up);
+    let id = s
+        .queue
+        .add(MODEL, vec![], vec![App::Ollama], false, JobKind::Activation)
+        .unwrap();
+    let record = settled(&s.queue, id).await;
+    assert_eq!(record.state, State::NeedsAttention, "{}", history(&record));
+    let detail = record.detail.clone().unwrap_or_default();
+    assert!(detail.starts_with("not activated in Ollama: "), "{detail}");
+    assert!(record.not_activated()[0].temporary);
+    // The file is stored all the same.
+    assert!(s.engine.store.contains(&sha256(&up.weights)));
 }

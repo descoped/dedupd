@@ -65,6 +65,7 @@
 		F2C38F6D2ACFA981278CF44D /* Notifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2B9115ACB999F6FA1F195833 /* Notifier.swift */; };
 		F4C81C84750436332D54C304 /* DaemonStoreTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C762101D553FCD327F8986B9 /* DaemonStoreTests.swift */; };
 		FCFB271B2603429107A199D5 /* StorageCards.swift in Sources */ = {isa = PBXBuildFile; fileRef = 945B138200E7E5D800191E09 /* StorageCards.swift */; };
+		FF961B474511161A1D524AFC /* JobOutcomeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D715E4F8D7EFE4F45EC06D27 /* JobOutcomeTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -145,6 +146,7 @@
 		C762101D553FCD327F8986B9 /* DaemonStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonStoreTests.swift; sourceTree = "<group>"; };
 		CD0BA62BB6D5D15A8823CCCD /* DiscoverInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiscoverInspector.swift; sourceTree = "<group>"; };
 		D1A4B155585F47C6A2FEB293 /* LibraryInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryInspector.swift; sourceTree = "<group>"; };
+		D715E4F8D7EFE4F45EC06D27 /* JobOutcomeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = JobOutcomeTests.swift; sourceTree = "<group>"; };
 		DB58C35208D40317284AACA3 /* FixtureData+Hub.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "FixtureData+Hub.swift"; sourceTree = "<group>"; };
 		E533CE30DADD3B746C72CADC /* DownloadInspector.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DownloadInspector.swift; sourceTree = "<group>"; };
 		E560DD0C5E378629EB17ABC0 /* FixtureDaemonClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FixtureDaemonClient.swift; sourceTree = "<group>"; };
@@ -308,6 +310,7 @@
 				485343F149130DDDE1FFD3D4 /* ContractTests.swift */,
 				C762101D553FCD327F8986B9 /* DaemonStoreTests.swift */,
 				4070E9EE36A2CB759E66A166 /* DisplayTests.swift */,
+				D715E4F8D7EFE4F45EC06D27 /* JobOutcomeTests.swift */,
 				61CB12C4DB760C3543423C3A /* ModelAddressTests.swift */,
 				BCE0FE66106D647E15B825C4 /* ScreenContractTests.swift */,
 				6AC2644252BF5A44B57280BF /* ScreenStoreTests.swift */,
@@ -695,6 +698,7 @@
 				F4C81C84750436332D54C304 /* DaemonStoreTests.swift in Sources */,
 				72AE3DC29EEF642ABC85BF78 /* DisplayTests.swift in Sources */,
 				CDA4CC5DBC16EED43287699D /* FixtureServer.swift in Sources */,
+				FF961B474511161A1D524AFC /* JobOutcomeTests.swift in Sources */,
 				B4082F1DC78E1B4E2E7D7038 /* ModelAddressTests.swift in Sources */,
 				6BD1F9A205D1DA8D10B968F3 /* ScreenContractTests.swift in Sources */,
 				18EEA6EC80FAA1578A3001E3 /* ScreenStoreTests.swift in Sources */,

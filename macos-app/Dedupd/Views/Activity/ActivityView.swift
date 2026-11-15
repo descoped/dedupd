@@ -9,15 +9,13 @@ struct ActivityView: View {
     @Environment(ActivityStore.self) private var activity
     @Environment(LibraryStore.self) private var library
     @Environment(Navigation.self) private var navigation
-    @State private var selection: String?
+    @State private var selection: ActivityLine?
 
     var body: some View {
+        // The sidebar keeps the list current; this screen only shows it.
         content
             .navigationTitle(Pane.activity.title)
             .navigationSubtitle(Pane.activity.subtitle)
-            .task(id: daemon.revision) {
-                await activity.reload()
-            }
             // Seen once it is on the screen, also what arrives while it is.
             .onChange(of: activity.entries.first?.id, initial: true) {
                 activity.markSeen()
@@ -43,40 +41,29 @@ struct ActivityView: View {
                     Section("Now") {
                         ForEach(activity.running) { job in
                             RunningActivationRow(job: job)
-                                .tag("job-\(job.id)")
+                                .tag(ActivityLine.job(job.id))
                         }
                     }
                 }
                 Section(activity.running.isEmpty ? "" : "Earlier") {
                     ForEach(activity.entries, id: \.id) { entry in
                         ActivityRow(entry: entry)
-                            .tag(entry.repo + "#\(entry.id)")
+                            .tag(ActivityLine.entry(entry.id))
                     }
                 }
             }
             .listStyle(.inset)
-            .contextMenu(forSelectionType: String.self) { tags in
-                if let repo = repo(of: tags) {
+            .contextMenu(forSelectionType: ActivityLine.self) { lines in
+                if let repo = lines.first.flatMap(activity.repo(of:)) {
                     Button("Show in Library") { show(repo) }
                 }
-            } primaryAction: { tags in
-                if let repo = repo(of: tags) {
+            } primaryAction: { lines in
+                if let repo = lines.first.flatMap(activity.repo(of:)) {
                     show(repo)
                 }
             }
             .accessibilityIdentifier("activity-list")
         }
-    }
-
-    /// The model a selected line is about.
-    private func repo(of tags: Set<String>) -> String? {
-        guard let tag = tags.first else {
-            return nil
-        }
-        if tag.hasPrefix("job-") {
-            return activity.running.first { "job-\($0.id)" == tag }?.repo
-        }
-        return tag.split(separator: "#").first.map(String.init)
     }
 
     private func show(_ repo: String) {

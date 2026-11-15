@@ -191,6 +191,7 @@ fn job_summary(record: &JobRecord) -> Value {
         // did not; the app shows this on the finished job.
         o.insert("kind".into(), j!(record.shown_as().as_str()));
         o.insert("activated".into(), j!(record.activated()));
+        o.insert("not_activated".into(), j!(record.not_activated()));
         o.insert("notes".into(), j!(record.notes()));
     }
     value
@@ -353,6 +354,7 @@ async fn check_upstream(server: &Arc<Server>, repo: &str) -> Response {
 
 async fn unplace(server: &Arc<Server>, body: UnplaceBody) -> Response {
     let engine = server.engine.clone();
+    let applying = body.apply;
     let done = blocking(move || {
         let mut plan = maintain::unplace_plan(
             &engine.db,
@@ -368,20 +370,12 @@ async fn unplace(server: &Arc<Server>, body: UnplaceBody) -> Response {
             plan.bytes = plan.remove.iter().map(|(_, size)| size).sum();
         }
         let removed = match body.apply {
-            true => {
-                let done = maintain::unplace_apply(&engine.db, &engine.dirs, &plan);
-                activity::record(
-                    engine.store.home(),
-                    activity::Action::Deactivate,
-                    &plan.repo,
-                    Some(body.app.as_str()),
-                    match &done {
-                        Ok(_) => Ok(format!("Deactivated in {}", body.app.title())),
-                        Err(e) => Err(format!("{e:#}")),
-                    },
-                );
-                Some(done?)
-            }
+            true => Some(maintain::deactivate(
+                &engine.db,
+                &engine.store,
+                &engine.dirs,
+                &plan,
+            )?),
             false => None,
         };
         let pairs = |list: &[(String, String)]| -> Vec<Value> {
@@ -402,7 +396,9 @@ async fn unplace(server: &Arc<Server>, body: UnplaceBody) -> Response {
         }))
     })
     .await;
-    if done.is_ok() {
+    // Also after a failure part of the way: the app's files and the
+    // activity list may have changed.
+    if done.is_ok() || applying {
         server.touch();
     }
     answer(done)
@@ -505,9 +501,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 Err(refused) => return *refused,
             };
             match server.queue.settled(id).await {
-                Ok(job) if job.state == State::Done => {
-                    json(StatusCode::OK, &job.outcome.unwrap_or_default())
-                }
+                Ok(job) if job.state == State::Done => json(StatusCode::OK, &j!(job.outcome)),
                 Ok(job) => error(
                     StatusCode::BAD_GATEWAY,
                     job.detail
@@ -653,7 +647,8 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(200usize)
                 .min(1000);
-            ok(j!({"entries": activity::recent(engine.store.home(), limit)}))
+            let home = engine.store.home().clone();
+            answer(blocking(move || Ok(j!({"entries": activity::recent(&home, limit)}))).await)
         }
         (&Method::GET, ["log"]) => {
             let lines = call
