@@ -3,7 +3,8 @@
 
 use crate::db::library::RepoRow;
 use crate::db::{Db, PROVIDER_HF};
-use crate::hub::{TreeEntry, model_meta};
+use crate::engine::Engine;
+use crate::hub::{HubError, TreeEntry, model_meta};
 use crate::place::AppDirs;
 use crate::profile::{self, Installed};
 use crate::refusals::Refusals;
@@ -13,7 +14,7 @@ use anyhow::Result;
 use dedupd_api::app::App;
 use dedupd_api::library::{
     LibraryModel, Location, LocationKind, Locations, ModelDetail, Revision, RevisionFile,
-    UpstreamState, Variant, VariantKind,
+    UpstreamCheck, UpstreamState, Variant, VariantKind,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -300,4 +301,49 @@ pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
         }),
         apps,
     })
+}
+
+/// Ask the provider whether it still has the repository and where `main`
+/// is now, and note the answer. Nothing is downloaded. Fails with
+/// [`crate::db::NotInLibrary`] for a model the database does not know, and
+/// with the provider's [`HubError`] when it could not be asked.
+pub async fn check_upstream(engine: &Engine, repo: &str) -> Result<UpstreamCheck> {
+    let known = {
+        let db = engine.db();
+        let id = db.known_repo(repo)?;
+        db.ref_commit(id, "main")?
+    };
+    let path = format!(
+        "/api/models/{}/revision/main",
+        dedupd_api::url::encode_path(repo)
+    );
+    let answer = match engine.hub.api(&path, repo).await {
+        Ok(resp) => resp
+            .json::<serde_json::Value>()
+            .await
+            .map_err(HubError::from),
+        Err(e) => Err(e),
+    };
+    match answer {
+        Ok(info) => {
+            let latest = info.get("sha").and_then(|v| v.as_str()).map(str::to_string);
+            engine.db().set_upstream(PROVIDER_HF, repo, false)?;
+            Ok(UpstreamCheck {
+                upstream: UpstreamState::Ok,
+                changed: latest.is_some() && latest != known,
+                commit: known,
+                latest,
+            })
+        }
+        Err(HubError::NotAvailable { .. }) => {
+            engine.db().set_upstream(PROVIDER_HF, repo, true)?;
+            Ok(UpstreamCheck {
+                upstream: UpstreamState::Gone,
+                commit: known,
+                latest: None,
+                changed: false,
+            })
+        }
+        Err(e) => Err(e.into()),
+    }
 }

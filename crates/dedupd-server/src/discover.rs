@@ -5,7 +5,7 @@
 //! they use the daemon's token, share its rate limits, and can say what is
 //! already here.
 
-use crate::control::{error, hub_error, ok};
+use crate::answer::{error, hub_error, ok};
 use crate::{Call, Server, plain};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
@@ -350,12 +350,6 @@ async fn model(server: &Arc<Server>, repo: &str) -> Response {
 }
 
 pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Response {
-    if call.header(header::ORIGIN).is_some() {
-        return plain(
-            StatusCode::FORBIDDEN,
-            "the control API is not for web pages",
-        );
-    }
     match (&call.method, rest) {
         (&Method::GET, ["search"]) => search(server, call).await,
         (&Method::GET, ["models", org, name]) => {

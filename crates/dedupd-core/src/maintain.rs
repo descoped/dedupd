@@ -558,3 +558,26 @@ fn is_empty_tree(dir: &Path) -> bool {
         .flatten()
         .any(|e| !e.file_type().is_dir())
 }
+
+/// Deactivate as the owner asked: the plan for `repo` in `app`, cut to the
+/// files the owner agreed to when `agreed` names them, and carried out when
+/// `apply`. Without `apply` only the plan is answered.
+pub fn unplace(
+    db: &Mutex<Db>,
+    store: &Store,
+    dirs: &AppDirs,
+    repo: &str,
+    app: App,
+    agreed: Option<&[String]>,
+    apply: bool,
+) -> Result<dedupd_api::moves::UnplacePlan> {
+    let mut plan = unplace_plan(db, store, dirs, repo, app)?;
+    if let Some(agreed) = agreed {
+        plan = plan.only(agreed);
+    }
+    let removed = match apply {
+        true => Some(deactivate(db, store, dirs, &plan)?),
+        false => None,
+    };
+    Ok(plan.answer(removed))
+}

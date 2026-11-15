@@ -2,6 +2,7 @@
 //! registry API on one port, answered from the store and the archive, with
 //! everything else passed through to Hugging Face.
 
+mod answer;
 mod control;
 pub mod daemon;
 mod discover;
@@ -250,6 +251,12 @@ async fn handle(State(server): State<Arc<Server>>, req: Request) -> Response {
 
     let segments: Vec<&str> = call.path.split('/').filter(|s| !s.is_empty()).collect();
     match segments.as_slice() {
+        // A web page must not be able to drive the daemon: browsers send
+        // Origin on cross-site requests, and no real client of this API does.
+        ["dedupd", "v1", ..] if call.header(header::ORIGIN).is_some() => plain(
+            StatusCode::FORBIDDEN,
+            "the control API is not for web pages",
+        ),
         ["dedupd", "v1", "hub", rest @ ..] => discover::handle(&server, &call, rest).await,
         ["dedupd", "v1", rest @ ..] => control::handle(&server, &call, rest).await,
         ["dedupd", "blob", digest] => registry::blob_direct(&server, &call, digest).await,

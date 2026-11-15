@@ -519,6 +519,16 @@ async fn control_api_is_closed_to_web_pages() {
         .await
         .unwrap();
     assert_eq!(blocked.status(), 403);
+    // Discover is behind the same guard.
+    let search = format!("{}/dedupd/v1/hub/search?q=repo", fx.base);
+    let blocked = fx
+        .http
+        .get(&search)
+        .header("origin", "https://evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), 403);
 }
 
 #[tokio::test]

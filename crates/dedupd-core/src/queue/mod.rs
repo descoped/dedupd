@@ -18,7 +18,7 @@ use dedupd_api::jobs::{
     JobState, NotActivated, PullResult,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -143,6 +143,35 @@ impl Queue {
     }
 
     /// Queue a pull of `model` (`org/repo[:quant][@revision]`).
+    /// Queue a job, or name the one already queued for the same model,
+    /// files, apps and source; that one is set going again when it was
+    /// paused or waits for the owner. Returns its id and whether it was
+    /// there already.
+    pub fn add_or_find(
+        self: &Arc<Self>,
+        model: &str,
+        include: Vec<String>,
+        apps: Vec<App>,
+        offline: bool,
+        kind: JobKind,
+    ) -> Result<(i64, bool)> {
+        let wanted: BTreeSet<App> = apps.iter().copied().collect();
+        let same = self.snapshot().jobs.into_iter().find(|job| {
+            !job.state.is_finished()
+                && job.model == model.trim()
+                && job.include == include
+                && job.offline == offline
+                && job.apps.iter().copied().collect::<BTreeSet<_>>() == wanted
+        });
+        if let Some(job) = same {
+            if matches!(job.state, JobState::Paused | JobState::NeedsAttention) {
+                let _ = self.resume(job.id);
+            }
+            return Ok((job.id, true));
+        }
+        Ok((self.add(model, include, apps, offline, kind)?, false))
+    }
+
     pub fn add(
         self: &Arc<Self>,
         model: &str,
