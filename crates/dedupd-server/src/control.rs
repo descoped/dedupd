@@ -367,7 +367,7 @@ fn config_answer(server: &Server) -> anyhow::Result<DaemonSettings> {
 /// The last `lines` lines of the daemon's log.
 fn log_tail(server: &Server, lines: usize) -> anyhow::Result<LogTail> {
     use std::io::{Read, Seek, SeekFrom};
-    let path = server.home.root().join("daemon.log");
+    let path = server.home.log_path();
     let mut text = Vec::new();
     if let Ok(mut file) = std::fs::File::open(&path) {
         let size = file.metadata()?.len();

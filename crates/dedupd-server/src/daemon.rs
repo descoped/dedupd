@@ -268,7 +268,7 @@ pub async fn check_store(server: Arc<Server>) {
                     "dedupd: store check: {}",
                     summary.lines().next().unwrap_or("")
                 );
-                let _ = std::fs::write(server.home.root().join("last-verify.txt"), summary);
+                let _ = std::fs::write(server.home.last_verify_path(), summary);
                 check.checked = r.checked as u64;
                 check.bytes = r.bytes;
                 check.only_in_archive = r.only_in_archive as u64;
@@ -284,7 +284,7 @@ pub async fn check_store(server: Arc<Server>) {
 
 /// When the store was last checked, from the note the check leaves.
 pub fn last_check(server: &Server) -> Option<i64> {
-    let modified = std::fs::metadata(server.home.root().join("last-verify.txt"))
+    let modified = std::fs::metadata(server.home.last_verify_path())
         .and_then(|m| m.modified())
         .ok()?;
     Some(
@@ -299,7 +299,7 @@ pub fn last_check(server: &Server) -> Option<i64> {
 /// of days.
 async fn scheduled_verify(server: Arc<Server>) {
     let days = server.config.verify_days();
-    let marker = server.home.root().join("last-verify.txt");
+    let marker = server.home.last_verify_path();
     let due =
         days > 0 && file_age(&marker).is_none_or(|age| age >= Duration::from_secs(days * 86_400));
     if due {

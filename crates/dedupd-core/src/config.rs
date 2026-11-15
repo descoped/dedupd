@@ -48,7 +48,7 @@ pub const DEFAULT_SCAN_INTERVAL: u64 = 300;
 
 impl Config {
     pub fn path(home: &Home) -> PathBuf {
-        home.root().join("config.toml")
+        home.config_path()
     }
 
     /// Read the config file. A missing file is an empty config.
