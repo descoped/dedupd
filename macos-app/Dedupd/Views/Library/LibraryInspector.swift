@@ -144,14 +144,32 @@ private struct LibraryOverview: View {
         }
         InspectorSection(title: "Apps") {
             ForEach(ModelApp.allCases) { app in
-                AppRow(app: app, presence: model.apps.first { $0.app == app }, variants: detail?.variants ?? [])
+                AppRow(
+                    app: app, presence: model.apps.first { $0.app == app }, variants: detail?.variants ?? [],
+                    loaded: detail != nil
+                )
             }
         }
-        if let variants = detail?.variants, !variants.isEmpty {
-            InspectorSection(title: "Variants") {
-                ForEach(variants) { variant in
-                    LocalVariantRow(variant: variant, archived: model.isArchived)
+        if let variants = detail?.variants {
+            if !variants.isEmpty {
+                InspectorSection(title: "Variants") {
+                    ForEach(variants) { variant in
+                        LocalVariantRow(variant: variant, archived: model.isArchived)
+                    }
                 }
+            }
+        } else {
+            // Until the daemon has answered: the section's shape, greyed out,
+            // so nothing below it moves when the answer comes.
+            InspectorSection(title: "Variants") {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Variant name")
+                        .font(.callout.weight(.medium))
+                    Text("Files and size · stored")
+                        .font(.caption)
+                }
+                .redacted(reason: .placeholder)
+                .accessibilityHidden(true)
             }
         }
         InspectorSection(title: "About") {
@@ -239,6 +257,8 @@ private struct AppRow: View {
     let app: ModelApp
     let presence: AppPresence?
     let variants: [Variant]
+    /// The daemon has answered what each app can do with the model.
+    let loaded: Bool
 
     @Environment(LibraryStore.self) private var library
     @Environment(DaemonStore.self) private var daemon
@@ -271,6 +291,9 @@ private struct AppRow: View {
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    // What an app without the model can do with it is known
+                    // once the daemon has answered; until then, its shape.
+                    .redacted(reason: presence == nil && !loaded ? .placeholder : [])
             }
             Spacer()
             if presence == nil, isActivating {
@@ -313,6 +336,9 @@ private struct AppRow: View {
                 .disabled(isMoving)
             }
         }
+        // As tall with a button as without one, so the row does not grow
+        // when Activate appears.
+        .frame(minHeight: 28)
         .accessibilityElement(children: .contain)
     }
 

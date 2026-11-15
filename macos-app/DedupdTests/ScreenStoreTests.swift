@@ -18,6 +18,27 @@ struct LibraryStoreTests {
         #expect(library.formats == ["gguf", "mlx", "safetensors"])
     }
 
+    @Test("A model looked at before shows its last answer at once, until the library changes")
+    func detailKept() async {
+        let library = LibraryStore(daemon: await startedDaemon())
+        await library.reload()
+        library.select(repo: FixtureData.smolGGUF)
+        #expect(library.selected?.repo == FixtureData.smolGGUF)
+        #expect(library.detail == .idle, "nothing is known of it yet")
+        await library.loadDetail(quietly: true)
+        #expect(library.detail.value?.model.repo == FixtureData.smolGGUF)
+
+        library.select(repo: FixtureData.smolMLX)
+        await library.loadDetail(quietly: true)
+        library.select(repo: FixtureData.smolGGUF)
+        #expect(library.detail.value?.model.repo == FixtureData.smolGGUF, "shown before the daemon is asked")
+
+        // The library changed: the answers kept for the others go.
+        await library.reload()
+        library.select(repo: FixtureData.smolMLX)
+        #expect(library.detail == .idle)
+    }
+
     @Test("Filters narrow the list by name, format and app")
     func filters() async {
         let library = LibraryStore(daemon: await startedDaemon())

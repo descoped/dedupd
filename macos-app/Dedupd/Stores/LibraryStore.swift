@@ -46,7 +46,9 @@ final class LibraryStore {
     var selection: LibraryModel.ID? {
         didSet {
             if selection != oldValue {
-                detail = .idle
+                // A model seen before shows its last answer at once, so the
+                // panel does not change shape; the fresh answer replaces it.
+                detail = selection.flatMap { seen[$0] }.map(Loaded.ready) ?? .idle
                 upstream = nil
             }
         }
@@ -68,6 +70,9 @@ final class LibraryStore {
     /// comes back after a later one is dropped.
     @ObservationIgnored private var listGeneration = 0
     @ObservationIgnored private var detailGeneration = 0
+    /// The last answer for each model looked at, by its id, until the
+    /// library changes.
+    @ObservationIgnored private var seen: [String: ModelDetail] = [:]
 
     init(daemon: DaemonStore) {
         self.daemon = daemon
@@ -96,6 +101,12 @@ final class LibraryStore {
         models.first { $0.id == selection }
     }
 
+    /// Select a model by its name, as another screen knows it. The list may
+    /// not have been read yet; the id then follows the list's rule.
+    func select(repo: String) {
+        selection = models.first { $0.repo == repo }?.id ?? "hf/\(repo)"
+    }
+
     /// "5 models · 290.12 GB", or how many of them the filter leaves.
     var countText: String {
         let shown = visible
@@ -108,6 +119,9 @@ final class LibraryStore {
 
     /// Read the list again, and the selected model's details with it.
     func reload() async {
+        // The library changed: the answers kept for other models may be out
+        // of date. The selected one's stays on screen until its new answer.
+        seen = [:]
         listGeneration += 1
         let mine = listGeneration
         let answer: Result<[LibraryModel], Error>
@@ -158,6 +172,9 @@ final class LibraryStore {
         // have answered, meanwhile.
         if mine == detailGeneration, selected?.repo == model.repo {
             detail = answer
+            if let value = answer.value {
+                seen[model.id] = value
+            }
         }
     }
 
