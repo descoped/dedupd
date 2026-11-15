@@ -167,13 +167,27 @@ struct DisplayTests {
 
     /// A variant of 10 bytes with the recorded answers of the profiles.
     private static func variant(
-        _ format: ModelFormat, _ decisions: [Decision], storedBytes: UInt64 = 10, placedIn: [ModelApp] = []
+        _ format: ModelFormat, _ decisions: [Decision], storedBytes: UInt64 = 10, weightsStored: Bool? = nil,
+        placedIn: [ModelApp] = []
     ) -> Variant {
         let judged = FixtureData.Judged(format: format, decisions: decisions)
         return Variant(
             kind: format == .gguf ? .gguf : .files, format: format, name: "v", spec: "a/b", files: 1, bytes: 10,
-            storedBytes: storedBytes, usableBy: judged.usableBy, placedIn: placedIn, decisions: decisions
+            storedBytes: storedBytes, weightsStored: weightsStored ?? (storedBytes >= 10), usableBy: judged.usableBy,
+            placedIn: placedIn, decisions: decisions
         )
+    }
+
+    @Test("A variant whose weights are stored can be activated; the small files it lacks are fetched")
+    func smallFilesMissing() {
+        let whole = Self.variant(.mlx, RecordedProfiles.mlx4)
+        let lacking = Self.variant(.mlx, RecordedProfiles.mlx4, storedBytes: 7, weightsStored: true)
+        let none = Self.variant(.mlx, RecordedProfiles.mlx4, storedBytes: 0)
+        #expect(whole.canActivate && !whole.placeHelp(for: .ollama).contains("fetched"))
+        #expect(lacking.canActivate && !lacking.isStored)
+        #expect(lacking.missingBytes == 3)
+        #expect(lacking.placeHelp(for: .ollama).hasSuffix("First the 3 B of small files it lacks are fetched."))
+        #expect(!none.canActivate)
     }
 
     @Test("Which apps take a variant is the profiles' answer")

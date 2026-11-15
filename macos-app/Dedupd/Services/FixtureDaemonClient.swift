@@ -108,7 +108,7 @@ actor FixtureDaemonClient: DaemonClient {
     func scan(at address: String) async throws -> ScanResult {
         try answering(address)
         return ScanResult(
-            forgotten: 0, adopted: 2, adoptedBytes: 4_920_000_000, reclaimed: 2,
+            forgotten: 0, adopted: 2, adoptedBytes: 4_920_000_000, recognised: 0, reclaimed: 2,
             reclaimedBytes: 4_920_000_000, archived: 2, errors: []
         )
     }

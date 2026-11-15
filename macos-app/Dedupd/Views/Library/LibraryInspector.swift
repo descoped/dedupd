@@ -255,9 +255,10 @@ private struct AppRow: View {
     /// change to it until that has finished.
     private var isMoving: Bool { library.move?.running == true }
 
-    /// The variants this app can use and does not have yet.
+    /// The variants this app can use and does not have yet, whose weights
+    /// are stored.
     private var placeable: [Variant] {
-        variants.filter { $0.usableApps.contains(app) && !$0.isPlaced(in: app) && $0.isStored }
+        variants.filter { $0.usableApps.contains(app) && !$0.isPlaced(in: app) && $0.canActivate }
     }
 
     var body: some View {
@@ -345,7 +346,7 @@ private struct LocalVariantRow: View {
             }
             Spacer()
             AppBadges(apps: variant.placedIn, none: "")
-            if !variant.isStored, !archived {
+            if !variant.canActivate, !archived {
                 Button("Download") {
                     Task { await library.download(variant) }
                 }
@@ -358,6 +359,9 @@ private struct LocalVariantRow: View {
     private var state: String {
         if variant.isStored {
             return "stored"
+        }
+        if variant.weightsStored {
+            return "stored; \(ByteFormat.string(variant.missingBytes)) of small files are fetched when it is activated"
         }
         if archived {
             return "on the archive disk"

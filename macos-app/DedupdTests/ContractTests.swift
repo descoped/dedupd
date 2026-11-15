@@ -118,7 +118,7 @@ struct ContractTests {
         let result = try await LiveDaemonClient().scan(at: server.address)
 
         #expect(result == ScanResult(
-            forgotten: 0, adopted: 0, adoptedBytes: 0, reclaimed: 0, reclaimedBytes: 0, archived: 0, errors: []
+            forgotten: 0, adopted: 0, adoptedBytes: 0, recognised: 0, reclaimed: 0, reclaimedBytes: 0, archived: 0, errors: []
         ))
     }
 

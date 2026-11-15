@@ -185,7 +185,8 @@
         "bionic",
         "ollama",
         "hf"
-      ]
+      ],
+      "weights_stored": true
     }
   ]
 }

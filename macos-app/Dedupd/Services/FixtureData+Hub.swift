@@ -75,7 +75,7 @@ extension FixtureData {
                 let judged = judged(repo, formats: meta.formats, stored: here)
                 return Variant(
                     kind: .gguf, format: judged.format, name: quant, spec: "\(repo):\(quant)", files: 4,
-                    bytes: bytes, storedBytes: here ? bytes : 0, usableBy: judged.usableBy,
+                    bytes: bytes, storedBytes: here ? bytes : 0, weightsStored: here, usableBy: judged.usableBy,
                     placedIn: here ? local?.appNames ?? [] : [], decisions: judged.decisions
                 )
             }
@@ -94,7 +94,7 @@ extension FixtureData {
             variants = [
                 Variant(
                     kind: .files, format: judged.format, name: "all files", spec: repo, files: 8, bytes: bytes,
-                    storedBytes: local == nil ? 0 : bytes, usableBy: judged.usableBy,
+                    storedBytes: local == nil ? 0 : bytes, weightsStored: local != nil, usableBy: judged.usableBy,
                     placedIn: local?.appNames ?? [], decisions: judged.decisions
                 ),
             ]

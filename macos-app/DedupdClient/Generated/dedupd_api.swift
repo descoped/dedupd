@@ -4286,6 +4286,11 @@ public struct ScanResult: Equatable, Hashable {
     public var adopted: UInt64
     public var adoptedBytes: UInt64
     /**
+     * Files that were in the store but not in its records, such as after
+     * the database was removed, and are recorded again.
+     */
+    public var recognised: UInt64
+    /**
      * Duplicate app files swapped for clones.
      */
     public var reclaimed: UInt64
@@ -4306,6 +4311,10 @@ public struct ScanResult: Equatable, Hashable {
          * App files brought into the store.
          */adopted: UInt64, adoptedBytes: UInt64, 
         /**
+         * Files that were in the store but not in its records, such as after
+         * the database was removed, and are recorded again.
+         */recognised: UInt64, 
+        /**
          * Duplicate app files swapped for clones.
          */reclaimed: UInt64, reclaimedBytes: UInt64, 
         /**
@@ -4314,6 +4323,7 @@ public struct ScanResult: Equatable, Hashable {
         self.forgotten = forgotten
         self.adopted = adopted
         self.adoptedBytes = adoptedBytes
+        self.recognised = recognised
         self.reclaimed = reclaimed
         self.reclaimedBytes = reclaimedBytes
         self.archived = archived
@@ -4339,6 +4349,7 @@ public struct FfiConverterTypeScanResult: FfiConverterRustBuffer {
                 forgotten: FfiConverterUInt64.read(from: &buf), 
                 adopted: FfiConverterUInt64.read(from: &buf), 
                 adoptedBytes: FfiConverterUInt64.read(from: &buf), 
+                recognised: FfiConverterUInt64.read(from: &buf), 
                 reclaimed: FfiConverterUInt64.read(from: &buf), 
                 reclaimedBytes: FfiConverterUInt64.read(from: &buf), 
                 archived: FfiConverterUInt64.read(from: &buf), 
@@ -4350,6 +4361,7 @@ public struct FfiConverterTypeScanResult: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.forgotten, into: &buf)
         FfiConverterUInt64.write(value.adopted, into: &buf)
         FfiConverterUInt64.write(value.adoptedBytes, into: &buf)
+        FfiConverterUInt64.write(value.recognised, into: &buf)
         FfiConverterUInt64.write(value.reclaimed, into: &buf)
         FfiConverterUInt64.write(value.reclaimedBytes, into: &buf)
         FfiConverterUInt64.write(value.archived, into: &buf)
@@ -5079,6 +5091,12 @@ public struct Variant: Equatable, Hashable {
     public var bytes: UInt64
     public var storedBytes: UInt64
     /**
+     * Every weights file of it is stored. The small files it may lack (a
+     * README, or a settings file the app it came from did not download)
+     * are fetched when it is activated.
+     */
+    public var weightsStored: Bool
+    /**
      * The apps dedupd can put it into: those whose decision is `ready`.
      */
     public var usableBy: [ModelApp]
@@ -5101,6 +5119,11 @@ public struct Variant: Equatable, Hashable {
          * What to ask for to get it: `org/repo:Q4_K_M`, or `org/repo`.
          */spec: String, files: UInt64, bytes: UInt64, storedBytes: UInt64, 
         /**
+         * Every weights file of it is stored. The small files it may lack (a
+         * README, or a settings file the app it came from did not download)
+         * are fetched when it is activated.
+         */weightsStored: Bool, 
+        /**
          * The apps dedupd can put it into: those whose decision is `ready`.
          */usableBy: [ModelApp], 
         /**
@@ -5116,6 +5139,7 @@ public struct Variant: Equatable, Hashable {
         self.files = files
         self.bytes = bytes
         self.storedBytes = storedBytes
+        self.weightsStored = weightsStored
         self.usableBy = usableBy
         self.placedIn = placedIn
         self.decisions = decisions
@@ -5144,6 +5168,7 @@ public struct FfiConverterTypeVariant: FfiConverterRustBuffer {
                 files: FfiConverterUInt64.read(from: &buf), 
                 bytes: FfiConverterUInt64.read(from: &buf), 
                 storedBytes: FfiConverterUInt64.read(from: &buf), 
+                weightsStored: FfiConverterBool.read(from: &buf), 
                 usableBy: FfiConverterSequenceTypeModelApp.read(from: &buf), 
                 placedIn: FfiConverterSequenceTypeModelApp.read(from: &buf), 
                 decisions: FfiConverterSequenceTypeDecision.read(from: &buf)
@@ -5158,6 +5183,7 @@ public struct FfiConverterTypeVariant: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.files, into: &buf)
         FfiConverterUInt64.write(value.bytes, into: &buf)
         FfiConverterUInt64.write(value.storedBytes, into: &buf)
+        FfiConverterBool.write(value.weightsStored, into: &buf)
         FfiConverterSequenceTypeModelApp.write(value.usableBy, into: &buf)
         FfiConverterSequenceTypeModelApp.write(value.placedIn, into: &buf)
         FfiConverterSequenceTypeDecision.write(value.decisions, into: &buf)

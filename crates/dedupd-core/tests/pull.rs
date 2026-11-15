@@ -13,7 +13,7 @@ use dedupd_core::profile::Installed;
 use dedupd_core::pull::{self, PullRequest};
 use dedupd_core::select::Selection;
 use dedupd_core::store::Store;
-use dedupd_core::{Home, archive, library, maintain};
+use dedupd_core::{Home, adopt, archive, library, maintain};
 use serde_json::json;
 use std::fs;
 use std::os::unix::fs::MetadataExt;
@@ -264,8 +264,10 @@ async fn a_model_is_removed_from_an_app_and_placed_again() {
         assert_eq!(d.version_state, VersionState::Unknown);
     }
     assert_eq!(q4.stored_bytes, q4.bytes);
+    assert!(q4.weights_stored);
     let q8 = detail.variants.iter().find(|v| v.name == "Q8_0").unwrap();
     assert!(q8.placed_in.is_empty());
+    assert!(!q8.weights_stored);
     assert_eq!(detail.revisions[0].refs, ["main"]);
     let where_ = library::locations(&e.db(), &e.store, &e.dirs).unwrap();
     assert!(where_.apps.iter().all(|a| a.present && a.models == 1));
@@ -718,4 +720,72 @@ async fn interrupted_download_resumes_and_bad_content_is_refused() {
             .next()
             .is_none()
     );
+}
+
+#[tokio::test]
+async fn files_only_the_store_has_are_recorded_again_after_the_database_is_removed() {
+    let up = upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let apps = dir.path().join("apps");
+    let e = engine(&home, &up.server.uri(), &apps, None);
+    pull::pull(&e, &request(&[App::Bionic], false), &Arc::default())
+        .await
+        .unwrap();
+    let dirs = e.dirs.clone();
+    drop(e);
+
+    // The database is removed, and Bionic never had the small file: only
+    // the store has it.
+    for name in ["dedupd.sqlite", "dedupd.sqlite-wal", "dedupd.sqlite-shm"] {
+        let _ = fs::remove_file(home.root().join(name));
+    }
+    fs::remove_file(dirs.bionic.join(REPO).join("sub/config.json")).unwrap();
+    let e = engine(&home, &up.server.uri(), &apps, None);
+    let repos = adopt::scan_apps(&e.db, &e.dirs, &[App::Bionic]).unwrap();
+    adopt::adopt(
+        &e.db,
+        &e.store,
+        Some(&e.hub),
+        repos,
+        &adopt::Options::default(),
+        &mut |_| {},
+    )
+    .await
+    .unwrap();
+    let q4 = || {
+        let installed = Installed::detect(&e.dirs);
+        library::model(&e.db(), &e.store, REPO, &installed)
+            .unwrap()
+            .unwrap()
+            .variants
+            .into_iter()
+            .find(|v| v.name == "Q4_K_M")
+            .unwrap()
+    };
+    // The weights are stored, so it can be activated; the small file
+    // counts as missing until the scan records it.
+    let before = q4();
+    assert!(before.weights_stored);
+    assert!(before.stored_bytes < before.bytes);
+
+    let found = adopt::recognise_stored(&e.db, &e.store).unwrap();
+    assert_eq!((found.files, found.damaged), (1, 0));
+    assert_eq!(q4().stored_bytes, q4().bytes);
+    // Recorded once: the next scan finds nothing new.
+    assert_eq!(adopt::recognise_stored(&e.db, &e.store).unwrap().files, 0);
+}
+
+#[test]
+fn a_store_file_that_does_not_match_its_name_is_not_recorded() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let store = Store::open(&home).unwrap();
+    let db = std::sync::Mutex::new(dedupd_core::db::Db::open(&home.db_path()).unwrap());
+    let wrong = store.blob_path(&sha256(b"what the name says"));
+    fs::create_dir_all(wrong.parent().unwrap()).unwrap();
+    fs::write(&wrong, b"something else").unwrap();
+    let found = adopt::recognise_stored(&db, &store).unwrap();
+    assert_eq!((found.files, found.damaged), (0, 1));
+    assert!(db.lock().unwrap().all_blobs().unwrap().is_empty());
 }
