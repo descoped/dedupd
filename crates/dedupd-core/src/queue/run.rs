@@ -119,6 +119,10 @@ impl Queue {
                 // full disk) waits for the owner to try again. The outcome
                 // says which apps took it and why the others did not.
                 let mut outcome = pull::outcome(&req, plan, files, downloaded, placement);
+                // The notes the job's history already holds.
+                let mut known = 0;
+                // Trying again asked only the apps that had not taken the
+                // model; what the earlier run did stays part of the job.
                 if let Some(earlier) = earlier.filter(|_| !took.is_empty()) {
                     let mut placed: Vec<_> = earlier
                         .placed
@@ -127,6 +131,15 @@ impl Queue {
                         .collect();
                     placed.append(&mut outcome.placed);
                     outcome.placed = placed;
+                    outcome.downloaded += earlier.downloaded;
+                    let mut notes = earlier.notes;
+                    for note in std::mem::take(&mut outcome.notes) {
+                        if !notes.contains(&note) {
+                            notes.push(note);
+                        }
+                    }
+                    known = notes.len();
+                    outcome.notes = notes;
                 }
                 let retry: Vec<String> = outcome
                     .skipped
@@ -144,7 +157,7 @@ impl Queue {
                             skipped.reason
                         ));
                     }
-                    for note in &outcome.notes {
+                    for note in &outcome.notes[known..] {
                         r.note(note.clone());
                     }
                     r.outcome = Some(outcome);
