@@ -12,24 +12,32 @@ on:
     branches: [main]
     paths-ignore:
       - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
       - '.claude/**'
       - 'macos-app/**'
       - 'scripts/**'
       - 'spikes/**'
       - 'site/**'
       - '.github/workflows/pages.yml'
+      - '.github/workflows/claude.yml'
+      - '.github/workflows/codeql-*.yml'
       - '.github/renovate.json'
       - '.gitignore'
   pull_request:
     branches: [main]
     paths-ignore:
       - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
       - '.claude/**'
       - 'macos-app/**'
       - 'scripts/**'
       - 'spikes/**'
       - 'site/**'
       - '.github/workflows/pages.yml'
+      - '.github/workflows/claude.yml'
+      - '.github/workflows/codeql-*.yml'
       - '.github/renovate.json'
       - '.gitignore'
   # To run the gate on any branch by hand.
