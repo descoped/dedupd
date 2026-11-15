@@ -253,6 +253,43 @@ async fn a_gated_model_is_not_served_from_the_kept_copy_without_asking() {
 }
 
 #[tokio::test]
+async fn a_gated_model_pulled_only_by_ollama_is_not_served_without_asking() {
+    let fx = fixture().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/models/{REPO}/revision/main")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"sha": COMMIT, "id": REPO, "gated": "manual"})),
+        )
+        .with_priority(1)
+        .mount(&fx.upstream)
+        .await;
+    let manifest = || {
+        fx.http
+            .get(format!("{}/v2/{REPO}/manifests/latest", fx.base))
+            .send()
+    };
+    assert_eq!(manifest().await.unwrap().status(), 200);
+    // The registry keeps the model's Hub info beside the manifest, which
+    // says the model is gated.
+    for _ in 0..300 {
+        if matches!(
+            fx.server.engine.db().archived("hf", REPO, "main"),
+            Ok(Some(_))
+        ) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert!(matches!(
+        fx.server.engine.db().archived("hf", REPO, "main"),
+        Ok(Some(_))
+    ));
+    upstream_down(&fx).await;
+    assert_ne!(manifest().await.unwrap().status(), 200);
+}
+
+#[tokio::test]
 async fn hub_client_download_sequence_then_offline() {
     let fx = fixture().await;
     let weights_sha = sha256(&fx.weights);
