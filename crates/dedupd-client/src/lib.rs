@@ -4,9 +4,7 @@
 //! line uses when the daemon is running. It holds no state and never touches
 //! the store: the daemon owns everything.
 
-mod events;
-
-pub use events::{EventListener, EventSubscription, subscribe};
+pub mod events;
 
 use dedupd_api::activity::{ActivityEntry, ActivityList};
 use dedupd_api::app::{App, AppInfo, AppList};

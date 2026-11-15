@@ -154,6 +154,18 @@ CREATE TABLE downloads (
 );
 "#;
 
+/// A repository the database does not know.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotInLibrary(pub String);
+
+impl std::fmt::Display for NotInLibrary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} is not in the library", self.0)
+    }
+}
+
+impl std::error::Error for NotInLibrary {}
+
 pub struct Db {
     conn: Connection,
 }
@@ -510,6 +522,13 @@ impl Db {
             params![repo_id, name, commit, now()],
         )?;
         Ok(())
+    }
+
+    /// The id of a Hugging Face repository the database knows; otherwise
+    /// the error [`NotInLibrary`].
+    pub fn known_repo(&self, repo: &str) -> Result<i64> {
+        self.repo_id(PROVIDER_HF, repo)?
+            .ok_or_else(|| NotInLibrary(repo.to_string()).into())
     }
 
     pub fn repo_id(&self, provider: &str, name: &str) -> Result<Option<i64>> {

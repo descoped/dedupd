@@ -265,9 +265,7 @@ pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
 pub fn forget(db: &Mutex<Db>, repo: &str) -> Result<()> {
     prune_placements(db)?;
     let mut db = lock(db);
-    let Some(id) = db.repo_id(PROVIDER_HF, repo)? else {
-        bail!("{repo} is not in the library");
-    };
+    let id = db.known_repo(repo)?;
     let in_use: Vec<String> = db
         .placements()?
         .into_iter()

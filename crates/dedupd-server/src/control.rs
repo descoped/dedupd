@@ -17,7 +17,7 @@ use dedupd_api::library::{ModelList, RepoBody, UpstreamCheck, UpstreamState};
 use dedupd_api::moves::{GcBody, MoveBody, MoveKind, UnplaceBody};
 use dedupd_api::url::{decode_path, encode_path};
 use dedupd_core::config::Config;
-use dedupd_core::db::PROVIDER_HF;
+use dedupd_core::db::{NotInLibrary, PROVIDER_HF};
 use dedupd_core::hub::{HubClient, HubError};
 use dedupd_core::profile::{self, Installed};
 use dedupd_core::{activity, archive, library, maintain, status};
@@ -235,13 +235,10 @@ async fn check_upstream(server: &Arc<Server>, repo: &str) -> Response {
     let engine = &server.engine;
     let known = {
         let db = engine.db();
-        match db.repo_id(PROVIDER_HF, repo) {
-            Ok(Some(id)) => db.ref_commit(id, "main").ok().flatten(),
-            Ok(None) => {
-                return error(
-                    StatusCode::NOT_FOUND,
-                    format!("{repo} is not in the library"),
-                );
+        match db.known_repo(repo) {
+            Ok(id) => db.ref_commit(id, "main").ok().flatten(),
+            Err(e) if e.is::<NotInLibrary>() => {
+                return error(StatusCode::NOT_FOUND, e.to_string());
             }
             Err(e) => return internal(format!("{e:#}")),
         }
@@ -470,10 +467,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
             };
             match found {
                 Ok(Some(detail)) => ok(detail),
-                Ok(None) => error(
-                    StatusCode::NOT_FOUND,
-                    format!("{repo} is not in the library"),
-                ),
+                Ok(None) => error(StatusCode::NOT_FOUND, NotInLibrary(repo).to_string()),
                 Err(e) => internal(format!("{e:#}")),
             }
         }

@@ -10,7 +10,7 @@ use axum::body::Body;
 use axum::http::{StatusCode, header};
 use axum::response::Response;
 use dedupd_api::url::{decode_path, decode_query};
-use dedupd_core::adopt::PROVIDER_HF;
+use dedupd_core::db::PROVIDER_HF;
 use dedupd_core::db::is_commit;
 use dedupd_core::fetch::Unwatched;
 use dedupd_core::hub::{HubError, Snapshot, TreeEntry};

@@ -7,7 +7,7 @@ pub mod daemon;
 mod discover;
 mod files;
 mod hubapi;
-pub mod moves;
+mod moves;
 mod proxy;
 mod registry;
 

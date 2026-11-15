@@ -8,7 +8,7 @@
 //! (`archive_plan`, `archive_apply`); `restore` brings them back.
 
 use crate::activity;
-use crate::db::{BlobRow, Db, PROVIDER_HF, lock};
+use crate::db::{BlobRow, Db, lock};
 use crate::hash::{copy_hashing, hash_file};
 use crate::maintain::{self, UnplacePlan};
 use crate::paths::Home;
@@ -177,13 +177,6 @@ fn attached_archive(store: &Store) -> Result<&Home> {
     Ok(archive)
 }
 
-fn repo_id(db: &Db, repo: &str) -> Result<i64> {
-    match db.repo_id(PROVIDER_HF, repo)? {
-        Some(id) => Ok(id),
-        None => bail!("{repo} is not in the library"),
-    }
-}
-
 /// What archiving one model would do. Nothing happens until `archive_apply`.
 #[derive(Debug, Clone, Default)]
 pub struct ArchivePlan {
@@ -239,7 +232,7 @@ pub fn archive_plan(
 ) -> Result<ArchivePlan> {
     let archive = attached_archive(store)?;
     maintain::prune_placements(db)?;
-    let id = repo_id(&lock(db), repo)?;
+    let id = lock(db).known_repo(repo)?;
     let mut plan = ArchivePlan {
         repo: repo.to_string(),
         archive: archive.root().to_string_lossy().into_owned(),
@@ -382,7 +375,7 @@ fn archive_quietly(
     }
     let plan = archive_plan(db, store, dirs, repo)?;
     let archive = attached_archive(store)?;
-    let id = repo_id(&lock(db), repo)?;
+    let id = lock(db).known_repo(repo)?;
     let mut report = ArchiveReport {
         repo: plan.repo.clone(),
         ..Default::default()
@@ -466,7 +459,7 @@ pub fn restore_plan(db: &Mutex<Db>, store: &Store, repo: &str) -> Result<Restore
     let archive = attached_archive(store)?;
     let blobs = {
         let db = lock(db);
-        db.repo_blobs(repo_id(&db, repo)?)?
+        db.repo_blobs(db.known_repo(repo)?)?
     };
     let mut plan = RestorePlan {
         repo: repo.to_string(),
@@ -564,6 +557,6 @@ fn restore_quietly(
         on_file(blob.size);
     }
     let db = lock(db);
-    db.set_archived(repo_id(&db, repo)?, None)?;
+    db.set_archived(db.known_repo(repo)?, None)?;
     Ok(report)
 }

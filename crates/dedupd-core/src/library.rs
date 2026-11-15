@@ -9,7 +9,7 @@ use crate::profile::{self, Installed};
 use crate::refusals::Refusals;
 use crate::select;
 use crate::store::Store;
-use anyhow::{Result, bail};
+use anyhow::Result;
 use dedupd_api::app::App;
 use dedupd_api::library::{
     LibraryModel, Location, LocationKind, Locations, ModelDetail, Revision, RevisionFile,
@@ -300,12 +300,4 @@ pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
         }),
         apps,
     })
-}
-
-/// The repository's row id, or an error that names it.
-pub fn repo_id(db: &Db, repo: &str) -> Result<(i64, String)> {
-    match db.repo_rows(Some(repo))?.into_iter().next() {
-        Some(row) => Ok((row.id, row.provider)),
-        None => bail!("{repo} is not in the library"),
-    }
 }
