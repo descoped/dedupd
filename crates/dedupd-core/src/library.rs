@@ -1,5 +1,6 @@
 //! What the store holds, model by model, and where each app keeps its
-//! files: the read-only view the owner looks at.
+//! files: the view the owner looks at. It only reads, except
+//! `check_upstream`, which notes what the provider answered.
 
 use crate::db::library::RepoRow;
 use crate::db::{Db, PROVIDER_HF};
@@ -305,8 +306,9 @@ pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
 
 /// Ask the provider whether it still has the repository and where `main`
 /// is now, and note the answer. Nothing is downloaded. Fails with
-/// [`crate::db::NotInLibrary`] for a model the database does not know, and
-/// with the provider's [`HubError`] when it could not be asked.
+/// [`crate::db::NotInLibrary`] for a model the database does not know, with
+/// the provider's [`HubError`] when it could not be asked, and when the
+/// answer cannot be noted, so a check that says it is done was kept.
 pub async fn check_upstream(engine: &Engine, repo: &str) -> Result<UpstreamCheck> {
     let known = {
         let db = engine.db();

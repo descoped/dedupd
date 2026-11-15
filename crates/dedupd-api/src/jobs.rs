@@ -97,6 +97,18 @@ pub fn job_actions(state: JobState) -> Vec<JobAction> {
     state.actions().to_vec()
 }
 
+/// [`JobState::is_active`] for callers across the FFI.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn job_is_active(state: JobState) -> bool {
+    state.is_active()
+}
+
+/// [`JobState::is_finished`] for callers across the FFI.
+#[cfg_attr(feature = "ffi", uniffi::export)]
+pub fn job_is_finished(state: JobState) -> bool {
+    state.is_finished()
+}
+
 /// What can be done to a job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

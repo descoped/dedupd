@@ -248,6 +248,16 @@ typedef void (*UniffiForeignFutureCompleteVoid)(uint64_t, UniffiForeignFutureRes
 RustBuffer uniffi_dedupd_api_fn_func_job_actions(RustBuffer state, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_API_FN_FUNC_JOB_IS_ACTIVE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_API_FN_FUNC_JOB_IS_ACTIVE
+int8_t uniffi_dedupd_api_fn_func_job_is_active(RustBuffer state, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_API_FN_FUNC_JOB_IS_FINISHED
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_API_FN_FUNC_JOB_IS_FINISHED
+int8_t uniffi_dedupd_api_fn_func_job_is_finished(RustBuffer state, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_FFI_DEDUPD_API_RUSTBUFFER_ALLOC
 #define UNIFFI_FFIDEF_FFI_DEDUPD_API_RUSTBUFFER_ALLOC
 RustBuffer ffi_dedupd_api_rustbuffer_alloc(uint64_t size, RustCallStatus *_Nonnull out_status
@@ -511,6 +521,18 @@ void ffi_dedupd_api_rust_future_complete_void(uint64_t handle, RustCallStatus *_
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_API_CHECKSUM_FUNC_JOB_ACTIONS
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_API_CHECKSUM_FUNC_JOB_ACTIONS
 uint16_t uniffi_dedupd_api_checksum_func_job_actions(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_API_CHECKSUM_FUNC_JOB_IS_ACTIVE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_API_CHECKSUM_FUNC_JOB_IS_ACTIVE
+uint16_t uniffi_dedupd_api_checksum_func_job_is_active(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_API_CHECKSUM_FUNC_JOB_IS_FINISHED
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_API_CHECKSUM_FUNC_JOB_IS_FINISHED
+uint16_t uniffi_dedupd_api_checksum_func_job_is_finished(void
     
 );
 #endif
