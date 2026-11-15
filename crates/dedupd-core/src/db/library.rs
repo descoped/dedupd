@@ -81,16 +81,17 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// The files of a repository's kept revisions that are in the store,
-    /// and their size. Small files are known to the Hub by their git blob
-    /// id, weights by sha256.
+    /// The files of a repository's kept revisions, and the files it held in
+    /// an app, that are known to the store, and their size. Small files are
+    /// known to the Hub by their git blob id, weights by sha256.
     pub fn stored_of(&self, repo_id: i64) -> Result<(u64, u64)> {
         let (files, bytes): (i64, i64) = self.conn.query_row(
             "SELECT count(*), COALESCE(sum(size), 0) FROM blobs WHERE sha256 IN (
                  SELECT COALESCE(f.lfs_sha256,
                                  (SELECT sha256 FROM blobs WHERE git_oid = f.git_oid LIMIT 1))
                  FROM revision_files f JOIN revisions v ON v.id = f.revision_id
-                 WHERE v.repo_id = ?1)",
+                 WHERE v.repo_id = ?1
+                 UNION SELECT sha256 FROM repo_files WHERE repo_id = ?1)",
             [repo_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;

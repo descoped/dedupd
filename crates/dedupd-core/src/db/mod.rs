@@ -45,15 +45,14 @@ pub fn lock(db: &Mutex<Db>) -> MutexGuard<'_, Db> {
 /// The schema's number, kept in the database as `user_version`. There are
 /// no migrations: a database with another number was made by another build
 /// and is refused. Change the number whenever the schema changes.
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 
 const SCHEMA: &str = r#"
 CREATE TABLE blobs (
     sha256    TEXT PRIMARY KEY,
     size      INTEGER NOT NULL,
     git_oid   TEXT,
-    added_at  INTEGER NOT NULL,
-    pinned    INTEGER NOT NULL DEFAULT 1
+    added_at  INTEGER NOT NULL
 );
 CREATE INDEX blobs_git_oid ON blobs(git_oid);
 
@@ -129,6 +128,19 @@ CREATE TABLE placements (
     derived_sha256   TEXT
 );
 
+-- The stored files a repository is known to hold, whatever the provider
+-- lists: every file placed in an app for it, adopted or put there by
+-- dedupd. A model taken out of every app keeps its files through this until
+-- the owner forgets it; an adopted file the provider does not list (it
+-- could not be asked, the file is not upstream, or it is of another
+-- revision) would otherwise look unused.
+CREATE TABLE repo_files (
+    repo_id  INTEGER NOT NULL REFERENCES repos(id),
+    sha256   TEXT NOT NULL REFERENCES blobs(sha256),
+    PRIMARY KEY (repo_id, sha256)
+);
+CREATE INDEX repo_files_sha256 ON repo_files(sha256);
+
 -- The manifest the provider's Ollama registry generated for a tag. The answer
 -- depends on who asks, so the asking User-Agent is part of the key.
 CREATE TABLE ollama_manifests (
@@ -171,8 +183,8 @@ pub struct Db {
 }
 
 /// The condition on `blobs b` that a repository matching `repo` (the rest of
-/// a comparison with a repository id) refers to the file, through a revision
-/// or an Ollama manifest.
+/// a comparison with a repository id) refers to the file, through a revision,
+/// an Ollama manifest, or a file it was known to hold.
 fn used_by(repo: &str) -> String {
     format!(
         "(EXISTS (SELECT 1 FROM revision_files f JOIN revisions v ON v.id = f.revision_id
@@ -180,7 +192,9 @@ fn used_by(repo: &str) -> String {
                     AND (f.lfs_sha256 = b.sha256
                          OR (f.lfs_sha256 IS NULL AND f.git_oid = b.git_oid)))
           OR EXISTS (SELECT 1 FROM ollama_manifests m
-                     WHERE m.repo_id {repo} AND instr(m.body, b.sha256) > 0))"
+                     WHERE m.repo_id {repo} AND instr(m.body, b.sha256) > 0)
+          OR EXISTS (SELECT 1 FROM repo_files h
+                     WHERE h.repo_id {repo} AND h.sha256 = b.sha256))"
     )
 }
 
@@ -480,8 +494,10 @@ impl Db {
             .optional()?)
     }
 
+    /// Record an app file, and that its repository holds the stored file.
     pub fn upsert_placement(&self, p: &NewPlacement<'_>) -> Result<()> {
-        self.conn.execute(
+        let tx = self.conn.unchecked_transaction()?;
+        tx.execute(
             "INSERT INTO placements
                  (app, path, repo_id, rel_path, sha256, size, mtime_ns, origin,
                   verify_state, verified_commit, recorded_at, shared, method, derived_sha256)
@@ -510,6 +526,11 @@ impl Db {
                 p.derived.map(|d| d.1)
             ],
         )?;
+        tx.execute(
+            "INSERT OR IGNORE INTO repo_files (repo_id, sha256) VALUES (?1, ?2)",
+            params![p.repo_id, p.sha256],
+        )?;
+        tx.commit()?;
         Ok(())
     }
 
@@ -652,21 +673,14 @@ impl Db {
         self.blobs_where(UNPLACED)
     }
 
-    /// Stored files that no archived revision, Ollama manifest or app file
-    /// refers to.
+    /// Stored files that no app file, and no repository through a revision,
+    /// an Ollama manifest or a file it held, refers to.
     pub fn unreferenced_blobs(&self) -> Result<Vec<BlobRow>> {
-        self.blobs_where(&format!(
-            "{UNPLACED}
-               AND NOT EXISTS (SELECT 1 FROM revision_files f
-                               WHERE f.lfs_sha256 = b.sha256
-                                  OR (f.lfs_sha256 IS NULL AND f.git_oid = b.git_oid))
-               AND NOT EXISTS (SELECT 1 FROM ollama_manifests m
-                               WHERE instr(m.body, b.sha256) > 0)"
-        ))
+        self.blobs_where(&format!("{UNPLACED} AND NOT {}", used_by("IS NOT NULL")))
     }
 
-    /// The stored files a repository's archived revisions and Ollama
-    /// manifests refer to.
+    /// The stored files a repository's archived revisions, Ollama manifests
+    /// and app files refer to, now or before.
     pub fn repo_blobs(&self, repo_id: i64) -> Result<Vec<BlobRow>> {
         self.blobs_where(&used_by(&format!("= {repo_id}")))
     }
@@ -787,8 +801,9 @@ impl Db {
             .collect::<rusqlite::Result<_>>()?)
     }
 
-    /// Drop a repository's archive records: its revisions, refs and Ollama
-    /// manifests, then the repository itself. Stored files are not touched.
+    /// Drop a repository's archive records: its revisions, refs, Ollama
+    /// manifests and the files it held, then the repository itself. Stored
+    /// files are not touched.
     pub fn delete_repo(&mut self, repo_id: i64) -> Result<()> {
         let tx = self.conn.transaction()?;
         for sql in [
@@ -797,6 +812,7 @@ impl Db {
             "DELETE FROM revisions WHERE repo_id = ?1",
             "DELETE FROM refs WHERE repo_id = ?1",
             "DELETE FROM ollama_manifests WHERE repo_id = ?1",
+            "DELETE FROM repo_files WHERE repo_id = ?1",
             "DELETE FROM repos WHERE id = ?1",
         ] {
             tx.execute(sql, [repo_id])?;
@@ -876,6 +892,8 @@ mod tests {
             .unwrap();
         conn.prepare("SELECT job_json FROM downloads").unwrap();
         conn.prepare("SELECT body FROM ollama_manifests").unwrap();
+        conn.prepare("SELECT repo_id, sha256 FROM repo_files")
+            .unwrap();
 
         for other in [SCHEMA_VERSION + 1, SCHEMA_VERSION + 4] {
             conn.pragma_update(None, "user_version", other).unwrap();

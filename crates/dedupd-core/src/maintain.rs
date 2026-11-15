@@ -184,8 +184,9 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct GcPlan {
-    /// Stored files that no archived revision, Ollama manifest or app file
-    /// refers to. Removing them loses nothing dedupd knows a use for.
+    /// Stored files that no app file refers to, and no model in the library
+    /// through a revision, an Ollama manifest or a file it held. A model's
+    /// files become orphans only once it is forgotten.
     pub orphans: Vec<BlobRow>,
     /// Stored files that are safely on the archive disk and that no app
     /// uses. Removing the local copy frees space; they come back on demand.

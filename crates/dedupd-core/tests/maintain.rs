@@ -152,12 +152,23 @@ async fn verify_finds_damage_and_gc_removes_only_what_is_unreferenced() {
     assert!(plan.orphans.is_empty() && plan.offload.is_empty());
     assert!(maintain::forget(&fx.db, "org/Drop").is_err());
 
-    // The model is deleted in the app. Its content stays in the store until
-    // the owner runs gc.
+    // The model is deleted in the app. It was adopted without asking the
+    // provider, so no revision lists its file; it is still the model's, and
+    // gc leaves it, in the store and on the archive disk.
     archive::sync(&fx.db, &fx.store, &fx.archive, &mut |_, _| {}).unwrap();
     fs::remove_file(&drop).unwrap();
     assert_eq!(maintain::prune_placements(&fx.db).unwrap(), 1);
     assert!(fx.store.contains(&drop_sha));
+    let plan = maintain::gc_plan(&fx.db, &fx.store, true).unwrap();
+    assert!(plan.orphans.is_empty(), "{:?}", plan.orphans);
+    assert_eq!(plan.offload.len(), 1);
+    let repo_id = fx.db.lock().unwrap().known_repo("org/Drop").unwrap();
+    let held = fx.db.lock().unwrap().repo_blobs(repo_id).unwrap();
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].sha256, drop_sha);
+
+    // Once the owner forgets the model, gc removes its file.
+    maintain::forget(&fx.db, "org/Drop").unwrap();
     let plan = maintain::gc_plan(&fx.db, &fx.store, false).unwrap();
     assert_eq!(plan.orphans.len(), 1);
     assert_eq!(plan.orphans[0].sha256, drop_sha);
