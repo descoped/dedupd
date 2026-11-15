@@ -76,9 +76,15 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
             return unreachable("the manifest was cut short");
         };
         if Manifest::parse(&body).is_ok() {
-            let db = server.engine.db();
-            if let Ok(id) = db.upsert_repo(PROVIDER_HF, name) {
-                let _ = db.save_manifest(id, tag, &user_agent, &media_type, &body);
+            let first = {
+                let db = server.engine.db();
+                if let Ok(id) = db.upsert_repo(PROVIDER_HF, name) {
+                    let _ = db.save_manifest(id, tag, &user_agent, &media_type, &body);
+                }
+                matches!(db.archived(PROVIDER_HF, name, "main"), Ok(None))
+            };
+            if first {
+                keep_model_info(server, name);
             }
         }
         return manifest_response(call, &media_type, body);
@@ -107,6 +113,25 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
         Some((media_type, body)) => manifest_response(call, &media_type, body),
         None => relay_or_unreachable(server, call, answer),
     }
+}
+
+/// Keep the Hub's model info for a model that came in through the
+/// registry only, in the background. Whether it is gated or private is
+/// read from it, so its kept manifest is not served while the Hub cannot
+/// be asked whether the client may have it.
+fn keep_model_info(server: &Arc<Server>, name: &str) {
+    if !dedupd_core::names::is_repo_name(name) {
+        return;
+    }
+    let (server, name) = (server.clone(), name.to_string());
+    tokio::spawn(async move {
+        if let Ok(snap) = server.engine.hub.snapshot(&name, "main").await {
+            let _ = server
+                .engine
+                .db()
+                .archive_snapshot(PROVIDER_HF, &name, "main", &snap);
+        }
+    });
 }
 
 /// A layer. Ollama first asks without `Range` and expects a redirect; it then

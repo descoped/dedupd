@@ -332,7 +332,14 @@ async fn a_job_that_was_working_continues_after_a_restart() {
 
     // The daemon stops without a word: the job is "downloading" in the
     // database, and nothing is running.
-    let saved = s.engine.db().downloads().unwrap();
+    let saved: Vec<String> = s
+        .engine
+        .db()
+        .downloads()
+        .unwrap()
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
     assert!(
         saved[0].contains(r#""state":"downloading""#),
         "{}",
@@ -542,4 +549,62 @@ async fn an_app_that_could_not_be_asked_just_now_waits_for_the_owner() {
     assert!(record.not_activated()[0].temporary);
     // The file is stored all the same.
     assert!(s.engine.store.contains(&sha256(&up.weights)));
+}
+
+#[tokio::test]
+async fn a_job_another_build_saved_is_removed_when_the_queue_opens() {
+    let up = upstream(true).await;
+    let s = scene(&up);
+    let db = s.engine.db();
+    let foreign = db.insert_download("queued").unwrap();
+    db.save_download(
+        foreign,
+        "queued",
+        r#"{"repo":"org/Repo","state":"teleporting"}"#,
+    )
+    .unwrap();
+    assert!(db.has_unfinished_job("org/Repo").unwrap());
+    drop(db);
+    let queue = Queue::open(s.engine.clone()).unwrap();
+    assert!(queue.get(foreign).is_err());
+    let db = s.engine.db();
+    assert!(db.downloads().unwrap().is_empty());
+    assert!(!db.has_unfinished_job("org/Repo").unwrap());
+}
+
+#[tokio::test]
+async fn trying_again_asks_only_the_apps_that_did_not_take_the_model() {
+    let up = upstream(true).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/v2/{REPO}/manifests/Q4_K_M")))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&up.server)
+        .await;
+    let s = scene(&up);
+    let id = s
+        .queue
+        .add(
+            MODEL,
+            vec![],
+            vec![App::Bionic, App::Ollama],
+            false,
+            JobKind::Activation,
+        )
+        .unwrap();
+    let first = settled(&s.queue, id).await;
+    assert_eq!(first.state, JobState::NeedsAttention, "{}", history(&first));
+    assert_eq!(first.activated(), [App::Bionic]);
+
+    // Try Again: Ollama still cannot be asked. Bionic is not placed or told
+    // about again, and the job still says it took the model.
+    s.queue.resume(id).unwrap();
+    let again = settled(&s.queue, id).await;
+    assert_eq!(again.state, JobState::NeedsAttention, "{}", history(&again));
+    assert_eq!(again.activated(), [App::Bionic]);
+    assert_eq!(again.not_activated()[0].app, App::Ollama);
+    let told = dedupd_core::activity::recent(&s.home, 10)
+        .iter()
+        .filter(|e| e.app == Some(App::Bionic))
+        .count();
+    assert_eq!(told, 1);
 }

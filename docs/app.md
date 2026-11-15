@@ -35,7 +35,8 @@ taken from it. Anything else that looks like an address is refused and sent nowh
 
 The models on this Mac: their format, their size, the apps each one is in, and whether its files are verified
 against Hugging Face. The inspector shows one model in full. Activate puts it into an app as clones; Deactivate
-takes it out again and leaves the stored copy. While a model is being activated, the app's row says so. An app that
+takes it out again and leaves the stored copy; a model leaves Ollama whole or not at all, because Ollama needs every
+file of it. While a model is being activated, the app's row says so. An app that
 cannot use the model has no Activate button; its row says why, for example the version of Ollama that cannot run
 the model's type.
 
@@ -80,7 +81,7 @@ and removes them only after the list has been confirmed. Check the store reads e
 
 With an archive disk set, a model can be moved off the internal disk. The app says what will happen before it
 does anything, and nothing is removed unless every copy on the archive disk has been verified. Restore brings the model
-back.
+back. While a model is being archived or restored, it cannot be activated or deactivated.
 
 ![The question the app asks before it archives a model](images/archive.png)
 
@@ -92,6 +93,7 @@ the ones in `~/.dedupd/config.toml`.
 ![The Daemon screen](images/daemon.png)
 
 When no daemon is running, the app reports it and offers to install the bundled daemon. Existing models are not
-affected.
+affected. When the daemon that answers is another build of dedupd than the app, the app says so and offers Update
+on this screen.
 
 ![The app without a daemon, offering to install it](images/install.png)

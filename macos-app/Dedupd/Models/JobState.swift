@@ -46,18 +46,12 @@ extension JobState {
         }
     }
 
-    /// The daemon is working on it, or will by itself.
-    var isActive: Bool {
-        switch self {
-        case .queued, .resolving, .downloading, .verifying, .placing, .waitingServer, .waitingNetwork: true
-        case .done, .paused, .needsAttention, .cancelled: false
-        }
-    }
+    /// The daemon is working on it, or will by itself. The rule is the
+    /// daemon's own.
+    var isActive: Bool { jobIsActive(state: self) }
 
-    /// Nothing more will happen to it.
-    var isFinished: Bool {
-        self == .done || self == .cancelled
-    }
+    /// Nothing more will happen to it. The rule is the daemon's own.
+    var isFinished: Bool { jobIsFinished(state: self) }
 }
 
 /// How an action on a job is offered.

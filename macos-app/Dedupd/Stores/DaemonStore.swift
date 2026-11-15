@@ -16,6 +16,9 @@ final class DaemonStore {
         case connecting
         /// Nothing answers at the address.
         case notRunning
+        /// A daemon answers, but it is another build of dedupd and the app
+        /// cannot read what it says; `reason` says what did not fit.
+        case otherBuild(reason: String)
         case running
     }
 
@@ -108,6 +111,8 @@ final class DaemonStore {
             "square.stack.3d.up"
         case .notRunning:
             "square.stack.3d.up.slash"
+        case .otherBuild:
+            "exclamationmark.triangle"
         case .running:
             if needsOwner {
                 "exclamationmark.triangle"
@@ -119,6 +124,14 @@ final class DaemonStore {
         }
     }
 
+    /// A daemon answers that is another build of dedupd.
+    var isOtherBuild: Bool {
+        if case .otherBuild = connection {
+            return true
+        }
+        return false
+    }
+
     /// One line on the daemon's state, for headers and for VoiceOver.
     var summary: String {
         switch connection {
@@ -126,6 +139,8 @@ final class DaemonStore {
             "Looking for the daemon…"
         case .notRunning:
             "The daemon is not running"
+        case .otherBuild:
+            "The daemon is another build of dedupd"
         case .running:
             status.map { "Running, version \($0.version)" } ?? "Running"
         }
@@ -187,6 +202,12 @@ final class DaemonStore {
             checking = false
             moving = nil
             library = nil
+        case let .unreadable(reason):
+            connection = .otherBuild(reason: reason)
+            downloads = nil
+            checking = false
+            moving = nil
+            library = nil
         case let .event(event):
             if connection != .running {
                 await connected()
@@ -206,6 +227,11 @@ final class DaemonStore {
             }
             let changed = library != event.library
             library = event.library
+            // The apps could not be read when the daemon came; ask again,
+            // since a download needs them to know where it goes.
+            if apps.isEmpty {
+                await refreshApps()
+            }
             if !first, changed || finished {
                 await refreshStatus()
                 revision += 1

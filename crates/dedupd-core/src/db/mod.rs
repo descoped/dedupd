@@ -29,7 +29,6 @@ const BLOB_COLS: &str = "b.sha256, b.size, b.git_oid";
 /// No app file holds this content.
 const UNPLACED: &str = "NOT EXISTS (SELECT 1 FROM placements p WHERE p.sha256 = b.sha256)";
 
-/// Lock the shared database handle.
 /// An app's short name in a column, read as the app.
 pub(crate) fn app_column(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<App> {
     let name: String = r.get(i)?;
@@ -38,6 +37,7 @@ pub(crate) fn app_column(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<Ap
     })
 }
 
+/// Lock the shared database handle.
 pub fn lock(db: &Mutex<Db>) -> MutexGuard<'_, Db> {
     db.lock().expect("database lock")
 }
@@ -326,13 +326,14 @@ impl Db {
         Ok(())
     }
 
-    /// Every job of the download queue as it was last saved, oldest first.
-    pub fn downloads(&self) -> Result<Vec<String>> {
+    /// Every job of the download queue as it was last saved, oldest first,
+    /// with its number.
+    pub fn downloads(&self) -> Result<Vec<(i64, String)>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT job_json FROM downloads ORDER BY id")?;
-        let rows = stmt.query_map([], |r| r.get(0))?;
-        Ok(rows.collect::<rusqlite::Result<Vec<String>>>()?)
+            .prepare("SELECT id, job_json FROM downloads ORDER BY id")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Whether a job of the download queue that is not finished (queued,

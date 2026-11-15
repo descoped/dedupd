@@ -375,13 +375,31 @@ async fn links_and_manifests_stay_with_the_files_that_stay() {
         .ollama
         .join("blobs")
         .join(format!("sha256-{}", sha256(&up.weights)));
+    let blobs = || fs::read_dir(e.dirs.ollama.join("blobs")).unwrap().count();
+    assert_eq!(blobs(), 3);
+
+    // The owner agrees to some of the layers only: the model stays whole.
+    let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, REPO, App::Ollama).unwrap();
+    assert_eq!((plan.remove.len(), plan.link_paths().len()), (3, 1));
+    let some = plan.only(std::slice::from_ref(&layer.to_string_lossy().into_owned()));
+    assert!(some.remove.is_empty() && some.link_paths().is_empty());
+    assert_eq!(some.keep.len(), 3);
+
+    // A layer changes after the plan was made: nothing is removed.
+    let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, REPO, App::Ollama).unwrap();
     fs::set_permissions(&layer, std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
     fs::write(&layer, b"changed").unwrap();
+    assert_eq!(maintain::unplace_apply(&e.db, &e.dirs, &plan).unwrap(), 0);
+    assert!(manifest.is_file());
+    assert_eq!(blobs(), 3);
+
+    // Planned with the changed layer: every layer and the manifest stay.
     let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, REPO, App::Ollama).unwrap();
-    assert_eq!(plan.keep.len(), 1);
+    assert_eq!((plan.remove.len(), plan.keep.len()), (0, 3));
     assert!(plan.link_paths().is_empty());
     maintain::unplace_apply(&e.db, &e.dirs, &plan).unwrap();
     assert!(manifest.is_file());
+    assert_eq!(blobs(), 3);
 }
 
 #[tokio::test]

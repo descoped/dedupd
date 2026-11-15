@@ -84,8 +84,13 @@ impl Queue {
     /// are queued again; `start` sets them going.
     pub fn open(engine: Arc<Engine>) -> Result<Arc<Self>> {
         let mut jobs = BTreeMap::new();
-        for text in engine.db().downloads()? {
+        let saved = engine.db().downloads()?;
+        for (id, text) in saved {
+            // A job saved by another build of dedupd, in a form this one
+            // cannot read: it can be neither shown nor removed, and its
+            // state would hold its model for ever, so it goes.
             let Ok(mut record) = serde_json::from_str::<JobRecord>(&text) else {
+                engine.db().delete_download(id)?;
                 continue;
             };
             if record.state.is_working() {

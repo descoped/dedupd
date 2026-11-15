@@ -129,6 +129,10 @@ fn generate() -> String {
     out.push_str("    ]\n");
     for (name, traits) in cases() {
         writeln!(out, "\n    static let {name}: [Decision] = [").unwrap();
+        // Each profile is asked directly, not through `decide_for`: the
+        // canned daemon keeps no refusals and has no store to read a
+        // model's config from, so the profiles' own answers are what it
+        // gives.
         for p in profile::profiles() {
             let d = p.decide(&traits, installed.version(p.app));
             writeln!(

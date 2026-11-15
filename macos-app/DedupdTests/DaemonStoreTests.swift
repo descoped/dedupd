@@ -41,6 +41,22 @@ struct DaemonStoreTests {
         #expect(daemon.summary == "The daemon is not running")
     }
 
+    @Test("A daemon of another build is told apart from one that is away, until a line can be read")
+    func otherBuild() async {
+        let daemon = makeDaemon()
+        await daemon.receive(.event(event([job(1, .downloading, done: 40_000_000)])))
+        await daemon.receive(.unreadable("unknown variant `teleporting`"))
+        #expect(daemon.connection == .otherBuild(reason: "unknown variant `teleporting`"))
+        #expect(daemon.isOtherBuild)
+        #expect(!daemon.isRunning)
+        #expect(daemon.jobs.isEmpty)
+        #expect(daemon.summary == "The daemon is another build of dedupd")
+        #expect(daemon.menuBarSymbol == "exclamationmark.triangle")
+        // Updated to this build: its lines are read again.
+        await daemon.receive(.event(event([])))
+        #expect(daemon.connection == .running)
+    }
+
     @Test("An event carries the downloads, and implies the daemon answers")
     func eventCarriesDownloads() async {
         let daemon = makeDaemon()

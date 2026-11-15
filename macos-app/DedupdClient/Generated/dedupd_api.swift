@@ -7661,6 +7661,28 @@ public func jobActions(state: JobState) -> [JobAction]  {
     )
 })
 }
+/**
+ * [`JobState::is_active`] for callers across the FFI.
+ */
+public func jobIsActive(state: JobState) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dedupd_api_fn_func_job_is_active(
+        FfiConverterTypeJobState_lower(state),uniffiCallStatus
+    )
+})
+}
+/**
+ * [`JobState::is_finished`] for callers across the FFI.
+ */
+public func jobIsFinished(state: JobState) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dedupd_api_fn_func_job_is_finished(
+        FfiConverterTypeJobState_lower(state),uniffiCallStatus
+    )
+})
+}
 
 private enum InitializationResult {
     case ok
@@ -7678,6 +7700,12 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_dedupd_api_checksum_func_job_actions() != 20934) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dedupd_api_checksum_func_job_is_active() != 22209) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dedupd_api_checksum_func_job_is_finished() != 22114) {
         return InitializationResult.apiChecksumMismatch
     }
 
