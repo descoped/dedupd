@@ -129,30 +129,53 @@ impl Server {
     }
 }
 
+/// What a path under `/api/models/` asks for.
+#[derive(Debug, PartialEq, Eq)]
+enum Asked<'a> {
+    /// The model info for the default branch: the repository's own path.
+    Model(String),
+    /// The model info at a revision.
+    Info(String, &'a str),
+    /// A listing at a revision: of a folder, or (`None`) of named paths.
+    Listing(String, &'a str, Option<String>),
+    Refs(String),
+    Other,
+}
+
+/// Read a path under `/api/models/`. A repository is `org/name`, or a single
+/// name from before Hugging Face had organisations; the word after it says
+/// what is asked. A name that is itself such a word (`org/tree`) is read as
+/// a name: the two-part reading is tried first, and a word is taken as one
+/// only where what follows it fits.
+fn asked<'a>(rest: &[&'a str]) -> Asked<'a> {
+    let at = |i: usize| -> Option<Asked<'a>> {
+        let repo = rest.get(..i)?.join("/");
+        Some(match (*rest.get(i)?, &rest[i + 1..]) {
+            ("revision", [rev]) => Asked::Info(repo, rev),
+            ("tree", [rev, path @ ..]) => Asked::Listing(repo, rev, Some(path.join("/"))),
+            ("paths-info", [rev]) => Asked::Listing(repo, rev, None),
+            ("refs", []) => Asked::Refs(repo),
+            _ => return None,
+        })
+    };
+    let whole = |n: usize| (rest.len() == n).then(|| Asked::Model(rest.join("/")));
+    at(2)
+        .or_else(|| whole(2))
+        .or_else(|| at(1))
+        .or_else(|| whole(1))
+        .unwrap_or(Asked::Other)
+}
+
 /// `/api/models/...`
 pub(crate) async fn api(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Response {
-    let keyword = |s: &&str| matches!(*s, "revision" | "tree" | "paths-info" | "refs");
-    let Some(at) = rest
-        .iter()
-        .position(keyword)
-        .filter(|i| (1..=2).contains(i))
-    else {
-        // `/api/models/org/repo` is the model info for the default branch.
-        if (1..=2).contains(&rest.len()) && call.method == axum::http::Method::GET {
-            return info(server, call, &rest.join("/"), "main").await;
+    match asked(rest) {
+        Asked::Model(repo) if call.method == axum::http::Method::GET => {
+            info(server, call, &repo, "main").await
         }
-        return pass_through(server, call).await;
-    };
-    let repo = rest[..at].join("/");
-    let args = &rest[at + 1..];
-    match (rest[at], args) {
-        ("revision", [rev]) => info(server, call, &repo, rev).await,
-        ("tree", [rev, path @ ..]) => {
-            listing(server, call, &repo, rev, Some(&path.join("/"))).await
-        }
-        ("paths-info", [rev]) => listing(server, call, &repo, rev, None).await,
-        ("refs", []) => refs(server, call, &repo).await,
-        _ => pass_through(server, call).await,
+        Asked::Info(repo, rev) => info(server, call, &repo, rev).await,
+        Asked::Listing(repo, rev, path) => listing(server, call, &repo, rev, path.as_deref()).await,
+        Asked::Refs(repo) => refs(server, call, &repo).await,
+        Asked::Model(_) | Asked::Other => pass_through(server, call).await,
     }
 }
 
@@ -469,6 +492,43 @@ mod tests {
             serde_json::json!([{"path": "a", "xetHash": "x", "lfs": {"oid": "o", "xetHash": "y"}}]);
         strip_xet(&mut v);
         assert_eq!(v, serde_json::json!([{"path": "a", "lfs": {"oid": "o"}}]));
+    }
+
+    #[test]
+    fn a_model_named_like_an_api_word_is_read_as_a_name() {
+        let main = || "main";
+        let r = |s: &str| s.to_string();
+        let cases = [
+            ("org/repo", Asked::Model(r("org/repo"))),
+            ("org/tree", Asked::Model(r("org/tree"))),
+            ("org/refs", Asked::Model(r("org/refs"))),
+            ("gpt2", Asked::Model(r("gpt2"))),
+            ("org/tree/revision/abc", Asked::Info(r("org/tree"), "abc")),
+            (
+                "org/revision/tree/main/sub",
+                Asked::Listing(r("org/revision"), "main", Some(r("sub"))),
+            ),
+            (
+                "org/repo/tree/main",
+                Asked::Listing(r("org/repo"), "main", Some(r(""))),
+            ),
+            (
+                "org/paths-info/paths-info/main",
+                Asked::Listing(r("org/paths-info"), "main", None),
+            ),
+            ("org/refs/refs", Asked::Refs(r("org/refs"))),
+            ("gpt2/revision/main", Asked::Info(r("gpt2"), main())),
+            (
+                "gpt2/tree/main/tree",
+                Asked::Listing(r("gpt2"), main(), Some(r("tree"))),
+            ),
+            ("org/repo/xet-read-token/main", Asked::Other),
+            ("org/repo/a/b", Asked::Other),
+        ];
+        for (path, want) in cases {
+            let rest: Vec<&str> = path.split('/').collect();
+            assert_eq!(asked(&rest), want, "{path}");
+        }
     }
 
     #[test]
