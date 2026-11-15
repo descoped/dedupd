@@ -88,7 +88,8 @@ the source what it does not hold. `dedupd env` prints the required settings.
 For every repository and revision dedupd retains the weights, the small files (configuration, tokenizer, README,
 licence), the source's metadata responses, and the Ollama manifest with its template and parameters. A stored
 model can therefore be listed, activated and served when the source is unreachable or the model has been removed
-there.
+there. The exception is a gated or private model, and a model whose source metadata dedupd does not hold: a client
+gets it through the daemon only while the source can confirm that the client has access.
 
 Every file is verified against its sha256 at download. The complete store is re-hashed on a schedule, every 7
 days by default (`verify_days`).
