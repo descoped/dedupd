@@ -183,6 +183,10 @@ fn job_summary(record: &JobRecord) -> Value {
             .count();
         o.insert("files_total".into(), j!(record.files.len()));
         o.insert("files_done".into(), j!(stored));
+        // Which of the apps asked for took the model, and why the others
+        // did not; the app shows this on the finished job.
+        o.insert("activated".into(), j!(record.activated()));
+        o.insert("notes".into(), j!(record.notes()));
     }
     value
 }

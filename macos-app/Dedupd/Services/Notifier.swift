@@ -23,8 +23,7 @@ struct Notice: Equatable, Sendable {
                 return Notice(
                     id: "download-\(job.id)",
                     title: "Downloaded \(job.model)",
-                    body: "\(ByteFormat.string(job.bytesTotal)), "
-                        + (job.apps.isEmpty ? "in the store only." : "activated in \(job.appList).")
+                    body: "\(ByteFormat.string(job.bytesTotal)). \(job.outcomeText)."
                 )
             case .needsAttention:
                 return Notice(

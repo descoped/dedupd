@@ -16,6 +16,9 @@
   },
   "jobs": [
     {
+      "activated": [
+        "bionic"
+      ],
       "apps": [
         "bionic"
       ],
@@ -30,6 +33,7 @@
       "id": 1,
       "include": [],
       "model": "org/Repo-GGUF",
+      "notes": [],
       "offline": false,
       "quant": null,
       "repo": "org/Repo-GGUF",
@@ -40,6 +44,9 @@
       "wait_until": null
     },
     {
+      "activated": [
+        "hf"
+      ],
       "apps": [
         "hf"
       ],
@@ -54,6 +61,7 @@
       "id": 2,
       "include": [],
       "model": "org/Repo-GGUF:model",
+      "notes": [],
       "offline": true,
       "quant": "model",
       "repo": "org/Repo-GGUF",

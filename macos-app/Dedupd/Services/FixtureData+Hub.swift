@@ -145,7 +145,8 @@ extension FixtureData {
         total: UInt64 = 144_800_000,
         done: UInt64 = 0,
         speed: UInt64 = 0,
-        detail: String? = nil
+        detail: String? = nil,
+        notTakenBy: [String: String] = [:]
     ) -> Job {
         let parts = request.model.split(separator: ":", maxSplits: 1).map(String.init)
         let finished = state == .done
@@ -167,6 +168,8 @@ extension FixtureData {
             speed: speed,
             filesTotal: 4,
             filesDone: finished ? 4 : (done > 0 ? 3 : 0),
+            activated: finished ? request.apps.filter { notTakenBy[$0] == nil } : [],
+            notes: finished ? notTakenBy.sorted { $0.key < $1.key }.map(\.value) : [],
             createdAt: 1_794_003_000 + id,
             updatedAt: 1_794_003_600 + id,
             finishedAt: finished ? 1_794_003_600 + id : nil

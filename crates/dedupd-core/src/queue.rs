@@ -178,6 +178,54 @@ impl JobRecord {
             self.events.drain(..extra);
         }
     }
+
+    /// The apps the finished job put the model into: those that took every
+    /// file. Read from the outcome, so a job kept by an older build answers
+    /// the same.
+    pub fn activated(&self) -> Vec<String> {
+        self.placed()
+            .filter(|(_, conflicts)| *conflicts == 0)
+            .map(|(app, _)| app)
+            .collect()
+    }
+
+    /// What the finished job has to say: why an app did not take the model,
+    /// and anything else the owner should know.
+    pub fn notes(&self) -> Vec<String> {
+        let outcome = self.outcome.as_ref();
+        let mut notes: Vec<String> = outcome
+            .and_then(|o| o["notes"].as_array())
+            .map(|n| {
+                n.iter()
+                    .filter_map(|t| t.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        for (app, conflicts) in self.placed().filter(|(_, c)| *c > 0) {
+            let title = app
+                .parse::<App>()
+                .map_or(app.clone(), |a| a.title().to_string());
+            notes.push(format!(
+                "not fully placed into {title}: files in its folder with other content \
+                 were left alone ({conflicts})"
+            ));
+        }
+        notes
+    }
+
+    /// Each app in the outcome, with the number of files it kept of its own.
+    fn placed(&self) -> impl Iterator<Item = (String, usize)> + '_ {
+        self.outcome
+            .as_ref()
+            .and_then(|o| o["placed"].as_array())
+            .into_iter()
+            .flatten()
+            .filter_map(|pair| {
+                let app = pair[0].as_str()?.to_string();
+                let conflicts = pair[1]["conflicts"].as_array().map_or(0, Vec::len);
+                Some((app, conflicts))
+            })
+    }
 }
 
 /// A rate measured from a running count.
@@ -703,22 +751,18 @@ impl Queue {
         let files = items.len();
         match pull::place(engine, &req, &plan, items).await {
             Ok((placed, notes)) => {
-                // Asked for apps and got into none of them: that needs the
-                // owner, not a quiet "done".
-                let missed = !req.apps.is_empty() && placed.is_empty() && !notes.is_empty();
+                // Every file is stored, so the job is done, also when an app
+                // did not take the model: trying again would get the same
+                // answer. The outcome says which apps took it and why the
+                // others did not (`JobRecord::activated` and `notes`).
                 let outcome = pull::outcome(&req, plan, files, downloaded, placed, notes);
                 {
                     let mut r = job.record();
                     r.bytes_done = r.bytes_total;
                     r.outcome = serde_json::to_value(&outcome).ok();
-                    if !missed {
-                        for note in &outcome.notes {
-                            r.note(note.clone());
-                        }
+                    for note in &outcome.notes {
+                        r.note(note.clone());
                     }
-                }
-                if missed {
-                    return self.set(job, State::NeedsAttention, Some(outcome.notes.join("; ")));
                 }
                 self.set(job, State::Done, None);
                 self.forget_old();
@@ -904,5 +948,55 @@ impl PullWatch for JobWatch {
             file.done = file.size;
         }
         self.queue.ticked();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A finished job as the database keeps it, with the given outcome.
+    fn finished(outcome: serde_json::Value) -> JobRecord {
+        serde_json::from_value(serde_json::json!({
+            "id": 1, "model": "org/model", "repo": "org/model", "revision": "main",
+            "quant": null, "include": [], "apps": ["bionic", "ollama"], "offline": false,
+            "state": "done", "detail": null, "wait_until": null, "commit": null,
+            "bytes_total": 1, "bytes_done": 1, "files": [], "events": [],
+            "outcome": outcome, "created_at": 0, "updated_at": 0, "finished_at": 0,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_job_kept_by_an_older_build_says_what_it_placed() {
+        // An older build marked a job done when Ollama refused the model;
+        // its outcome shows that nothing was placed.
+        let refused = finished(serde_json::json!({
+            "placed": [],
+            "notes": ["not placed into Ollama: Ollama would not import a stand-in for the model"],
+        }));
+        assert!(refused.activated().is_empty());
+        assert_eq!(refused.notes().len(), 1);
+
+        // Files of the app's own in the way: the app did not take the model.
+        let blocked = finished(serde_json::json!({
+            "placed": [
+                ["bionic", {"cloned": 3, "present": 0, "conflicts": []}],
+                ["ollama", {"cloned": 0, "present": 0, "conflicts": ["blobs/sha256-ab"]}],
+            ],
+            "notes": [],
+        }));
+        assert_eq!(blocked.activated(), ["bionic"]);
+        assert_eq!(
+            blocked.notes(),
+            [
+                "not fully placed into Ollama: files in its folder with other content were left alone (1)"
+            ]
+        );
+
+        // A job that has not finished has nothing to say yet.
+        let mut working = finished(serde_json::Value::Null);
+        working.outcome = None;
+        assert!(working.activated().is_empty() && working.notes().is_empty());
     }
 }

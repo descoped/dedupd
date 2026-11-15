@@ -402,32 +402,41 @@ async fn a_file_that_arrives_damaged_twice_needs_the_owner() {
 }
 
 #[tokio::test]
-async fn a_job_that_gets_into_none_of_its_apps_needs_the_owner() {
+async fn a_job_says_which_apps_took_the_model_and_why_the_others_did_not() {
     // The fake Hub has no Ollama manifest for the model, so Ollama cannot
     // be given it; Bionic can.
     let up = upstream(true).await;
     let s = scene(&up);
 
+    // Into none of its apps: the download is done and kept, and the job
+    // says the app did not take it. Trying again would get the same answer,
+    // so it does not wait for the owner.
     let id = s
         .queue
         .add(MODEL, vec![], vec![App::Ollama], false)
         .unwrap();
     let record = settled(&s.queue, id).await;
-    assert_eq!(record.state, State::NeedsAttention, "{}", history(&record));
-    let detail = record.detail.unwrap_or_default();
-    assert!(detail.starts_with("not placed into Ollama: "), "{detail}");
-    // The download itself is done and kept.
+    assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert_eq!(record.detail, None);
+    assert!(record.activated().is_empty(), "{:?}", record.activated());
+    let notes = record.notes();
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(
+        notes[0].starts_with("not placed into Ollama: "),
+        "{notes:?}"
+    );
     assert_eq!(record.bytes_done, record.bytes_total);
     assert!(s.engine.store.contains(&sha256(&up.weights)));
 
-    // With an app that took it, the job is done and the note is in its
-    // history.
+    // Into one of two: the one that took it is named, and the note says why
+    // the other did not.
     let id = s
         .queue
         .add(MODEL, vec![], vec![App::Bionic, App::Ollama], false)
         .unwrap();
     let record = settled(&s.queue, id).await;
     assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert_eq!(record.activated(), ["bionic"]);
     assert!(
         history(&record).contains("not placed into Ollama: "),
         "{}",

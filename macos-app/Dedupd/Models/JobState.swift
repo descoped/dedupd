@@ -129,15 +129,66 @@ extension Job {
             let left = secondsLeft.map { " · \(ByteFormat.duration(seconds: $0)) left" } ?? ""
             return "\(ByteFormat.speed(speed))\(left)"
         case .done:
-            return apps.isEmpty ? "In the store only" : "Activated in \(appList)"
+            return outcomeText
         default:
             return phase.title
         }
     }
 
+    /// The apps asked for that did not take the model, once the job is done.
+    var missedApps: [String] {
+        phase == .done ? apps.filter { !activated.contains($0) } : []
+    }
+
+    /// What a finished job did: "Activated in Bionic", "Not activated in
+    /// Ollama: <why>", or both.
+    var outcomeText: String {
+        if apps.isEmpty {
+            return "In the store only"
+        }
+        var parts: [String] = []
+        let took = apps.filter(activated.contains)
+        if !took.isEmpty {
+            parts.append("Activated in \(Self.list(took))")
+        }
+        let missed = missedApps
+        if !missed.isEmpty {
+            let not = took.isEmpty ? "Not activated in" : "not in"
+            // With one app missed the note need not name it again.
+            let reasons = missed.count == 1 ? notes.map(Self.reason(from:)) : notes
+            let why = reasons.isEmpty ? "" : ": \(reasons.joined(separator: "; "))"
+            parts.append("\(not) \(Self.list(missed))\(why)")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    /// The row's symbol: a finished job that an app did not take is marked,
+    /// so it does not pass for a success.
+    var symbol: String {
+        missedApps.isEmpty ? phase.symbol : "exclamationmark.circle.fill"
+    }
+
+    var tint: Color {
+        missedApps.isEmpty ? phase.tint : .orange
+    }
+
     /// "Bionic and Ollama", or "the store only".
     var appList: String {
-        let names = apps.map(ModelApp.shortTitle(for:))
-        return names.isEmpty ? "the store only" : ListFormatter.localizedString(byJoining: names)
+        apps.isEmpty ? "the store only" : Self.list(apps)
+    }
+
+    /// A note without the daemon's "not placed into Ollama: " in front, which
+    /// the row already says in its own words.
+    static func reason(from note: String) -> String {
+        for start in ["not placed into ", "not fully placed into "] where note.hasPrefix(start) {
+            if let colon = note.range(of: ": ") {
+                return String(note[colon.upperBound...])
+            }
+        }
+        return note
+    }
+
+    private static func list(_ apps: [String]) -> String {
+        ListFormatter.localizedString(byJoining: apps.map(ModelApp.shortTitle(for:)))
     }
 }

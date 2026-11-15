@@ -295,6 +295,14 @@ pub struct Job {
     pub files_total: u64,
     #[serde(default)]
     pub files_done: u64,
+    /// Once the job is done: the apps asked for that took the model. One in
+    /// `apps` and not here did not, and `notes` says why.
+    #[serde(default)]
+    pub activated: Vec<String>,
+    /// Once the job is done: why an app did not take the model, and
+    /// anything else worth knowing.
+    #[serde(default)]
+    pub notes: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub finished_at: Option<i64>,

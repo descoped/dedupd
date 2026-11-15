@@ -264,8 +264,8 @@ private struct MenuDownloadRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Image(systemName: job.phase.symbol)
-                    .foregroundStyle(job.phase.tint)
+                Image(systemName: job.symbol)
+                    .foregroundStyle(job.tint)
                 Text(job.model)
                     .font(.callout)
                     .lineLimit(1)

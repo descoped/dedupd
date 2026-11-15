@@ -2413,6 +2413,16 @@ public struct Job: Equatable, Hashable {
     public var speed: UInt64
     public var filesTotal: UInt64
     public var filesDone: UInt64
+    /**
+     * Once the job is done: the apps asked for that took the model. One in
+     * `apps` and not here did not, and `notes` says why.
+     */
+    public var activated: [String]
+    /**
+     * Once the job is done: why an app did not take the model, and
+     * anything else worth knowing.
+     */
+    public var notes: [String]
     public var createdAt: Int64
     public var updatedAt: Int64
     public var finishedAt: Int64?
@@ -2433,7 +2443,15 @@ public struct Job: Equatable, Hashable {
          */waitUntil: Int64?, commit: String?, bytesTotal: UInt64, bytesDone: UInt64, 
         /**
          * Bytes per second.
-         */speed: UInt64, filesTotal: UInt64, filesDone: UInt64, createdAt: Int64, updatedAt: Int64, finishedAt: Int64?) {
+         */speed: UInt64, filesTotal: UInt64, filesDone: UInt64, 
+        /**
+         * Once the job is done: the apps asked for that took the model. One in
+         * `apps` and not here did not, and `notes` says why.
+         */activated: [String], 
+        /**
+         * Once the job is done: why an app did not take the model, and
+         * anything else worth knowing.
+         */notes: [String], createdAt: Int64, updatedAt: Int64, finishedAt: Int64?) {
         self.id = id
         self.model = model
         self.repo = repo
@@ -2451,6 +2469,8 @@ public struct Job: Equatable, Hashable {
         self.speed = speed
         self.filesTotal = filesTotal
         self.filesDone = filesDone
+        self.activated = activated
+        self.notes = notes
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.finishedAt = finishedAt
@@ -2489,6 +2509,8 @@ public struct FfiConverterTypeJob: FfiConverterRustBuffer {
                 speed: FfiConverterUInt64.read(from: &buf), 
                 filesTotal: FfiConverterUInt64.read(from: &buf), 
                 filesDone: FfiConverterUInt64.read(from: &buf), 
+                activated: FfiConverterSequenceString.read(from: &buf), 
+                notes: FfiConverterSequenceString.read(from: &buf), 
                 createdAt: FfiConverterInt64.read(from: &buf), 
                 updatedAt: FfiConverterInt64.read(from: &buf), 
                 finishedAt: FfiConverterOptionInt64.read(from: &buf)
@@ -2513,6 +2535,8 @@ public struct FfiConverterTypeJob: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.speed, into: &buf)
         FfiConverterUInt64.write(value.filesTotal, into: &buf)
         FfiConverterUInt64.write(value.filesDone, into: &buf)
+        FfiConverterSequenceString.write(value.activated, into: &buf)
+        FfiConverterSequenceString.write(value.notes, into: &buf)
         FfiConverterInt64.write(value.createdAt, into: &buf)
         FfiConverterInt64.write(value.updatedAt, into: &buf)
         FfiConverterOptionInt64.write(value.finishedAt, into: &buf)

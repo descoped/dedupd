@@ -94,9 +94,9 @@ struct DownloadRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: job.phase.symbol)
+            Image(systemName: job.symbol)
                 .font(.title3)
-                .foregroundStyle(job.phase.tint)
+                .foregroundStyle(job.tint)
                 .frame(width: 24)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {

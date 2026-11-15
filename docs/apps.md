@@ -38,7 +38,8 @@ Constraints:
 - Ollama runs only the MLX architectures it knows; Ollama 0.40.16 refuses DeepSeek V4, for example. This is known
   only once Ollama has been asked. When Ollama refuses a model, dedupd records the answer for that model and that
   version of Ollama in `~/.dedupd/refusals.json`, and from then on reports Ollama as unable to use the model, with
-  Ollama's reason. A different version of Ollama is asked again.
+  Ollama's reason. A different version of Ollama is asked again. Nothing is written into Ollama's folder before it
+  has accepted the model, and the download stays in the store.
 - The method relies on behaviour Ollama does not document. It was tested with Ollama 0.40.16.
 
 ## Limitations
