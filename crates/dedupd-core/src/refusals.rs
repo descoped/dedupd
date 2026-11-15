@@ -85,6 +85,48 @@ impl Refusals {
     }
 }
 
+/// What older builds put in front of Ollama's words when they kept them.
+const OLDER_WORDS: &str = "Ollama would not import a stand-in for the model: ";
+
+/// Whether what Ollama said when it would not import the model is about the
+/// model, and so holds until Ollama changes: worth keeping. Anything else
+/// (a full disk, a crash, a signal) is about the moment, and the next
+/// activation asks again.
+pub fn is_about_the_model(said: &str) -> bool {
+    let said = said.to_lowercase();
+    [
+        "unsupported",
+        "not supported",
+        "unknown architecture",
+        "unknown model architecture",
+        "unknown data type",
+        "unknown dtype",
+    ]
+    .iter()
+    .any(|words| said.contains(words))
+}
+
+/// Why `app` at `version` cannot run the model, in a sentence a person
+/// reads: "Ollama 0.40.16 can't run this model: it doesn't support the
+/// model type DeepseekV4ForCausalLM for MLX models."
+pub fn sentence(app: &str, version: &str, said: &str) -> String {
+    let said = said.strip_prefix(OLDER_WORDS).unwrap_or(said).trim();
+    let said = said.trim_end_matches('.');
+    let why = match architecture(said) {
+        Some(kind) => format!("it doesn't support the model type {kind} for MLX models"),
+        None => said.to_string(),
+    };
+    format!("{app} {version} can't run this model: {why}.")
+}
+
+/// The model type in Ollama's `unsupported MLX architecture: model "X"`.
+fn architecture(said: &str) -> Option<&str> {
+    let rest = said.strip_prefix("unsupported MLX architecture")?;
+    let start = rest.find('"')? + 1;
+    let end = start + rest[start..].find('"')?;
+    Some(&rest[start..end])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -138,5 +180,33 @@ mod tests {
         assert!(Refusals::load(&home).list.is_empty());
         Refusals::record(&home, refusal("0.40.16", "after")).unwrap();
         assert_eq!(Refusals::load(&home).list.len(), 1);
+    }
+
+    #[test]
+    fn says_why_in_plain_words() {
+        let kind = r#"unsupported MLX architecture: model "DeepseekV4ForCausalLM""#;
+        let plain = "Ollama 0.40.16 can't run this model: it doesn't support the model type \
+                     DeepseekV4ForCausalLM for MLX models.";
+        assert_eq!(sentence("Ollama", "0.40.16", kind), plain);
+        // As older builds kept it.
+        assert_eq!(
+            sentence("Ollama", "0.40.16", &format!("{OLDER_WORDS}{kind}")),
+            plain
+        );
+        assert_eq!(
+            sentence("Ollama", "0.40.16", "it doesn't run 5-bit MLX layers"),
+            "Ollama 0.40.16 can't run this model: it doesn't run 5-bit MLX layers."
+        );
+    }
+
+    #[test]
+    fn only_an_answer_about_the_model_is_kept() {
+        assert!(is_about_the_model(
+            r#"unsupported MLX architecture: model "X""#
+        ));
+        assert!(is_about_the_model("Unknown data type: F8_E4M3"));
+        assert!(!is_about_the_model("write /tmp/x: no space left on device"));
+        assert!(!is_about_the_model("signal: killed"));
+        assert!(!is_about_the_model("it gave no reason"));
     }
 }

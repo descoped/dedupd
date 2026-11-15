@@ -326,7 +326,8 @@ pub fn status(address: String) -> Result<DaemonStatus, ClientError> {
 /// Fetch a model into the store and place it into `apps` (`bionic`,
 /// `ollama`, `hf`). Returns when the daemon has finished, which for a large
 /// model takes as long as the download; `status` reports progress meanwhile.
-/// With `offline`, only what is archived is used.
+/// With `offline`, only what is archived is used. With `activation`, the job
+/// is shown as an activation of a stored model rather than a download.
 #[uniffi::export]
 pub fn pull(
     address: String,
@@ -334,9 +335,11 @@ pub fn pull(
     apps: Vec<String>,
     include: Vec<String>,
     offline: bool,
+    activation: bool,
 ) -> Result<PullResult, ClientError> {
     let body = serde_json::json!({
         "model": model, "apps": apps, "include": include, "offline": offline,
+        "kind": kind(activation),
     });
     let sent = agent(None).post(url(&address, "pull")).send_json(&body);
     finish::<WirePull>(&address, sent).map(PullResult::from)
@@ -416,6 +419,18 @@ pub fn downloads(address: String) -> Result<Downloads, ClientError> {
     get(&address, "downloads", QUICK)
 }
 
+/// What the daemon calls a job of this kind.
+fn kind(activation: bool) -> &'static str {
+    if activation { "activation" } else { "download" }
+}
+
+/// What happened to the models in the apps, newest first: activations,
+/// deactivations, archives and restores, each with its result.
+#[uniffi::export]
+pub fn activity(address: String) -> Result<Vec<ActivityEntry>, ClientError> {
+    get::<WireActivity>(&address, "activity", QUICK).map(|w| w.entries)
+}
+
 /// One download with its files and its history.
 #[uniffi::export]
 pub fn download(address: String, id: i64) -> Result<JobDetail, ClientError> {
@@ -426,6 +441,8 @@ pub fn download(address: String, id: i64) -> Result<JobDetail, ClientError> {
 /// `org/repo@revision`) to be activated in `apps`. Returns at once; the
 /// event stream tells how it goes. With `offline`, only what dedupd has kept
 /// is used, which activates a stored model without asking the provider.
+/// With `activation`, the job is shown as an activation rather than a
+/// download.
 #[uniffi::export]
 pub fn enqueue(
     address: String,
@@ -433,9 +450,11 @@ pub fn enqueue(
     apps: Vec<String>,
     include: Vec<String>,
     offline: bool,
+    activation: bool,
 ) -> Result<Enqueued, ClientError> {
     let body = serde_json::json!({
         "model": model, "apps": apps, "include": include, "offline": offline,
+        "kind": kind(activation),
     });
     post(&address, "downloads", &body, QUICK)
 }

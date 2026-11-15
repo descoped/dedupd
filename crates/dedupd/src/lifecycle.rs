@@ -3,9 +3,9 @@
 
 use crate::{Opened, human};
 use anyhow::{Result, bail};
-use dedupd_core::archive;
 use dedupd_core::maintain::{self, UnplacePlan};
 use dedupd_core::place::App;
+use dedupd_core::{activity, archive};
 use std::time::Instant;
 
 /// Says how far a move is, one line per file, and nothing twice.
@@ -88,7 +88,20 @@ pub fn cmd_deactivate(o: &Opened, repo: &str, apps: Vec<App>, apply: bool) -> Re
     for app in apps {
         let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, repo, app)?;
         let done = match apply {
-            true => Some(maintain::unplace_apply(&e.db, &e.dirs, &plan)?),
+            true => {
+                let done = maintain::unplace_apply(&e.db, &e.dirs, &plan);
+                activity::record(
+                    &o.home,
+                    activity::Action::Deactivate,
+                    repo,
+                    Some(app.as_str()),
+                    match &done {
+                        Ok(_) => Ok(format!("Deactivated in {}", app.title())),
+                        Err(e) => Err(format!("{e:#}")),
+                    },
+                );
+                Some(done?)
+            }
             false => None,
         };
         pending |= !plan.remove.is_empty() || !plan.links.is_empty();
@@ -140,8 +153,18 @@ pub fn cmd_archive(o: &Opened, repo: &str, apply: bool) -> Result<()> {
     }
     let started = Instant::now();
     let mut said = Progress::new("checked", plan.bytes);
-    let report =
-        archive::archive_apply(&e.db, &e.store, &e.dirs, repo, &mut |size| said.add(size))?;
+    let report = archive::archive_apply(&e.db, &e.store, &e.dirs, repo, &mut |size| said.add(size));
+    activity::record(
+        &o.home,
+        activity::Action::Archive,
+        repo,
+        None,
+        match &report {
+            Ok(_) => Ok("Moved to the archive disk".into()),
+            Err(e) => Err(format!("{e:#}")),
+        },
+    );
+    let report = report?;
     for (app, files) in &report.deactivated {
         println!("{app}: removed {files} files.");
     }
@@ -183,7 +206,22 @@ pub fn cmd_restore(o: &Opened, repo: &str) -> Result<()> {
     );
     let started = Instant::now();
     let mut said = Progress::new("copied", plan.bytes);
-    let report = archive::restore(&e.db, &e.store, repo, &mut |size| said.add(size))?;
+    let report = archive::restore(&e.db, &e.store, repo, &mut |size| said.add(size));
+    activity::record(
+        &o.home,
+        activity::Action::Restore,
+        repo,
+        None,
+        match &report {
+            Ok(r) if r.missing.is_empty() => Ok("Brought back from the archive disk".into()),
+            Ok(r) => Err(format!(
+                "{} files are neither on the internal disk nor on the archive disk",
+                r.missing.len()
+            )),
+            Err(e) => Err(format!("{e:#}")),
+        },
+    );
+    let report = report?;
     println!(
         "Restored {repo} in {:.0?}: {} files, {}. It is in no app yet; `dedupd activate <model> --for <apps>` puts it into one.",
         started.elapsed(),

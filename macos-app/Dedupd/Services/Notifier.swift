@@ -19,11 +19,18 @@ struct Notice: Equatable, Sendable {
                 return nil
             }
             switch job.phase {
+            case .done where job.isActivation:
+                // An activation is seen where it was asked for; the owner
+                // hears only when an app did not take the model.
+                guard !job.missedApps.isEmpty else {
+                    return nil
+                }
+                return Notice(id: "download-\(job.id)", title: job.repo, body: Self.sentence(job.outcomeText))
             case .done:
                 return Notice(
                     id: "download-\(job.id)",
                     title: "Downloaded \(job.model)",
-                    body: "\(ByteFormat.string(job.bytesTotal)). \(job.outcomeText)."
+                    body: "\(ByteFormat.string(job.bytesTotal)). \(Self.sentence(job.outcomeText))"
                 )
             case .needsAttention:
                 return Notice(
@@ -35,6 +42,13 @@ struct Notice: Equatable, Sendable {
                 return nil
             }
         }
+    }
+}
+
+extension Notice {
+    /// The text with one full stop at its end.
+    static func sentence(_ text: String) -> String {
+        text.hasSuffix(".") ? text : text + "."
     }
 }
 

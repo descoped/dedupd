@@ -135,6 +135,9 @@ extension Job {
         }
     }
 
+    /// The job puts a stored model into apps, rather than fetching one.
+    var isActivation: Bool { kind == "activation" }
+
     /// The apps asked for that did not take the model, once the job is done.
     var missedApps: [String] {
         phase == .done ? apps.filter { !activated.contains($0) } : []

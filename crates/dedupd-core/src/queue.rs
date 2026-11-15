@@ -124,6 +124,27 @@ pub struct Event {
     pub text: String,
 }
 
+/// What a job is for, as the one who asked for it put it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobKind {
+    /// Fetch a model, and put it into the apps named.
+    #[default]
+    Download,
+    /// Put a model that is stored into the apps named; anything missing is
+    /// fetched on the way.
+    Activation,
+}
+
+impl JobKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            JobKind::Download => "download",
+            JobKind::Activation => "activation",
+        }
+    }
+}
+
 /// One job, as it is kept in the database and shown to the owner.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobRecord {
@@ -136,6 +157,9 @@ pub struct JobRecord {
     pub include: Vec<String>,
     pub apps: Vec<App>,
     pub offline: bool,
+    /// Older builds kept no kind; their jobs read as downloads.
+    #[serde(default)]
+    pub kind: JobKind,
     pub state: State,
     /// Why the job is waiting or needs attention, in words.
     pub detail: Option<String>,
@@ -176,6 +200,18 @@ impl JobRecord {
         if self.events.len() > MAX_EVENTS {
             let extra = self.events.len() - MAX_EVENTS;
             self.events.drain(..extra);
+        }
+    }
+
+    /// Where the job belongs: with the downloads, or with the activations.
+    /// A job that was asked as a download but found every file stored, and
+    /// so only put the model into apps, is an activation too.
+    pub fn shown_as(&self) -> JobKind {
+        let fetched = self.outcome.as_ref().and_then(|o| o["downloaded"].as_u64());
+        if self.kind == JobKind::Activation || (fetched == Some(0) && !self.apps.is_empty()) {
+            JobKind::Activation
+        } else {
+            JobKind::Download
         }
     }
 
@@ -377,6 +413,7 @@ impl Queue {
         include: Vec<String>,
         apps: Vec<App>,
         offline: bool,
+        kind: JobKind,
     ) -> Result<i64> {
         let req = PullRequest::from_spec(model, include, apps, offline, 1)?;
         let id = self.engine.db().insert_download(State::Queued.as_str())?;
@@ -390,6 +427,7 @@ impl Queue {
             include: req.selection.include,
             apps: req.apps,
             offline,
+            kind,
             state: State::Queued,
             detail: None,
             wait_until: None,
@@ -756,6 +794,13 @@ impl Queue {
                 // answer. The outcome says which apps took it and why the
                 // others did not (`JobRecord::activated` and `notes`).
                 let outcome = pull::outcome(&req, plan, files, downloaded, placed, notes);
+                crate::activity::record_activations(
+                    self.engine.store.home(),
+                    &req.repo,
+                    &req.apps,
+                    &outcome.placed,
+                    &outcome.notes,
+                );
                 {
                     let mut r = job.record();
                     r.bytes_done = r.bytes_total;

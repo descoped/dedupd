@@ -8,7 +8,7 @@ use common::{COMMIT, PART_SIZE, REPO, Ranged, engine, git_oid, sha256};
 use dedupd_core::Home;
 use dedupd_core::place::App;
 use dedupd_core::pull::Engine;
-use dedupd_core::queue::{FileStage, JobRecord, Queue, State};
+use dedupd_core::queue::{FileStage, JobKind, JobRecord, Queue, State};
 use serde_json::json;
 use std::fs;
 use std::path::Path;
@@ -115,7 +115,9 @@ fn scene(up: &Upstream) -> Scene {
 }
 
 fn add(queue: &Arc<Queue>) -> i64 {
-    queue.add(MODEL, vec![], vec![App::Bionic], false).unwrap()
+    queue
+        .add(MODEL, vec![], vec![App::Bionic], false, JobKind::Download)
+        .unwrap()
 }
 
 async fn settled(queue: &Arc<Queue>, id: i64) -> JobRecord {
@@ -372,7 +374,11 @@ async fn a_model_the_hub_will_not_show_needs_the_owner() {
     // Asking again is allowed, and ends the same way.
     s.queue.resume(id).unwrap();
     assert_eq!(settled(&s.queue, id).await.state, State::NeedsAttention);
-    assert!(s.queue.add("not a model", vec![], vec![], false).is_err());
+    assert!(
+        s.queue
+            .add("not a model", vec![], vec![], false, JobKind::Download)
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -413,7 +419,7 @@ async fn a_job_says_which_apps_took_the_model_and_why_the_others_did_not() {
     // so it does not wait for the owner.
     let id = s
         .queue
-        .add(MODEL, vec![], vec![App::Ollama], false)
+        .add(MODEL, vec![], vec![App::Ollama], false, JobKind::Activation)
         .unwrap();
     let record = settled(&s.queue, id).await;
     assert_eq!(record.state, State::Done, "{}", history(&record));
@@ -432,7 +438,13 @@ async fn a_job_says_which_apps_took_the_model_and_why_the_others_did_not() {
     // the other did not.
     let id = s
         .queue
-        .add(MODEL, vec![], vec![App::Bionic, App::Ollama], false)
+        .add(
+            MODEL,
+            vec![],
+            vec![App::Bionic, App::Ollama],
+            false,
+            JobKind::Download,
+        )
         .unwrap();
     let record = settled(&s.queue, id).await;
     assert_eq!(record.state, State::Done, "{}", history(&record));
@@ -442,5 +454,58 @@ async fn a_job_says_which_apps_took_the_model_and_why_the_others_did_not() {
         "{}",
         history(&record)
     );
+    assert_eq!(fs::read(placed(&s.engine)).unwrap(), up.weights);
+    // Asked as a download, it found every file stored: it is shown with
+    // the activations.
+    assert_eq!(record.kind, JobKind::Download);
+    assert_eq!(record.shown_as(), JobKind::Activation);
+
+    // Each app's answer is in the activity list, newest first.
+    let entries = dedupd_core::activity::recent(&s.home, 10);
+    let seen: Vec<(Option<&str>, bool)> =
+        entries.iter().map(|e| (e.app.as_deref(), e.ok)).collect();
+    assert_eq!(
+        seen,
+        [
+            (Some("ollama"), false),
+            (Some("bionic"), true),
+            (Some("ollama"), false)
+        ]
+    );
+    assert_eq!(entries[1].text, "Activated in Bionic");
+    assert!(
+        !entries[0].text.starts_with("not placed"),
+        "{}",
+        entries[0].text
+    );
+}
+
+#[tokio::test]
+async fn an_activation_cut_off_while_placing_finishes_after_a_restart() {
+    let up = upstream(true).await;
+    let s = scene(&up);
+    let id = s
+        .queue
+        .add(MODEL, vec![], vec![App::Bionic], false, JobKind::Activation)
+        .unwrap();
+    let done = settled(&s.queue, id).await;
+    assert_eq!(done.state, State::Done, "{}", history(&done));
+
+    // The daemon stopped while the job was placing, part of the way: the
+    // record says "placing" and the app's copy is missing.
+    fs::remove_file(placed(&s.engine)).unwrap();
+    let mut cut = done.clone();
+    cut.state = State::Placing;
+    cut.finished_at = None;
+    s.engine
+        .db()
+        .save_download(id, "placing", &serde_json::to_string(&cut).unwrap())
+        .unwrap();
+
+    let restarted = Queue::open(s.engine.clone()).unwrap();
+    restarted.start();
+    let record = settled(&restarted, id).await;
+    assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert_eq!(record.activated(), ["bionic"]);
     assert_eq!(fs::read(placed(&s.engine)).unwrap(), up.weights);
 }

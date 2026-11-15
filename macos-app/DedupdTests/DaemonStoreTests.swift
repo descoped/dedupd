@@ -194,4 +194,55 @@ struct DaemonStoreTests {
         #expect(await eventually { await daemon.connection == .running })
         daemon.stop()
     }
+
+    @Test("Activations are kept apart from downloads, and only failures the owner has not seen count")
+    func activations() async {
+        let daemon = makeDaemon()
+        let activity = ActivityStore(daemon: daemon)
+        await daemon.receive(.connected)
+        var activating = FixtureData.job(
+            id: 9,
+            request: PullRequest(model: FixtureData.qwen, apps: ["ollama"], activation: true),
+            state: .placing
+        )
+        await daemon.receive(.event(event([job(1, .downloading, done: 10_000_000), activating])))
+
+        // The download is on the Downloads screen; the activation is not.
+        #expect(daemon.downloadJobs.map(\.id) == [1])
+        #expect(daemon.activeJobs.map(\.id) == [1])
+        #expect(activity.running.map(\.id) == [9])
+
+        // An activation that waits for the owner shows in the menu bar.
+        activating.state = JobState.needsAttention.rawValue
+        await daemon.receive(.event(event([activating])))
+        #expect(daemon.attentionJobs.isEmpty)
+        #expect(daemon.menuBarSymbol == "exclamationmark.triangle")
+
+        // The canned list holds one failure; once seen, it no longer counts.
+        await activity.reload()
+        #expect(activity.entries.count == FixtureData.activity.count)
+        #expect(activity.unseenFailures == 1)
+        activity.markSeen()
+        #expect(activity.unseenFailures == 0)
+        #expect(daemon.settings.activitySeen == FixtureData.activity[0].id)
+    }
+
+    @Test("An activation is told about only when an app did not take the model")
+    func activationNotices() {
+        let request = PullRequest(model: FixtureData.qwen, apps: ["ollama"], activation: true)
+        let running = FixtureData.job(id: 1, request: request, state: .placing)
+        let took = FixtureData.job(id: 1, request: request, state: .done)
+        let refused = FixtureData.job(
+            id: 1, request: request, state: .done,
+            notTakenBy: ["ollama": "not placed into Ollama: Ollama 0.40.16 can't run this model: no."]
+        )
+        #expect(Notice.notices(from: [running], to: [took]).isEmpty)
+        #expect(Notice.notices(from: [running], to: [refused]) == [
+            Notice(
+                id: "download-1",
+                title: FixtureData.qwen,
+                body: "Not activated in Ollama: Ollama 0.40.16 can't run this model: no."
+            ),
+        ])
+    }
 }

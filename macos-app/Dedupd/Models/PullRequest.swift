@@ -9,6 +9,9 @@ struct PullRequest: Equatable, Sendable {
     var include: [String] = []
     /// Use only what is archived; the provider is not asked.
     var offline = false
+    /// The model is stored and goes into apps: the job is shown with the
+    /// activations, not the downloads.
+    var activation = false
 }
 
 /// What can be done to a download in the queue. The raw value is the word

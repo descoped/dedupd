@@ -25,6 +25,7 @@ final class AppEnvironment {
     let navigation: Navigation
     let daemon: DaemonStore
     let library: LibraryStore
+    let activity: ActivityStore
     let discover: DiscoverStore
     let storage: StorageStore
     let service: ServiceStore
@@ -58,6 +59,7 @@ final class AppEnvironment {
         navigation = Navigation(pane: options.pane ?? .library)
         daemon = DaemonStore(client: client, settings: settings)
         library = LibraryStore(daemon: daemon)
+        activity = ActivityStore(daemon: daemon)
         discover = DiscoverStore(daemon: daemon)
         storage = StorageStore(daemon: daemon)
         service = ServiceStore(daemon: daemon, control: control)
@@ -100,6 +102,7 @@ extension View {
             .environment(environment.navigation)
             .environment(environment.daemon)
             .environment(environment.library)
+            .environment(environment.activity)
             .environment(environment.discover)
             .environment(environment.storage)
             .environment(environment.service)

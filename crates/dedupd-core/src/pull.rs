@@ -452,8 +452,9 @@ async fn place_into_ollama(
             )
         })
         .await?;
-        if let (Err(ollama_mlx::NotPlaced::Ollama(why)), Some(version), Some(config)) =
-            (&placed, installed.version(App::Ollama), config)
+        let version = installed.version(App::Ollama);
+        if let (Err(ollama_mlx::NotPlaced::Ollama(said)), Some(version), Some(config)) =
+            (&placed, version, config)
         {
             // Ollama's answer holds for this model and this version; keep it,
             // so the model is not offered to it again.
@@ -462,14 +463,22 @@ async fn place_into_ollama(
                 version: version.to_string(),
                 method: ollama_mlx::METHOD.to_string(),
                 config,
-                reason: why.clone(),
+                reason: said.clone(),
                 at: crate::now(),
             };
             if let Err(e) = Refusals::record(engine.store.home(), refusal) {
                 eprintln!("dedupd: could not keep Ollama's answer: {e:#}");
             }
         }
-        return Ok(placed.map_err(|why| format!("not placed into Ollama: {why}")));
+        return Ok(placed.map_err(|why| {
+            let why = match (&why, version) {
+                (ollama_mlx::NotPlaced::Ollama(said), Some(version)) => {
+                    crate::refusals::sentence("Ollama", version, said)
+                }
+                _ => why.to_string(),
+            };
+            format!("not placed into Ollama: {why}")
+        }));
     }
     let tag = req
         .selection

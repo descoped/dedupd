@@ -63,13 +63,24 @@ final class DaemonStore {
 
     var isRunning: Bool { connection == .running }
 
+    /// Every job in the daemon's queue: downloads and activations.
     var jobs: [Job] { downloads?.jobs ?? [] }
 
+    /// The jobs that fetch files; the Downloads screen lists these.
+    var downloadJobs: [Job] { jobs.filter { !$0.isActivation } }
+
+    /// The jobs that put a stored model into apps; the Activity screen
+    /// shows the ones that are not finished.
+    var activationJobs: [Job] { jobs.filter(\.isActivation) }
+
     /// The downloads the daemon is working on or will get to.
-    var activeJobs: [Job] { jobs.filter { $0.phase.isActive } }
+    var activeJobs: [Job] { downloadJobs.filter { $0.phase.isActive } }
 
     /// The downloads that wait for the owner.
-    var attentionJobs: [Job] { jobs.filter { $0.phase == .needsAttention } }
+    var attentionJobs: [Job] { downloadJobs.filter { $0.phase == .needsAttention } }
+
+    /// Downloads or activations that wait for the owner.
+    var needsOwner: Bool { jobs.contains { $0.phase == .needsAttention } }
 
     var isScanning: Bool { scanActivity == .running }
 
@@ -92,7 +103,7 @@ final class DaemonStore {
         case .notRunning:
             "square.stack.3d.up.slash"
         case .running:
-            if !attentionJobs.isEmpty {
+            if needsOwner {
                 "exclamationmark.triangle"
             } else if !activeJobs.isEmpty {
                 "arrow.down.circle"

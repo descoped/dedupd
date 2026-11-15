@@ -13,7 +13,7 @@ struct MenuPanel: View {
             if daemon.connection == .notRunning {
                 notRunning
             } else {
-                if !daemon.jobs.isEmpty {
+                if !daemon.downloadJobs.isEmpty {
                     MenuDownloads()
                 }
                 if let status = daemon.status {

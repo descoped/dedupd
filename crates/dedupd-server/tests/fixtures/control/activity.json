@@ -1,0 +1,31 @@
+{
+  "entries": [
+    {
+      "action": "archive",
+      "app": null,
+      "at": 1700000000,
+      "id": 1700000000003,
+      "ok": true,
+      "repo": "org/Repo-GGUF",
+      "text": "Moved to the archive disk"
+    },
+    {
+      "action": "activate",
+      "app": "hf",
+      "at": 1700000000,
+      "id": 1700000000002,
+      "ok": true,
+      "repo": "org/Repo-GGUF",
+      "text": "Activated in the Hugging Face cache"
+    },
+    {
+      "action": "activate",
+      "app": "bionic",
+      "at": 1700000000,
+      "id": 1700000000001,
+      "ok": true,
+      "repo": "org/Repo-GGUF",
+      "text": "Activated in Bionic"
+    }
+  ]
+}

@@ -17,6 +17,7 @@ struct MainWindow: View {
             case .library: LibraryView()
             case .discover: DiscoverView()
             case .downloads: DownloadsView()
+            case .activity: ActivityView()
             case .storage: StorageView()
             case .daemon: DaemonView()
             }
@@ -45,6 +46,7 @@ struct MainWindow: View {
 struct Sidebar: View {
     @Environment(Navigation.self) private var navigation
     @Environment(DaemonStore.self) private var daemon
+    @Environment(ActivityStore.self) private var activity
 
     private var selection: Binding<Pane?> {
         Binding {
@@ -62,6 +64,7 @@ struct Sidebar: View {
                 row(.library)
                 row(.discover)
                 row(.downloads, badge: daemon.activeJobs.count + daemon.attentionJobs.count)
+                row(.activity, badge: activity.unseenFailures + activity.running.count)
             }
             Section("This Mac") {
                 row(.storage)
@@ -70,6 +73,11 @@ struct Sidebar: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             SidebarStatus()
+        }
+        // The badge counts failures the owner has not seen, so the list is
+        // kept current while another screen is shown.
+        .task(id: daemon.revision) {
+            await activity.reload()
         }
     }
 

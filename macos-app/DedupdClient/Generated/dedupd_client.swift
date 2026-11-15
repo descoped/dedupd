@@ -974,6 +974,119 @@ public func FfiConverterTypeEventSubscription_lower(_ value: EventSubscription) 
 
 
 
+/**
+ * One thing that happened to a model in the apps.
+ */
+public struct ActivityEntry: Equatable, Hashable {
+    /**
+     * Grows with every entry, so the app can tell which ones it has shown.
+     */
+    public var id: Int64
+    /**
+     * Seconds since the Unix epoch.
+     */
+    public var at: Int64
+    /**
+     * `activate`, `deactivate`, `archive` or `restore`.
+     */
+    public var action: String
+    /**
+     * `org/repo`.
+     */
+    public var repo: String
+    /**
+     * The app, for an activation or a deactivation.
+     */
+    public var app: String?
+    public var ok: Bool
+    /**
+     * What happened, in a sentence; for a failure, why.
+     */
+    public var text: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Grows with every entry, so the app can tell which ones it has shown.
+         */id: Int64, 
+        /**
+         * Seconds since the Unix epoch.
+         */at: Int64, 
+        /**
+         * `activate`, `deactivate`, `archive` or `restore`.
+         */action: String, 
+        /**
+         * `org/repo`.
+         */repo: String, 
+        /**
+         * The app, for an activation or a deactivation.
+         */app: String?, ok: Bool, 
+        /**
+         * What happened, in a sentence; for a failure, why.
+         */text: String) {
+        self.id = id
+        self.at = at
+        self.action = action
+        self.repo = repo
+        self.app = app
+        self.ok = ok
+        self.text = text
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ActivityEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeActivityEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ActivityEntry {
+        return
+            try ActivityEntry(
+                id: FfiConverterInt64.read(from: &buf), 
+                at: FfiConverterInt64.read(from: &buf), 
+                action: FfiConverterString.read(from: &buf), 
+                repo: FfiConverterString.read(from: &buf), 
+                app: FfiConverterOptionString.read(from: &buf), 
+                ok: FfiConverterBool.read(from: &buf), 
+                text: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ActivityEntry, into buf: inout [UInt8]) {
+        FfiConverterInt64.write(value.id, into: &buf)
+        FfiConverterInt64.write(value.at, into: &buf)
+        FfiConverterString.write(value.action, into: &buf)
+        FfiConverterString.write(value.repo, into: &buf)
+        FfiConverterOptionString.write(value.app, into: &buf)
+        FfiConverterBool.write(value.ok, into: &buf)
+        FfiConverterString.write(value.text, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityEntry_lift(_ buf: RustBuffer) throws -> ActivityEntry {
+    return try FfiConverterTypeActivityEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeActivityEntry_lower(_ value: ActivityEntry) -> RustBuffer {
+    return FfiConverterTypeActivityEntry.lower(value)
+}
+
+
 public struct AppPresence: Equatable, Hashable {
     public var app: String
     public var files: UInt64
@@ -2414,6 +2527,11 @@ public struct Job: Equatable, Hashable {
     public var filesTotal: UInt64
     public var filesDone: UInt64
     /**
+     * `download`, or `activation` for a job that put a stored model into
+     * apps (also one asked as a download that found every file stored).
+     */
+    public var kind: String
+    /**
      * Once the job is done: the apps asked for that took the model. One in
      * `apps` and not here did not, and `notes` says why.
      */
@@ -2445,6 +2563,10 @@ public struct Job: Equatable, Hashable {
          * Bytes per second.
          */speed: UInt64, filesTotal: UInt64, filesDone: UInt64, 
         /**
+         * `download`, or `activation` for a job that put a stored model into
+         * apps (also one asked as a download that found every file stored).
+         */kind: String, 
+        /**
          * Once the job is done: the apps asked for that took the model. One in
          * `apps` and not here did not, and `notes` says why.
          */activated: [String], 
@@ -2469,6 +2591,7 @@ public struct Job: Equatable, Hashable {
         self.speed = speed
         self.filesTotal = filesTotal
         self.filesDone = filesDone
+        self.kind = kind
         self.activated = activated
         self.notes = notes
         self.createdAt = createdAt
@@ -2509,6 +2632,7 @@ public struct FfiConverterTypeJob: FfiConverterRustBuffer {
                 speed: FfiConverterUInt64.read(from: &buf), 
                 filesTotal: FfiConverterUInt64.read(from: &buf), 
                 filesDone: FfiConverterUInt64.read(from: &buf), 
+                kind: FfiConverterString.read(from: &buf), 
                 activated: FfiConverterSequenceString.read(from: &buf), 
                 notes: FfiConverterSequenceString.read(from: &buf), 
                 createdAt: FfiConverterInt64.read(from: &buf), 
@@ -2535,6 +2659,7 @@ public struct FfiConverterTypeJob: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.speed, into: &buf)
         FfiConverterUInt64.write(value.filesTotal, into: &buf)
         FfiConverterUInt64.write(value.filesDone, into: &buf)
+        FfiConverterString.write(value.kind, into: &buf)
         FfiConverterSequenceString.write(value.activated, into: &buf)
         FfiConverterSequenceString.write(value.notes, into: &buf)
         FfiConverterInt64.write(value.createdAt, into: &buf)
@@ -5323,6 +5448,31 @@ fileprivate struct FfiConverterSequenceString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeActivityEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [ActivityEntry]
+
+    public static func write(_ value: [ActivityEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeActivityEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ActivityEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ActivityEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeActivityEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeAppPresence: FfiConverterRustBuffer {
     typealias SwiftType = [AppPresence]
 
@@ -5895,6 +6045,18 @@ fileprivate struct FfiConverterSequenceTypeVariant: FfiConverterRustBuffer {
     }
 }
 /**
+ * What happened to the models in the apps, newest first: activations,
+ * deactivations, archives and restores, each with its result.
+ */
+public func activity(address: String)throws  -> [ActivityEntry]  {
+    return try  FfiConverterSequenceTypeActivityEntry.lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_activity(
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+})
+}
+/**
  * Archive `repo`: out of every app and off the internal disk, once the
  * archive disk holds a good copy of every file. Returns at once; the event
  * stream tells how it goes (`moving`).
@@ -5997,8 +6159,10 @@ public func downloads(address: String)throws  -> Downloads  {
  * `org/repo@revision`) to be activated in `apps`. Returns at once; the
  * event stream tells how it goes. With `offline`, only what dedupd has kept
  * is used, which activates a stored model without asking the provider.
+ * With `activation`, the job is shown as an activation rather than a
+ * download.
  */
-public func enqueue(address: String, model: String, apps: [String], include: [String], offline: Bool)throws  -> Enqueued  {
+public func enqueue(address: String, model: String, apps: [String], include: [String], offline: Bool, activation: Bool)throws  -> Enqueued  {
     return try  FfiConverterTypeEnqueued_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
         uniffiCallStatus in
     uniffi_dedupd_client_fn_func_enqueue(
@@ -6006,7 +6170,8 @@ public func enqueue(address: String, model: String, apps: [String], include: [St
         FfiConverterString.lower(model),
         FfiConverterSequenceString.lower(apps),
         FfiConverterSequenceString.lower(include),
-        FfiConverterBool.lower(offline),uniffiCallStatus
+        FfiConverterBool.lower(offline),
+        FfiConverterBool.lower(activation),uniffiCallStatus
     )
 })
 }
@@ -6126,9 +6291,10 @@ public func models(address: String)throws  -> [LibraryModel]  {
  * Fetch a model into the store and place it into `apps` (`bionic`,
  * `ollama`, `hf`). Returns when the daemon has finished, which for a large
  * model takes as long as the download; `status` reports progress meanwhile.
- * With `offline`, only what is archived is used.
+ * With `offline`, only what is archived is used. With `activation`, the job
+ * is shown as an activation of a stored model rather than a download.
  */
-public func pull(address: String, model: String, apps: [String], include: [String], offline: Bool)throws  -> PullResult  {
+public func pull(address: String, model: String, apps: [String], include: [String], offline: Bool, activation: Bool)throws  -> PullResult  {
     return try  FfiConverterTypePullResult_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
         uniffiCallStatus in
     uniffi_dedupd_client_fn_func_pull(
@@ -6136,7 +6302,8 @@ public func pull(address: String, model: String, apps: [String], include: [Strin
         FfiConverterString.lower(model),
         FfiConverterSequenceString.lower(apps),
         FfiConverterSequenceString.lower(include),
-        FfiConverterBool.lower(offline),uniffiCallStatus
+        FfiConverterBool.lower(offline),
+        FfiConverterBool.lower(activation),uniffiCallStatus
     )
 })
 }
@@ -6303,6 +6470,9 @@ private let initializationResult: InitializationResult = {
     if bindings_contract_version != scaffolding_contract_version {
         return InitializationResult.contractVersionMismatch
     }
+    if (uniffi_dedupd_client_checksum_func_activity() != 36637) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dedupd_client_checksum_func_archive_model() != 58074) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -6327,7 +6497,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_func_downloads() != 46143) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_func_enqueue() != 3116) {
+    if (uniffi_dedupd_client_checksum_func_enqueue() != 42840) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_forget() != 9779) {
@@ -6357,7 +6527,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_func_models() != 44225) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_func_pull() != 51545) {
+    if (uniffi_dedupd_client_checksum_func_pull() != 55567) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_restart() != 33512) {

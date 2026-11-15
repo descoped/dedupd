@@ -74,7 +74,8 @@ struct ContractTests {
         let address = server.address
         let result = try await Self.blocking {
             try DedupdClient.pull(
-                address: address, model: request.model, apps: request.apps, include: request.include, offline: request.offline
+                address: address, model: request.model, apps: request.apps, include: request.include, offline: request.offline,
+                activation: true
             )
         }
 
@@ -92,6 +93,21 @@ struct ContractTests {
         #expect(body["apps"] as? [String] == ["bionic"])
         #expect(body["include"] as? [String] == ["*.gguf"])
         #expect(body["offline"] as? Bool == true)
+        #expect(body["kind"] as? String == "activation")
+    }
+
+    @Test("Activity: what happened to the models, newest first")
+    func activity() async throws {
+        let server = try await Self.daemon(["GET /dedupd/v1/activity": .init(body: Self.recorded("activity"))])
+        defer { server.stop() }
+        let address = server.address
+        let entries = try await Self.blocking { try DedupdClient.activity(address: address) }
+
+        #expect(entries.map(\.action) == ["archive", "activate", "activate"])
+        #expect(entries.map(\.app) == [nil, "hf", "bionic"])
+        #expect(entries.allSatisfy { $0.ok })
+        #expect(entries[0].text == "Moved to the archive disk")
+        #expect(entries[0].id > entries[1].id)
     }
 
     @Test("Scan")

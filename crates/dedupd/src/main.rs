@@ -331,7 +331,8 @@ async fn cmd_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
         let apps = req.apps.iter().map(|a| a.as_str().to_string()).collect();
         let (model, include) = (model_spec, req.selection.include.clone());
         tokio::task::spawn_blocking(move || {
-            dedupd_client::pull(address, model, apps, include, offline)
+            // `activate` is a pull from the kept copy: an activation.
+            dedupd_client::pull(address, model, apps, include, offline, offline)
         })
         .await?
         .map_err(anyhow::Error::from)
@@ -340,6 +341,17 @@ async fn cmd_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
         // would have sent it.
         pull::pull(&o.engine, &req, &progress)
             .await
+            .inspect(|out| {
+                // What the daemon's queue would have noted, so the app's
+                // Activity list holds this too.
+                dedupd_core::activity::record_activations(
+                    &o.home,
+                    &out.repo,
+                    &req.apps,
+                    &out.placed,
+                    &out.notes,
+                );
+            })
             .and_then(|out| {
                 let sent = serde_json::to_string(&out)?;
                 Ok(dedupd_client::PullResult::from_json(&sent)?)
