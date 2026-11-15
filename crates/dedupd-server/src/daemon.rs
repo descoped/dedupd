@@ -60,7 +60,7 @@ pub async fn pass_with(
     };
     report.forgotten = scanned.forgotten as u64;
     adopt_new(server, repos, &scanned.files, &mut report).await?;
-    if server.config.reclaim != Some(false) {
+    if server.config.reclaim() {
         reclaim_duplicates(server, reclaim_age, &mut report).await?;
     }
     update_archive(server, &mut report).await?;
@@ -298,7 +298,7 @@ pub fn last_check(server: &Server) -> Option<i64> {
 /// Check the store once the last check is older than the configured number
 /// of days.
 async fn scheduled_verify(server: Arc<Server>) {
-    let days = server.config.verify_days.unwrap_or(7);
+    let days = server.config.verify_days();
     let marker = server.home.root().join("last-verify.txt");
     let due =
         days > 0 && file_age(&marker).is_none_or(|age| age >= Duration::from_secs(days * 86_400));
@@ -310,7 +310,7 @@ async fn scheduled_verify(server: Arc<Server>) {
 /// Run the background work until the task is aborted: a pass shortly after
 /// the app folders change, and one on a timer in case a change was missed.
 pub async fn run(server: Arc<Server>) {
-    let every = Duration::from_secs(server.config.scan_interval.unwrap_or(300).max(5));
+    let every = Duration::from_secs(server.config.scan_interval().max(5));
     let mut watched = watch(&server);
     // The store check takes hours on a large store; the passes go on
     // meanwhile, and a second check never starts before the first has ended.

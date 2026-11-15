@@ -349,18 +349,15 @@ fn config_answer(server: &Server) -> anyhow::Result<DaemonSettings> {
     Ok(DaemonSettings {
         path: path_text(&Config::path(&server.home)),
         listen: file.listen().to_string(),
-        hf_endpoint: file
-            .hf_endpoint
-            .clone()
-            .unwrap_or_else(|| dedupd_core::hub::DEFAULT_ENDPOINT.to_string()),
+        hf_endpoint: file.hf_endpoint().to_string(),
         archive: file.archive.as_deref().map(path_text),
         bionic_models: path_text(file.bionic_models.as_ref().unwrap_or(&dirs.bionic)),
         ollama_models: path_text(file.ollama_models.as_ref().unwrap_or(&dirs.ollama)),
         hf_cache: path_text(file.hf_cache.as_ref().unwrap_or(&dirs.hf_cache)),
-        reclaim: file.reclaim != Some(false),
-        set_env: file.set_env == Some(true),
-        verify_days: file.verify_days.unwrap_or(7),
-        scan_interval: file.scan_interval.unwrap_or(300),
+        reclaim: file.reclaim(),
+        set_env: file.set_env(),
+        verify_days: file.verify_days(),
+        scan_interval: file.scan_interval(),
         max_connections: file.max_connections() as u64,
         speed_limit: file.speed_limit(),
         restart_needed: fixed(&file) != fixed(&server.config),
