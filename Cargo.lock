@@ -492,6 +492,7 @@ dependencies = [
  "dedupd-core",
  "dedupd-server",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
