@@ -64,6 +64,10 @@ final class LibraryStore {
     var archiving: ArchivePlan?
 
     @ObservationIgnored private let daemon: DaemonStore
+    /// Count the reads of the list and of the details, so an answer that
+    /// comes back after a later one is dropped.
+    @ObservationIgnored private var listGeneration = 0
+    @ObservationIgnored private var detailGeneration = 0
 
     init(daemon: DaemonStore) {
         self.daemon = daemon
@@ -104,10 +108,23 @@ final class LibraryStore {
 
     /// Read the list again, and the selected model's details with it.
     func reload() async {
+        listGeneration += 1
+        let mine = listGeneration
+        let answer: Result<[LibraryModel], Error>
         do {
-            models = try await daemon.client.models(at: daemon.address)
-            failure = nil
+            answer = .success(try await daemon.client.models(at: daemon.address))
         } catch {
+            answer = .failure(error)
+        }
+        // A later reload is out; its answer is the newer one.
+        guard mine == listGeneration else {
+            return
+        }
+        switch answer {
+        case let .success(list):
+            models = list
+            failure = nil
+        case let .failure(error):
             failure = describe(error)
         }
         hasLoaded = true
@@ -126,6 +143,8 @@ final class LibraryStore {
             detail = .idle
             return
         }
+        detailGeneration += 1
+        let mine = detailGeneration
         if !quietly || detail.value == nil {
             detail = .loading
         }
@@ -135,8 +154,9 @@ final class LibraryStore {
         } catch {
             answer = .failed(describe(error))
         }
-        // The owner may have selected another model meanwhile.
-        if selected?.repo == model.repo {
+        // The owner may have selected another model, or a later read may
+        // have answered, meanwhile.
+        if mine == detailGeneration, selected?.repo == model.repo {
             detail = answer
         }
     }
