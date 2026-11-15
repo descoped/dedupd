@@ -196,13 +196,19 @@ async fn offload_frees_local_space_and_the_file_comes_back() {
     let sha = out[0].files[0].sha256.clone();
     {
         // Give the file an archived revision, as a pulled model has.
-        let db = fx.db.lock().unwrap();
-        db.conn()
-            .execute_batch(&format!(
-                "INSERT INTO revisions (id, repo_id, commit_sha, fetched_at, info_json, tree_json)
-                 VALUES (1, 1, 'c', 0, '{{}}', '[]');
-                 INSERT INTO revision_files VALUES (1, 'model.gguf', 70000, 'g', '{sha}');"
-            ))
+        let snap = dedupd_core::hub::Snapshot {
+            commit: "c".repeat(40),
+            info_json: "{}".into(),
+            tree_json: "[]".into(),
+            entries: vec![dedupd_core::hub::TreeEntry {
+                path: "model.gguf".into(),
+                size: 70_000,
+                git_oid: "g".into(),
+                lfs_sha256: Some(sha.clone()),
+            }],
+        };
+        let mut db = fx.db.lock().unwrap();
+        db.archive_snapshot("hf", "org/Cold", &"c".repeat(40), &snap)
             .unwrap();
     }
     archive::sync(&fx.db, &fx.store, &fx.archive, &mut |_, _| {}).unwrap();

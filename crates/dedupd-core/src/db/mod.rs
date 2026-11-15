@@ -12,6 +12,8 @@ use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
 
+pub mod library;
+
 /// `repos.provider` for Hugging Face repositories.
 pub const PROVIDER_HF: &str = "hf";
 /// `repos.provider` for models from an Ollama registry other than Hugging
@@ -279,10 +281,6 @@ impl Db {
             );
         }
         Ok(Self { conn })
-    }
-
-    pub fn conn(&self) -> &Connection {
-        &self.conn
     }
 
     /// Add a job to the download queue and return its id.
@@ -845,7 +843,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let n: i64 = db
-            .conn()
+            .conn
             .query_row("SELECT count(*) FROM repos", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1);
@@ -893,7 +891,7 @@ mod tests {
         db.upsert_blob("aa", 3, Some("oid")).unwrap();
         db.upsert_blob("aa", 3, None).unwrap();
         let oid: Option<String> = db
-            .conn()
+            .conn
             .query_row("SELECT git_oid FROM blobs WHERE sha256 = 'aa'", [], |r| {
                 r.get(0)
             })
