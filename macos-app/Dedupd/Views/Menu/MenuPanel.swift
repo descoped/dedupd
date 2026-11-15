@@ -273,17 +273,17 @@ private struct MenuDownloadRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
-            if let fraction = job.fraction, job.phase.isActive {
+            if let fraction = job.fraction, job.state.isActive {
                 ProgressView(value: fraction)
                     .controlSize(.small)
             }
-            Text(job.phase == .downloading ? "\(job.progressText) · \(job.statusText)" : job.statusText)
+            Text(job.state == .downloading ? "\(job.progressText) · \(job.statusText)" : job.statusText)
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .lineLimit(2)
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("\(job.model): \(job.phase.title), \(job.progressText)")
+        .accessibilityLabel("\(job.model): \(job.state.title), \(job.progressText)")
         .accessibilityIdentifier("download-progress")
     }
 }

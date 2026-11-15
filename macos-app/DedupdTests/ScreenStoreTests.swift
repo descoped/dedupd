@@ -64,9 +64,9 @@ struct LibraryStoreTests {
         await library.reload()
         library.selection = try #require(library.models.first { $0.repo == FixtureData.smolGGUF }).id
 
-        await library.planRemoval(from: "ollama")
+        await library.planRemoval(from: .ollama)
         let plan = try #require(library.removal)
-        #expect(plan.app == "ollama")
+        #expect(plan.app == .ollama)
         #expect(plan.remove.count == 4)
         #expect(plan.removed == nil, "nothing is removed by asking")
 
@@ -89,7 +89,7 @@ struct LibraryStoreTests {
 
         await library.applyArchive()
         #expect(library.archiving == nil)
-        #expect(await eventually { await daemon.moving?.kind == "archive" })
+        #expect(await eventually { await daemon.moving?.kind == .archive })
         #expect(library.move == nil, "a move that ended well needs no line of its own")
         await library.reload()
         let archived = try #require(library.selected)
@@ -100,7 +100,7 @@ struct LibraryStoreTests {
         #expect(library.detail.value?.variants.first?.isStored == false)
 
         await library.restore()
-        #expect(await eventually { await daemon.moving?.kind == "restore" })
+        #expect(await eventually { await daemon.moving?.kind == .restore })
         await library.reload()
         #expect(library.selected?.isArchived == false)
         #expect(library.selected?.apps.isEmpty == false, "the canned daemon knows the model as it was")
@@ -140,8 +140,8 @@ struct LibraryStoreTests {
         let variant = try #require(FixtureData.detail(FixtureData.smolMLX)?.variants.first)
         await library.place(variant, into: .bionic)
         #expect(await eventually { await daemon.jobs.first?.model == FixtureData.smolMLX })
-        #expect(daemon.jobs.first?.apps == ["bionic"])
-        #expect(daemon.jobs.first?.phase == .done, "what is stored is activated without a download")
+        #expect(daemon.jobs.first?.apps == [.bionic])
+        #expect(daemon.jobs.first?.state == .done, "what is stored is activated without a download")
     }
 
     @Test("With no daemon the failure is kept for the screen to show")
@@ -254,7 +254,7 @@ struct DiscoverStoreTests {
         await discover.download(variant, into: [.ollama])
 
         #expect(await eventually { await daemon.jobs.first?.model == "unsloth/Qwen3.8-9B-Instruct-GGUF:Q8_0" })
-        #expect(daemon.jobs.first?.apps == ["ollama"])
+        #expect(daemon.jobs.first?.apps == [.ollama])
         #expect(discover.detail.value?.downloading == true, "the model's page says it is being downloaded")
     }
 
@@ -317,10 +317,10 @@ struct MaintenanceStoreTests {
         let daemon = await startedDaemon()
         let service = ServiceStore(daemon: daemon, control: FixtureAgent())
         await service.reload()
-        await service.update([SettingChange(key: "speed_limit", value: .number(value: 5_000_000))])
+        await service.update([SettingChange(key: .speedLimit, value: .number(value: 5_000_000))])
         #expect(service.settings.value?.speedLimit == 5_000_000)
         #expect(service.settings.value?.restartNeeded == false, "the download limits take effect at once")
-        await service.update([SettingChange(key: "listen", value: .text(value: "127.0.0.1:9000"))])
+        await service.update([SettingChange(key: .listen, value: .text(value: "127.0.0.1:9000"))])
         #expect(service.settings.value?.restartNeeded == true)
     }
 

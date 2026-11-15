@@ -4,88 +4,17 @@
 //! stream says how far it is.
 
 use crate::Server;
-use dedupd_core::archive::{self, ArchivePlan, RestorePlan};
-use dedupd_core::queue::State;
-use serde_json::{Value, json as j};
+use dedupd_api::jobs::JobState;
+use dedupd_api::moves::{ModelMove, MoveKind};
+use dedupd_core::archive;
 use std::sync::Arc;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Kind {
-    Archive,
-    Restore,
-}
-
-impl Kind {
-    const fn as_str(self) -> &'static str {
-        match self {
-            Kind::Archive => "archive",
-            Kind::Restore => "restore",
-        }
-    }
-}
-
-/// The move that is running, or the last one that ran.
-#[derive(Debug, Clone, Default, serde::Serialize)]
-pub struct MoveState {
-    /// `archive` or `restore`.
-    pub kind: String,
-    pub repo: String,
-    pub running: bool,
-    /// Seconds since the epoch.
-    pub started_at: i64,
-    pub finished_at: Option<i64>,
-    /// The size of the files to move, and of those dealt with so far: for
-    /// an archive the copies checked on the archive disk, for a restore the
-    /// files copied back.
-    pub bytes_total: u64,
-    pub bytes_done: u64,
-    /// Once finished: the files that left or came back to the internal disk.
-    pub files: u64,
-    /// Once an archive has finished: the stored files that stayed on the
-    /// internal disk, because another model or an app still uses them.
-    pub kept: u64,
-    pub error: Option<String>,
-}
-
-pub(crate) fn archive_plan_answer(plan: &ArchivePlan) -> Value {
-    j!({
-        "repo": plan.repo,
-        "archive": plan.archive,
-        "deactivate": plan.deactivate.iter().map(|d| j!({
-            "app": d.app,
-            "files": d.remove.len(),
-            "bytes": d.bytes,
-            "keep": d.keep.iter()
-                .map(|(path, why)| j!({"path": path, "why": why}))
-                .collect::<Vec<_>>(),
-        })).collect::<Vec<_>>(),
-        "files": plan.remove.len(),
-        "bytes": plan.bytes,
-        "copy_files": plan.copy_files,
-        "copy_bytes": plan.copy_bytes,
-        "keep": plan.keep,
-    })
-}
-
-pub(crate) fn restore_plan_answer(plan: &RestorePlan) -> Value {
-    j!({
-        "repo": plan.repo,
-        "archive": plan.archive,
-        "files": plan.copy.len(),
-        "bytes": plan.bytes,
-        "free": plan.free,
-        "missing": plan.missing.len(),
-    })
-}
-
-/// What the move would do, without doing it.
-pub(crate) fn plan(server: &Server, kind: Kind, repo: &str) -> anyhow::Result<Value> {
+/// The size of the files a move would deal with.
+fn bytes(server: &Server, kind: MoveKind, repo: &str) -> anyhow::Result<u64> {
     let e = &server.engine;
     Ok(match kind {
-        Kind::Archive => {
-            archive_plan_answer(&archive::archive_plan(&e.db, &e.store, &e.dirs, repo)?)
-        }
-        Kind::Restore => restore_plan_answer(&archive::restore_plan(&e.db, &e.store, repo)?),
+        MoveKind::Archive => archive::archive_plan(&e.db, &e.store, &e.dirs, repo)?.bytes,
+        MoveKind::Restore => archive::restore_plan(&e.db, &e.store, repo)?.bytes,
     })
 }
 
@@ -99,11 +28,15 @@ fn epoch() -> i64 {
 /// Start the move in the background. Refused, with the reason, when another
 /// move is running, when the model is being downloaded, or when the plan
 /// cannot be made (no archive disk, a model dedupd does not have).
-pub(crate) async fn start(server: &Arc<Server>, kind: Kind, repo: String) -> Result<(), String> {
-    let busy = |s: State| {
+pub(crate) async fn start(
+    server: &Arc<Server>,
+    kind: MoveKind,
+    repo: String,
+) -> Result<(), String> {
+    let busy = |s: JobState| {
         !matches!(
             s,
-            State::Done | State::Cancelled | State::NeedsAttention | State::Paused
+            JobState::Done | JobState::Cancelled | JobState::NeedsAttention | JobState::Paused
         )
     };
     if server
@@ -119,29 +52,32 @@ pub(crate) async fn start(server: &Arc<Server>, kind: Kind, repo: String) -> Res
     }
     let total = {
         let (server, repo) = (server.clone(), repo.clone());
-        tokio::task::spawn_blocking(move || plan(&server, kind, &repo))
+        tokio::task::spawn_blocking(move || bytes(&server, kind, &repo))
             .await
             .map_err(|e| e.to_string())?
-            .map_err(|e| format!("{e:#}"))?["bytes"]
-            .as_u64()
-            .unwrap_or(0)
+            .map_err(|e| format!("{e:#}"))?
     };
     let mut refused = None;
     server.moving.send_if_modified(|state| {
         if let Some(now) = state.as_ref().filter(|s| s.running) {
             refused = Some(format!(
                 "dedupd is still working on {} ({}); try again when that has finished",
-                now.repo, now.kind
+                now.repo,
+                now.kind.as_str()
             ));
             return false;
         }
-        *state = Some(MoveState {
-            kind: kind.as_str().to_string(),
+        *state = Some(ModelMove {
+            kind,
             repo: repo.clone(),
             running: true,
             started_at: epoch(),
+            finished_at: None,
             bytes_total: total,
-            ..MoveState::default()
+            bytes_done: 0,
+            files: 0,
+            kept: 0,
+            error: None,
         });
         true
     });
@@ -164,12 +100,12 @@ pub(crate) async fn start(server: &Arc<Server>, kind: Kind, repo: String) -> Res
                     });
                 };
                 Ok(match kind {
-                    Kind::Archive => {
+                    MoveKind::Archive => {
                         let r =
                             archive::archive_apply(&e.db, &e.store, &e.dirs, &repo, &mut on_file)?;
                         (r.files, r.freed, r.keep.len() as u64)
                     }
-                    Kind::Restore => {
+                    MoveKind::Restore => {
                         // A restore with files that are nowhere is an error.
                         let r = archive::restore(&e.db, &e.store, &repo, &mut on_file)?;
                         (r.files, r.bytes, 0)

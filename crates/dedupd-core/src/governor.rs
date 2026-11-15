@@ -8,7 +8,6 @@
 //! each clean round, half after trouble. Last, the owner's own limits: a
 //! ceiling on connections and an optional ceiling on bytes per second.
 
-use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -81,30 +80,6 @@ impl Drop for Permit {
             governor.freed.notify_one();
         }
     }
-}
-
-/// One budget as the provider last reported it.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct BudgetState {
-    pub name: String,
-    pub quota: u64,
-    pub remaining: u64,
-    /// Seconds until the budget is full again.
-    pub resets_in: u64,
-}
-
-/// What the governor is doing, for the owner to look at.
-#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
-pub struct GovernorState {
-    pub connections: usize,
-    /// Connections it would use right now.
-    pub window: usize,
-    pub max_connections: usize,
-    /// Seconds left of a pause the server asked for; 0 when there is none.
-    pub hold_seconds: u64,
-    /// Bytes per second; 0 is no limit.
-    pub speed_limit: u64,
-    pub budgets: Vec<BudgetState>,
 }
 
 enum Wait {
@@ -257,14 +232,15 @@ impl Governor {
         self.lock().max
     }
 
-    pub fn state(&self) -> GovernorState {
+    /// How hard the daemon is asking right now, for the owner to see.
+    pub fn state(&self) -> dedupd_api::jobs::Governor {
         let s = self.lock();
         let now = Instant::now();
-        let mut budgets: Vec<BudgetState> = s
+        let mut budgets: Vec<dedupd_api::jobs::Budget> = s
             .budgets
             .iter()
             .filter(|(_, b)| b.resets_at > now)
-            .map(|(name, b)| BudgetState {
+            .map(|(name, b)| dedupd_api::jobs::Budget {
                 name: name.clone(),
                 quota: b.quota,
                 remaining: b.remaining,
@@ -272,10 +248,10 @@ impl Governor {
             })
             .collect();
         budgets.sort_by(|a, b| a.name.cmp(&b.name));
-        GovernorState {
-            connections: s.in_flight,
-            window: s.allowed(),
-            max_connections: s.max,
+        dedupd_api::jobs::Governor {
+            connections: s.in_flight as u64,
+            window: s.allowed() as u64,
+            max_connections: s.max as u64,
             hold_seconds: s
                 .hold_until
                 .map(|h| h.saturating_duration_since(now).as_secs())

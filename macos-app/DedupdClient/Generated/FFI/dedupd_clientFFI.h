@@ -355,7 +355,7 @@ RustBuffer uniffi_dedupd_client_fn_func_downloads(RustBuffer address, RustCallSt
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ENQUEUE
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ENQUEUE
-RustBuffer uniffi_dedupd_client_fn_func_enqueue(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, int8_t activation, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_dedupd_client_fn_func_enqueue(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, RustBuffer kind, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_FORGET
@@ -405,7 +405,7 @@ RustBuffer uniffi_dedupd_client_fn_func_models(RustBuffer address, RustCallStatu
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_PULL
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_PULL
-RustBuffer uniffi_dedupd_client_fn_func_pull(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, int8_t activation, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_dedupd_client_fn_func_pull(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, RustBuffer kind, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTART

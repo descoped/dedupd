@@ -102,8 +102,8 @@ struct DaemonStoreTests {
         await daemon.receive(.event(event([job(1, .downloading)], seq: 2)))
         await daemon.receive(.event(event([job(1, .done)], seq: 3)))
         #expect(seen.count == 2)
-        #expect(seen.last?.0.first?.phase == .downloading)
-        #expect(seen.last?.1.first?.phase == .done)
+        #expect(seen.last?.0.first?.state == .downloading)
+        #expect(seen.last?.1.first?.state == .done)
     }
 
     @Test("Following a daemon delivers its queue without asking for it")
@@ -125,11 +125,11 @@ struct DaemonStoreTests {
     @Test("A download the app asks for shows up through the event stream")
     func enqueue() async {
         let daemon = await startedDaemon()
-        let taken = await daemon.enqueue(PullRequest(model: "unsloth/New-GGUF:Q4_K_M", apps: ["ollama"]))
+        let taken = await daemon.enqueue(PullRequest(model: "unsloth/New-GGUF:Q4_K_M", apps: [.ollama]))
         #expect(taken)
         #expect(await eventually { await daemon.jobs.first?.model == "unsloth/New-GGUF:Q4_K_M" })
-        #expect(daemon.jobs.first?.phase == .queued)
-        #expect(daemon.jobs.first?.apps == ["ollama"])
+        #expect(daemon.jobs.first?.state == .queued)
+        #expect(daemon.jobs.first?.apps == [.ollama])
         daemon.stop()
     }
 
@@ -137,16 +137,16 @@ struct DaemonStoreTests {
     func actions() async throws {
         let daemon = await startedDaemon(.downloading)
         _ = await eventually { await !daemon.jobs.isEmpty }
-        let running = try #require(daemon.jobs.first { $0.phase == .downloading })
+        let running = try #require(daemon.jobs.first { $0.state == .downloading })
 
         await daemon.act(.pause, on: running)
-        #expect(await eventually { await daemon.jobs.first { $0.id == running.id }?.phase == .paused })
+        #expect(await eventually { await daemon.jobs.first { $0.id == running.id }?.state == .paused })
         await daemon.act(.resume, on: running)
-        #expect(await eventually { await daemon.jobs.first { $0.id == running.id }?.phase == .downloading })
+        #expect(await eventually { await daemon.jobs.first { $0.id == running.id }?.state == .downloading })
         await daemon.act(.cancel, on: running)
-        #expect(await eventually { await daemon.jobs.first { $0.id == running.id }?.phase == .cancelled })
+        #expect(await eventually { await daemon.jobs.first { $0.id == running.id }?.state == .cancelled })
         await daemon.clearFinished()
-        #expect(await eventually { await !daemon.jobs.contains { $0.phase.isFinished } })
+        #expect(await eventually { await !daemon.jobs.contains { $0.state.isFinished } })
         #expect(daemon.problem == nil)
         daemon.stop()
     }
@@ -202,7 +202,7 @@ struct DaemonStoreTests {
         await daemon.receive(.connected)
         var activating = FixtureData.job(
             id: 9,
-            request: PullRequest(model: FixtureData.qwen, apps: ["ollama"], activation: true),
+            request: PullRequest(model: FixtureData.qwen, apps: [.ollama], kind: .activation),
             state: .placing
         )
         await daemon.receive(.event(event([job(1, .downloading, done: 10_000_000), activating])))
@@ -213,7 +213,7 @@ struct DaemonStoreTests {
         #expect(activity.running.map(\.id) == [9])
 
         // An activation that waits for the owner shows in the menu bar.
-        activating.state = JobState.needsAttention.rawValue
+        activating.state = .needsAttention
         await daemon.receive(.event(event([activating])))
         #expect(daemon.attentionJobs.isEmpty)
         #expect(daemon.menuBarSymbol == "exclamationmark.triangle")
@@ -233,12 +233,12 @@ struct DaemonStoreTests {
 
     @Test("An activation is told about only when an app did not take the model")
     func activationNotices() {
-        let request = PullRequest(model: FixtureData.qwen, apps: ["ollama"], activation: true)
+        let request = PullRequest(model: FixtureData.qwen, apps: [.ollama], kind: .activation)
         let running = FixtureData.job(id: 1, request: request, state: .placing)
         let took = FixtureData.job(id: 1, request: request, state: .done)
         let refused = FixtureData.job(
             id: 1, request: request, state: .done,
-            notTakenBy: ["ollama": "Ollama 0.40.16 can't run this model: no."]
+            notTakenBy: [.ollama: "Ollama 0.40.16 can't run this model: no."]
         )
         #expect(Notice.notices(from: [running], to: [took]).isEmpty)
         #expect(Notice.notices(from: [running], to: [refused]) == [

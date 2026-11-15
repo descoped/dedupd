@@ -16,11 +16,11 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use crate::paths::Home;
+use dedupd_api::app::App;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Refusal {
-    /// The app, as its profile names it.
-    pub app: String,
+    pub app: App,
     /// The version of the app that was asked.
     pub version: String,
     /// The method that was tried.
@@ -64,7 +64,7 @@ impl Refusals {
 
     /// The answer `version` of `app` gave for the model with this
     /// `config.json`, by `method`.
-    pub fn find(&self, app: &str, version: &str, method: &str, config: &str) -> Option<&Refusal> {
+    pub fn find(&self, app: App, version: &str, method: &str, config: &str) -> Option<&Refusal> {
         self.list.iter().find(|r| {
             r.app == app && r.version == version && r.method == method && r.config == config
         })
@@ -150,7 +150,7 @@ mod tests {
 
     fn refusal(version: &str, reason: &str) -> Refusal {
         Refusal {
-            app: "ollama".into(),
+            app: App::Ollama,
             version: version.into(),
             method: "clone-with-rewritten-index".into(),
             config: "c0".into(),
@@ -166,7 +166,7 @@ mod tests {
         let home = Home::new(dir.path());
         assert!(
             Refusals::load(&home)
-                .find("ollama", "0.40.16", "clone-with-rewritten-index", "c0")
+                .find(App::Ollama, "0.40.16", "clone-with-rewritten-index", "c0")
                 .is_none()
         );
 
@@ -177,17 +177,20 @@ mod tests {
         let method = "clone-with-rewritten-index";
         assert_eq!(
             known
-                .find("ollama", "0.40.16", method, "c0")
+                .find(App::Ollama, "0.40.16", method, "c0")
                 .unwrap()
                 .reason,
             "second"
         );
         assert_eq!(
-            known.find("ollama", "0.41.0", method, "c0").unwrap().reason,
+            known
+                .find(App::Ollama, "0.41.0", method, "c0")
+                .unwrap()
+                .reason,
             "other"
         );
-        assert!(known.find("ollama", "0.40.16", method, "c1").is_none());
-        assert!(known.find("bionic", "0.40.16", method, "c0").is_none());
+        assert!(known.find(App::Ollama, "0.40.16", method, "c1").is_none());
+        assert!(known.find(App::Bionic, "0.40.16", method, "c0").is_none());
     }
 
     #[test]
@@ -257,7 +260,7 @@ mod tests {
         .unwrap();
         let known = Refusals::load(&home);
         let method = "clone-with-rewritten-index";
-        assert!(known.find("ollama", "0.40.16", method, "c0").is_some());
-        assert!(known.find("ollama", "0.40.16", method, "c1").is_none());
+        assert!(known.find(App::Ollama, "0.40.16", method, "c0").is_some());
+        assert!(known.find(App::Ollama, "0.40.16", method, "c1").is_none());
     }
 }

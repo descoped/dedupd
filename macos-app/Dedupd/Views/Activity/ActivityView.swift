@@ -110,14 +110,12 @@ struct ActivityRow: View {
 private struct RunningActivationRow: View {
     let job: Job
 
-    @Environment(DaemonStore.self) private var daemon
-
     var body: some View {
         HStack(spacing: 10) {
             Group {
-                if job.phase == .needsAttention {
-                    Image(systemName: job.phase.symbol)
-                        .foregroundStyle(job.phase.tint)
+                if job.state == .needsAttention {
+                    Image(systemName: job.state.symbol)
+                        .foregroundStyle(job.state.tint)
                 } else {
                     ProgressView()
                         .controlSize(.small)
@@ -130,25 +128,14 @@ private struct RunningActivationRow: View {
                     .fontWeight(.medium)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Text(job.phase == .needsAttention ? job.statusText : "Activating in \(job.appList)…")
+                Text(job.state == .needsAttention ? job.statusText : "Activating in \(job.appList)…")
                     .font(.caption)
-                    .foregroundStyle(job.phase == .needsAttention ? Color.orange : .secondary)
+                    .foregroundStyle(job.state == .needsAttention ? Color.orange : .secondary)
                     .lineLimit(3)
             }
             Spacer(minLength: 12)
-            if job.phase == .needsAttention {
-                HStack(spacing: 2) {
-                    Button("Try Again", systemImage: "arrow.clockwise") {
-                        Task { await daemon.act(.retry, on: job) }
-                    }
-                    .help("Try the activation again")
-                    Button("Cancel", systemImage: "xmark") {
-                        Task { await daemon.act(.cancel, on: job) }
-                    }
-                    .help("Give up this activation. The stored copy stays.")
-                }
-                .buttonStyle(.borderless)
-                .labelStyle(.iconOnly)
+            if job.state == .needsAttention {
+                JobActionButtons(job: job)
             }
         }
         .padding(.vertical, 3)
@@ -161,23 +148,21 @@ extension ActivityEntry {
     /// The symbol for what was done.
     var symbol: String {
         switch action {
-        case "activate": "plus.circle"
-        case "deactivate": "minus.circle"
-        case "archive": "archivebox"
-        case "restore": "arrow.uturn.backward.circle"
-        default: "circle"
+        case .activate: "plus.circle"
+        case .deactivate: "minus.circle"
+        case .archive: "archivebox"
+        case .restore: "arrow.uturn.backward.circle"
         }
     }
 
     /// What did not happen, in front of the reason: "Not activated in Ollama".
     var failureTitle: String {
-        let app = app.map { " in \(ModelApp.title(for: $0))" } ?? ""
+        let app = app.map { " in \($0.title)" } ?? ""
         return switch action {
-        case "activate": "Not activated\(app)"
-        case "deactivate": "Not deactivated\(app)"
-        case "archive": "Not archived"
-        case "restore": "Not restored"
-        default: "Did not work"
+        case .activate: "Not activated\(app)"
+        case .deactivate: "Not deactivated\(app)"
+        case .archive: "Not archived"
+        case .restore: "Not restored"
         }
     }
 }

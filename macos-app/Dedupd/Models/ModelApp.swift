@@ -1,13 +1,27 @@
+import DedupdClient
 import Foundation
 
-/// An app the daemon can place a model into. The raw value is the name the
-/// daemon's control API uses.
-enum ModelApp: String, CaseIterable, Identifiable, Sendable {
-    case bionic
-    case ollama
-    case huggingFace = "hf"
+/// An app the daemon can place a model into. The daemon defines the apps;
+/// this is how the app shows them.
+extension ModelApp: @retroactive Identifiable {
+    public var id: String { name }
 
-    var id: String { rawValue }
+    /// The name the daemon's control API uses, also for remembering the
+    /// owner's choices and naming controls.
+    var name: String {
+        switch self {
+        case .bionic: "bionic"
+        case .ollama: "ollama"
+        case .huggingFace: "hf"
+        }
+    }
+
+    init?(name: String) {
+        guard let app = Self.allCases.first(where: { $0.name == name }) else {
+            return nil
+        }
+        self = app
+    }
 
     /// The name shown in the app.
     var title: String {
@@ -51,23 +65,6 @@ enum ModelApp: String, CaseIterable, Identifiable, Sendable {
         case .ollama: "shippingbox"
         case .huggingFace: "tray.full"
         }
-    }
-
-    /// The title for a name the daemon reports, also one this app does not know.
-    static func title(for name: String) -> String {
-        ModelApp(rawValue: name)?.title ?? name
-    }
-
-    static func shortTitle(for name: String) -> String {
-        ModelApp(rawValue: name)?.shortTitle ?? name
-    }
-
-    static func badge(for name: String) -> String {
-        ModelApp(rawValue: name)?.badge ?? name
-    }
-
-    static func symbol(for name: String) -> String {
-        ModelApp(rawValue: name)?.symbol ?? "app"
     }
 }
 

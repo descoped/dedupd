@@ -251,14 +251,14 @@ private struct LocationRow: View {
 
     private var note: String {
         if !location.present {
-            return location.id == "archive" ? "The disk is not attached" : "The folder is not there"
+            return location.kind == .archive ? "The disk is not attached" : "The folder is not there"
         }
-        switch location.id {
-        case "store":
+        switch location.kind {
+        case .store:
             return "What the apps share"
-        case "archive":
+        case .archive:
             return "The second copy, on another disk"
-        default:
+        case .app:
             if location.bytes == 0 {
                 return "Empty"
             }

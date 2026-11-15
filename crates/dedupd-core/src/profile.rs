@@ -6,9 +6,11 @@
 //! the app into one answer: the method, its cost and a reason in a sentence.
 //! The same input always gives the same answer.
 
-use crate::place::{App, AppDirs};
+use crate::place::AppDirs;
 use crate::refusals::Refusals;
 use crate::select::Variant;
+use dedupd_api::app::App;
+use dedupd_api::library::{Cost, Decision, DecisionState, VariantKind, VersionState};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -41,27 +43,13 @@ impl Format {
     }
 }
 
-impl Cost {
-    /// The cost in words.
-    pub fn label(self) -> &'static str {
-        match self {
-            Cost::None => "no new disk space",
-            Cost::Megabytes => "some megabytes of new disk space",
-            Cost::Full => "a second copy",
-        }
+/// New disk space a method takes, in words.
+pub fn cost_label(cost: Cost) -> &'static str {
+    match cost {
+        Cost::None => "no new disk space",
+        Cost::Megabytes => "some megabytes of new disk space",
+        Cost::Full => "a second copy",
     }
-}
-
-/// New disk space an activation takes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Cost {
-    /// A clone: nothing.
-    None,
-    /// A clone with a part rewritten.
-    Megabytes,
-    /// A second copy.
-    Full,
 }
 
 /// Where an app's installed version is read from.
@@ -138,9 +126,9 @@ impl Traits {
     /// The traits of one variant of a repository whose provider lists
     /// `formats` for it.
     pub fn of(variant: &Variant, formats: &[String]) -> Self {
-        let ggufs = match variant.kind.as_str() {
-            "gguf" => variant.weights.len(),
-            _ => 0,
+        let ggufs = match variant.kind {
+            VariantKind::Gguf => variant.weights.len(),
+            VariantKind::Files => 0,
         };
         Self::of_files(ggufs, formats)
     }
@@ -199,27 +187,6 @@ pub fn quantization_bits(config: &serde_json::Value) -> Vec<u32> {
     out
 }
 
-/// The answer for one app and one model.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct Decision {
-    pub app: String,
-    /// `ready` when dedupd can put the model into the app, `planned` when
-    /// the app could take it and dedupd cannot do it yet, `no` when the app
-    /// cannot take it.
-    pub state: String,
-    /// The method, unless the state is `no`.
-    pub method: Option<String>,
-    /// New disk space the method takes: `none`, `megabytes` or `full`.
-    pub cost: Option<Cost>,
-    /// Why, in one sentence.
-    pub reason: String,
-    /// The installed version of the app, when it was found.
-    pub version: Option<String>,
-    /// `tested`, `untested` or `broken` for that version, `unknown` when
-    /// the version was not found.
-    pub version_state: String,
-}
-
 fn list(items: &[String]) -> String {
     match items {
         [] => String::new(),
@@ -241,9 +208,9 @@ impl Profile {
     /// Whether `version` of the app was tried: `tested`, `untested`,
     /// `broken`, or `unknown` without a version. For one method, or for any
     /// of them when none is given.
-    pub fn version_state(&self, method: Option<&Method>, version: Option<&str>) -> &'static str {
+    pub fn version_state(&self, method: Option<&Method>, version: Option<&str>) -> VersionState {
         let Some(version) = version else {
-            return "unknown";
+            return VersionState::Unknown;
         };
         let listed = |pick: fn(&Method) -> &Vec<String>| match method {
             Some(m) => pick(m).iter().any(|v| v == version),
@@ -253,11 +220,11 @@ impl Profile {
                 .any(|m| pick(m).iter().any(|v| v == version)),
         };
         if listed(|m| &m.broken) {
-            "broken"
+            VersionState::Broken
         } else if listed(|m| &m.tested) {
-            "tested"
+            VersionState::Tested
         } else {
-            "untested"
+            VersionState::Untested
         }
     }
 
@@ -309,14 +276,18 @@ impl Profile {
 
     /// The method for a model, given the app's installed version.
     pub fn decide(&self, traits: &Traits, version: Option<&str>) -> Decision {
-        let answer = |state: &str, method: Option<&Method>, reason: String| Decision {
-            app: self.app.as_str().to_string(),
-            state: state.to_string(),
-            method: method.filter(|_| state != "no").map(|m| m.id.clone()),
-            cost: method.filter(|_| state != "no").map(|m| m.cost),
+        let answer = |state: DecisionState, method: Option<&Method>, reason: String| Decision {
+            app: self.app,
+            state,
+            method: method
+                .filter(|_| state != DecisionState::No)
+                .map(|m| m.id.clone()),
+            cost: method
+                .filter(|_| state != DecisionState::No)
+                .map(|m| m.cost),
             reason,
             version: version.map(str::to_string),
-            version_state: self.version_state(method, version).to_string(),
+            version_state: self.version_state(method, version),
         };
         // The first reason a method that fits the format gives for not
         // being used, and the first method that is only waiting to be built.
@@ -348,16 +319,18 @@ impl Profile {
                 Some(reason) => {
                     refused.get_or_insert((method, reason));
                 }
-                None if method.built => return answer("ready", Some(method), method.says.clone()),
+                None if method.built => {
+                    return answer(DecisionState::Ready, Some(method), method.says.clone());
+                }
                 None => {
                     planned.get_or_insert(method);
                 }
             }
         }
         match (planned, refused) {
-            (Some(method), _) => answer("planned", Some(method), method.says.clone()),
-            (None, Some((method, reason))) => answer("no", Some(method), reason),
-            (None, None) => answer("no", None, self.otherwise.clone()),
+            (Some(method), _) => answer(DecisionState::Planned, Some(method), method.says.clone()),
+            (None, Some((method, reason))) => answer(DecisionState::No, Some(method), reason),
+            (None, None) => answer(DecisionState::No, None, self.otherwise.clone()),
         }
     }
 }
@@ -466,32 +439,30 @@ pub fn decisions(traits: &Traits, installed: &Installed) -> Vec<Decision> {
         .collect()
 }
 
-impl Decision {
-    /// Turn a `ready` answer into `no` when this version of the app said no
-    /// to the model (known by the sha256 of its `config.json`) when it was
-    /// asked before.
-    pub fn unless_refused(mut self, refusals: &Refusals, config: Option<&str>) -> Self {
-        if self.state != "ready" {
-            return self;
-        }
-        let (Some(config), Some(version), Some(method)) =
-            (config, self.version.as_deref(), self.method.as_deref())
-        else {
-            return self;
-        };
-        let Some(refusal) = refusals.find(&self.app, version, method, config) else {
-            return self;
-        };
-        let name = profiles()
-            .iter()
-            .find(|p| p.app.as_str() == self.app)
-            .map_or(self.app.as_str(), |p| p.name.as_str());
-        self.reason = crate::refusals::sentence(name, version, &refusal.reason);
-        self.state = "no".into();
-        self.method = None;
-        self.cost = None;
-        self
+/// Turn a `ready` answer into `no` when this version of the app said no to
+/// the model (known by the sha256 of its `config.json`) when it was asked
+/// before.
+pub fn unless_refused(mut d: Decision, refusals: &Refusals, config: Option<&str>) -> Decision {
+    if d.state != DecisionState::Ready {
+        return d;
     }
+    let (Some(config), Some(version), Some(method)) =
+        (config, d.version.as_deref(), d.method.as_deref())
+    else {
+        return d;
+    };
+    let Some(refusal) = refusals.find(d.app, version, method, config) else {
+        return d;
+    };
+    let name = profiles()
+        .iter()
+        .find(|p| p.app == d.app)
+        .map_or(d.app.title(), |p| p.name.as_str());
+    d.reason = crate::refusals::sentence(name, version, &refusal.reason);
+    d.state = DecisionState::No;
+    d.method = None;
+    d.cost = None;
+    d
 }
 
 #[cfg(test)]
@@ -506,18 +477,14 @@ mod tests {
         }
     }
 
-    fn states(traits: &Traits) -> Vec<(String, String)> {
+    fn states(traits: &Traits) -> Vec<(App, DecisionState)> {
         decisions(traits, &Installed::unknown())
             .into_iter()
             .map(|d| (d.app, d.state))
             .collect()
     }
 
-    fn pairs(list: &[(&str, &str)]) -> Vec<(String, String)> {
-        list.iter()
-            .map(|(a, b)| (a.to_string(), b.to_string()))
-            .collect()
-    }
+    use DecisionState::{No, Planned, Ready};
 
     #[test]
     fn every_app_has_a_profile_with_a_method() {
@@ -534,10 +501,10 @@ mod tests {
     fn a_single_gguf_is_ready_everywhere_and_costs_nothing() {
         let all = decisions(&traits(Format::Gguf), &Installed::unknown());
         for d in &all {
-            assert_eq!(d.state, "ready");
+            assert_eq!(d.state, Ready);
             assert_eq!(d.method.as_deref(), Some("clone"));
             assert_eq!(d.cost, Some(Cost::None));
-            assert_eq!(d.version_state, "unknown");
+            assert_eq!(d.version_state, VersionState::Unknown);
         }
         assert_eq!(all.len(), 3);
     }
@@ -548,7 +515,7 @@ mod tests {
         t.split = true;
         assert_eq!(
             states(&t),
-            pairs(&[("bionic", "ready"), ("ollama", "no"), ("hf", "ready")])
+            vec![(App::Bionic, Ready), (App::Ollama, No), (App::Hf, Ready)]
         );
         let ollama = profile(App::Ollama).decide(&t, None);
         assert_eq!(
@@ -564,14 +531,14 @@ mod tests {
         for bits in [None, Some(vec![4]), Some(vec![4, 8])] {
             let t = traits(Format::Mlx).with_bits(bits);
             let d = profile(App::Ollama).decide(&t, Some("0.40.16"));
-            assert_eq!(d.state, "ready");
+            assert_eq!(d.state, Ready);
             assert_eq!(d.method.as_deref(), Some("clone-with-rewritten-index"));
             assert_eq!(d.cost, Some(Cost::Megabytes));
-            assert_eq!(d.version_state, "tested");
+            assert_eq!(d.version_state, VersionState::Tested);
             // Another version is used all the same, and said to be untried.
             let d = profile(App::Ollama).decide(&t, Some("0.41.0"));
-            assert_eq!(d.state, "ready");
-            assert_eq!(d.version_state, "untested");
+            assert_eq!(d.state, Ready);
+            assert_eq!(d.version_state, VersionState::Untested);
         }
     }
 
@@ -580,7 +547,7 @@ mod tests {
         let t = traits(Format::Mlx).with_bits(Some(vec![4]));
         assert_eq!(
             states(&t),
-            pairs(&[("bionic", "ready"), ("ollama", "no"), ("hf", "ready")])
+            vec![(App::Bionic, Ready), (App::Ollama, No), (App::Hf, Ready)]
         );
         assert_eq!(
             profile(App::Ollama).decide(&t, None).reason,
@@ -593,7 +560,7 @@ mod tests {
         let mut p = profile(App::Ollama).clone();
         p.methods[1].built = false;
         let d = p.decide(&traits(Format::Mlx), Some("0.40.16"));
-        assert_eq!(d.state, "planned");
+        assert_eq!(d.state, Planned);
         assert_eq!(d.method.as_deref(), Some("clone-with-rewritten-index"));
     }
 
@@ -601,26 +568,26 @@ mod tests {
     fn a_model_that_is_not_quantized_is_refused_where_widths_matter() {
         let t = traits(Format::Mlx).with_bits(Some(vec![]));
         let d = profile(App::Ollama).decide(&t, Some("0.40.16"));
-        assert_eq!(d.state, "no");
+        assert_eq!(d.state, No);
         assert_eq!(
             d.reason,
             "dedupd gives Ollama only MLX models that are quantized (4-bit and 8-bit), \
              and this one is not"
         );
-        assert_eq!(profile(App::Bionic).decide(&t, None).state, "ready");
+        assert_eq!(profile(App::Bionic).decide(&t, None).state, Ready);
     }
 
     #[test]
     fn other_widths_are_refused_and_the_claim_names_what_was_tested() {
         let t = traits(Format::Mlx).with_bits(Some(vec![5]));
         let tested = profile(App::Ollama).decide(&t, Some("0.40.16"));
-        assert_eq!(tested.state, "no");
+        assert_eq!(tested.state, No);
         assert_eq!(
             tested.reason,
             "Ollama 0.40.16 cannot run 5-bit MLX models; it runs 4-bit and 8-bit ones"
         );
         let other = profile(App::Ollama).decide(&t, Some("0.41.0"));
-        assert_eq!(other.version_state, "untested");
+        assert_eq!(other.version_state, VersionState::Untested);
         assert_eq!(
             other.reason,
             "Ollama could not run 5-bit MLX models when dedupd tried it (0.40.16); \
@@ -640,7 +607,7 @@ mod tests {
         let t = traits(Format::Other);
         assert_eq!(
             states(&t),
-            pairs(&[("bionic", "no"), ("ollama", "no"), ("hf", "ready")])
+            vec![(App::Bionic, No), (App::Ollama, No), (App::Hf, Ready)]
         );
         assert_eq!(
             profile(App::Ollama).decide(&t, None).reason,
@@ -652,10 +619,16 @@ mod tests {
     fn a_version_is_tested_untested_or_unknown() {
         let t = traits(Format::Gguf);
         let p = profile(App::Bionic);
-        assert_eq!(p.decide(&t, Some("1.2.0+2")).version_state, "tested");
-        assert_eq!(p.decide(&t, Some("9.9")).version_state, "untested");
-        assert_eq!(p.decide(&t, Some("9.9")).state, "ready");
-        assert_eq!(p.decide(&t, None).version_state, "unknown");
+        assert_eq!(
+            p.decide(&t, Some("1.2.0+2")).version_state,
+            VersionState::Tested
+        );
+        assert_eq!(
+            p.decide(&t, Some("9.9")).version_state,
+            VersionState::Untested
+        );
+        assert_eq!(p.decide(&t, Some("9.9")).state, Ready);
+        assert_eq!(p.decide(&t, None).version_state, VersionState::Unknown);
     }
 
     #[test]
@@ -663,8 +636,8 @@ mod tests {
         let mut p = profile(App::Bionic).clone();
         p.methods[0].broken = vec!["2.0".into()];
         let d = p.decide(&traits(Format::Gguf), Some("2.0"));
-        assert_eq!(d.state, "no");
-        assert_eq!(d.version_state, "broken");
+        assert_eq!(d.state, No);
+        assert_eq!(d.version_state, VersionState::Broken);
         assert_eq!(d.reason, "This does not work with Bionic 2.0");
     }
 
@@ -721,11 +694,11 @@ mod tests {
         let mut t = traits(Format::Mlx);
         t.bits = Some(vec![4]);
         let ready = profile(App::Ollama).decide(&t, Some("0.40.16"));
-        assert_eq!(ready.state, "ready");
+        assert_eq!(ready.state, Ready);
         Refusals::record(
             &home,
             Refusal {
-                app: "ollama".into(),
+                app: App::Ollama,
                 version: "0.40.16".into(),
                 method: ready.method.clone().unwrap(),
                 config: "c0".into(),
@@ -737,8 +710,8 @@ mod tests {
         .unwrap();
         let known = Refusals::load(&home);
 
-        let no = ready.clone().unless_refused(&known, Some("c0"));
-        assert_eq!(no.state, "no");
+        let no = unless_refused(ready.clone(), &known, Some("c0"));
+        assert_eq!(no.state, No);
         assert_eq!(no.method, None);
         assert_eq!(no.cost, None);
         assert_eq!(
@@ -747,9 +720,9 @@ mod tests {
              NoSuchForCausalLM for MLX models."
         );
         // Another model, another version, or no config: asked again.
-        assert_eq!(ready.clone().unless_refused(&known, Some("c1")), ready);
-        assert_eq!(ready.clone().unless_refused(&known, None), ready);
+        assert_eq!(unless_refused(ready.clone(), &known, Some("c1")), ready);
+        assert_eq!(unless_refused(ready.clone(), &known, None), ready);
         let newer = profile(App::Ollama).decide(&t, Some("0.41.0"));
-        assert_eq!(newer.clone().unless_refused(&known, Some("c0")), newer);
+        assert_eq!(unless_refused(newer.clone(), &known, Some("c0")), newer);
     }
 }

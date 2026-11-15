@@ -1,60 +1,25 @@
 //! What the store holds, model by model, and where each app keeps its
 //! files: the read-only view the owner looks at.
 
-use crate::db::{Db, PROVIDER_HF};
-use crate::hub::{ModelMeta, TreeEntry};
-use crate::place::{App, AppDirs};
-use crate::profile::{self, Decision, Installed, Traits};
+use crate::db::{Db, PROVIDER_HF, app_column};
+use crate::hub::{TreeEntry, model_meta};
+use crate::place::AppDirs;
+use crate::profile::{self, Installed, Traits};
 use crate::refusals::Refusals;
-use crate::select::{self, Variant};
+use crate::select;
 use crate::store::Store;
 use anyhow::{Result, bail};
+use dedupd_api::app::App;
+use dedupd_api::library::{
+    AppPresence, DecisionState, LibraryModel, Location, LocationKind, Locations, ModelDetail,
+    Origin, Placement, Revision, RevisionFile, UpstreamState, Variant, VariantKind, VerifyState,
+};
 use rusqlite::{OptionalExtension, params};
-use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 /// The most of a README that is handed out.
 const README_LIMIT: u64 = 512 * 1024;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AppPresence {
-    pub app: String,
-    pub files: u64,
-    pub bytes: u64,
-    /// Bytes that share their disk blocks with the store.
-    pub shared_bytes: u64,
-}
-
-/// One repository in the library.
-#[derive(Debug, Clone, Serialize)]
-pub struct Model {
-    pub provider: String,
-    pub repo: String,
-    /// The commit `main` pointed at when the provider was last asked.
-    pub commit: Option<String>,
-    pub meta: ModelMeta,
-    /// Archived revisions.
-    pub revisions: u64,
-    /// When the newest revision was archived, in seconds since the epoch.
-    pub fetched_at: Option<i64>,
-    /// Files of the archived revisions that are in the store.
-    pub stored_files: u64,
-    pub stored_bytes: u64,
-    pub apps: Vec<AppPresence>,
-    pub verified: u64,
-    pub mismatch: u64,
-    pub not_upstream: u64,
-    pub unchecked: u64,
-    /// `ok`, `gone`, or `unknown` when the provider has not been asked.
-    pub upstream: String,
-    pub checked_at: Option<i64>,
-    /// The Ollama tags whose manifests are archived.
-    pub ollama_tags: Vec<String>,
-    /// When the owner archived the model: it is in no app and its files are
-    /// on the archive disk only. `None` for a model that is not archived.
-    pub archived_at: Option<i64>,
-}
 
 struct RepoRow {
     id: i64,
@@ -84,7 +49,7 @@ fn repo_rows(db: &Db, only: Option<&str>) -> Result<Vec<RepoRow>> {
         .collect::<rusqlite::Result<Vec<_>>>()?)
 }
 
-fn model_of(db: &Db, row: RepoRow) -> Result<Model> {
+fn model_of(db: &Db, row: RepoRow) -> Result<LibraryModel> {
     let conn = db.conn();
     let commit: Option<String> = conn
         .query_row(
@@ -124,7 +89,7 @@ fn model_of(db: &Db, row: RepoRow) -> Result<Model> {
     let apps = stmt
         .query_map([row.id], |r| {
             Ok(AppPresence {
-                app: r.get(0)?,
+                app: app_column(r, 0)?,
                 files: r.get::<_, i64>(1)? as u64,
                 bytes: r.get::<_, i64>(2)? as u64,
                 shared_bytes: r.get::<_, i64>(3)? as u64,
@@ -149,7 +114,7 @@ fn model_of(db: &Db, row: RepoRow) -> Result<Model> {
     let mut meta = newest
         .as_ref()
         .and_then(|(info, _)| serde_json::from_str::<serde_json::Value>(info).ok())
-        .map(|info| ModelMeta::from_info(&info))
+        .map(|info| model_meta(&info))
         .unwrap_or_default();
     if meta.formats.is_empty() {
         // Nothing from the provider says; the files do.
@@ -171,7 +136,7 @@ fn model_of(db: &Db, row: RepoRow) -> Result<Model> {
     if meta.author.is_none() && row.provider == PROVIDER_HF {
         meta.author = row.name.split_once('/').map(|(org, _)| org.to_string());
     }
-    Ok(Model {
+    Ok(LibraryModel {
         provider: row.provider,
         repo: row.name,
         commit,
@@ -185,7 +150,11 @@ fn model_of(db: &Db, row: RepoRow) -> Result<Model> {
         mismatch: counts.1 as u64,
         not_upstream: counts.2 as u64,
         unchecked: counts.3 as u64,
-        upstream: row.upstream.unwrap_or_else(|| "unknown".into()),
+        upstream: match row.upstream.as_deref() {
+            Some("ok") => UpstreamState::Ok,
+            Some("gone") => UpstreamState::Gone,
+            _ => UpstreamState::Unknown,
+        },
         checked_at: row.checked_at,
         ollama_tags,
         archived_at: row.archived_at,
@@ -193,83 +162,11 @@ fn model_of(db: &Db, row: RepoRow) -> Result<Model> {
 }
 
 /// Every repository the database knows, by name.
-pub fn models(db: &Db) -> Result<Vec<Model>> {
+pub fn models(db: &Db) -> Result<Vec<LibraryModel>> {
     repo_rows(db, None)?
         .into_iter()
         .map(|row| model_of(db, row))
         .collect()
-}
-
-/// One file of an archived revision.
-#[derive(Debug, Clone, Serialize)]
-pub struct RevisionFile {
-    pub path: String,
-    pub size: u64,
-    /// sha256 of the content, when it is known.
-    pub sha256: Option<String>,
-    pub git_oid: String,
-    /// Kept in LFS by the provider: a weight file rather than a small one.
-    pub lfs: bool,
-    /// On the internal disk.
-    pub stored: bool,
-    /// On the archive disk. `false` also when the disk is not attached.
-    pub archived: bool,
-    /// The apps that have this file.
-    pub apps: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Revision {
-    pub commit: String,
-    pub fetched_at: i64,
-    /// Branch and tag names that point here.
-    pub refs: Vec<String>,
-    pub bytes: u64,
-    pub files: Vec<RevisionFile>,
-}
-
-/// A file in an app's folder.
-#[derive(Debug, Clone, Serialize)]
-pub struct Placement {
-    pub app: String,
-    pub path: String,
-    pub rel_path: String,
-    pub size: u64,
-    pub sha256: String,
-    pub shared: bool,
-    pub verify_state: String,
-    /// `adopted` when the app downloaded it, `placed` when dedupd put it there.
-    pub origin: String,
-}
-
-/// A way the repository can be used, and how much of it is here.
-#[derive(Debug, Clone, Serialize)]
-pub struct LocalVariant {
-    pub kind: String,
-    pub name: String,
-    /// What to pull to get it: `org/repo:Q4_K_M`, or `org/repo`.
-    pub spec: String,
-    pub files: u64,
-    pub bytes: u64,
-    pub stored_bytes: u64,
-    /// The apps dedupd can put it into: those whose decision is `ready`.
-    pub usable_by: Vec<String>,
-    /// The apps that have all its weight files.
-    pub placed_in: Vec<String>,
-    /// For every app: whether it can take this variant, by which method,
-    /// at what cost in disk space, and why.
-    pub decisions: Vec<Decision>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct ModelDetail {
-    pub model: Model,
-    pub revisions: Vec<Revision>,
-    pub placements: Vec<Placement>,
-    pub variants: Vec<LocalVariant>,
-    /// The provider's own description of the newest revision, as it sent it.
-    pub info_json: Option<String>,
-    pub readme: Option<String>,
 }
 
 /// The quantization widths of a model that is not GGUF, from its
@@ -288,7 +185,7 @@ fn widths(
 }
 
 /// `org/repo:quant` for a variant of a GGUF repository, else `org/repo`.
-pub fn spec_of(repo: &str, variant: &Variant) -> String {
+pub fn spec_of(repo: &str, variant: &select::Variant) -> String {
     match &variant.quant {
         Some(q) => format!("{repo}:{q}"),
         None => repo.to_string(),
@@ -304,15 +201,13 @@ pub fn local_variants(
     entries: &[TreeEntry],
     formats: &[String],
     installed: &Installed,
-) -> Result<Vec<LocalVariant>> {
+) -> Result<Vec<Variant>> {
     let mut stmt = db.conn().prepare(
         "SELECT DISTINCT p.sha256, p.app FROM placements p JOIN repos r ON r.id = p.repo_id
          WHERE r.name = ?1",
     )?;
-    let mut holders: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for row in stmt.query_map([repo], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
-    })? {
+    let mut holders: BTreeMap<String, BTreeSet<App>> = BTreeMap::new();
+    for row in stmt.query_map([repo], |r| Ok((r.get::<_, String>(0)?, app_column(r, 1)?)))? {
         let (sha, app) = row?;
         holders.entry(sha).or_default().insert(app);
     }
@@ -329,19 +224,18 @@ pub fn local_variants(
         .filter(|v| !v.files.is_empty())
         .map(|v| {
             let placed_in = App::ALL
-                .iter()
+                .into_iter()
                 .filter(|app| {
                     !v.weights.is_empty()
                         && v.weights.iter().all(|w| {
                             sha_of(w)
                                 .and_then(|sha| holders.get(sha))
-                                .is_some_and(|apps| apps.contains(app.as_str()))
+                                .is_some_and(|apps| apps.contains(app))
                         })
                 })
-                .map(|a| a.as_str().to_string())
                 .collect();
             let mut traits = Traits::of(&v, formats);
-            if v.kind != "gguf" {
+            if v.kind != VariantKind::Gguf {
                 traits =
                     traits.with_bits(widths(store, &v.files, |p| sha_of(p).map(str::to_string)));
             }
@@ -352,14 +246,14 @@ pub fn local_variants(
                 .and_then(|e| sha_of(&e.path));
             let decisions: Vec<_> = profile::decisions(&traits, installed)
                 .into_iter()
-                .map(|d| d.unless_refused(&refusals, config))
+                .map(|d| profile::unless_refused(d, &refusals, config))
                 .collect();
-            LocalVariant {
+            Variant {
                 spec: spec_of(repo, &v),
                 usable_by: decisions
                     .iter()
-                    .filter(|d| d.state == "ready")
-                    .map(|d| d.app.clone())
+                    .filter(|d| d.state == DecisionState::Ready)
+                    .map(|d| d.app)
                     .collect(),
                 placed_in,
                 decisions,
@@ -380,14 +274,18 @@ pub fn local_variants(
 
 /// The Hugging Face repositories the database knows, each with the apps
 /// that have files of it.
-pub fn presence(db: &Db) -> Result<BTreeMap<String, Vec<String>>> {
+pub fn presence(db: &Db) -> Result<BTreeMap<String, Vec<App>>> {
     let mut stmt = db.conn().prepare(
         "SELECT r.name, p.app FROM repos r LEFT JOIN placements p ON p.repo_id = r.id
          WHERE r.provider = ?1 GROUP BY r.id, p.app ORDER BY r.name, p.app",
     )?;
-    let mut out: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut out: BTreeMap<String, Vec<App>> = BTreeMap::new();
     for row in stmt.query_map([PROVIDER_HF], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?))
+        let app = match r.get::<_, Option<String>>(1)? {
+            Some(_) => Some(app_column(r, 1)?),
+            None => None,
+        };
+        Ok((r.get::<_, String>(0)?, app))
     })? {
         let (repo, app) = row?;
         out.entry(repo).or_default().extend(app);
@@ -416,21 +314,23 @@ pub fn model(
     )?;
     let placements = stmt
         .query_map([repo_id], |r| {
+            let origin: String = r.get(7)?;
             Ok(Placement {
-                app: r.get(0)?,
+                app: app_column(r, 0)?,
                 path: r.get(1)?,
                 rel_path: r.get(2)?,
                 size: r.get::<_, i64>(3)? as u64,
                 sha256: r.get(4)?,
                 shared: r.get(5)?,
-                verify_state: r.get(6)?,
-                origin: r.get(7)?,
+                verify_state: VerifyState::parse(&r.get::<_, String>(6)?),
+                // Anything else was written by dedupd itself.
+                origin: Origin::parse(&origin).unwrap_or(Origin::Placed),
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    let mut holders: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
+    let mut holders: BTreeMap<&str, BTreeSet<App>> = BTreeMap::new();
     for p in &placements {
-        holders.entry(&p.sha256).or_default().insert(&p.app);
+        holders.entry(&p.sha256).or_default().insert(p.app);
     }
 
     let archive = store.archive().filter(|a| crate::archive::attached(a));
@@ -487,7 +387,7 @@ pub fn model(
                 apps: sha
                     .as_deref()
                     .and_then(|s| holders.get(s))
-                    .map(|apps| apps.iter().map(|a| a.to_string()).collect())
+                    .map(|apps| apps.iter().copied().collect())
                     .unwrap_or_default(),
                 sha256: sha.or_else(|| e.lfs_sha256.clone()),
             });
@@ -537,31 +437,6 @@ fn read_text(path: &Path) -> Option<String> {
     Some(String::from_utf8_lossy(&text).into_owned())
 }
 
-/// A folder on the disk and what dedupd knows is in it.
-#[derive(Debug, Clone, Serialize)]
-pub struct Location {
-    /// `store`, `archive`, or an app's short name.
-    pub id: String,
-    pub path: String,
-    /// The folder is there. For the archive: the disk is attached.
-    pub present: bool,
-    pub files: u64,
-    pub bytes: u64,
-    /// Bytes that share their disk blocks with the store.
-    pub shared_bytes: u64,
-    pub models: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct Locations {
-    /// The volume the store and the app folders are on.
-    pub volume_total: u64,
-    pub volume_free: u64,
-    pub store: Location,
-    pub archive: Option<Location>,
-    pub apps: Vec<Location>,
-}
-
 /// Where everything is: the store, the archive and each app's folder.
 pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
     let conn = db.conn();
@@ -588,7 +463,8 @@ pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
         apps.push(Location {
-            id: app.as_str().into(),
+            kind: LocationKind::App,
+            app: Some(app),
             path: path.to_string_lossy().into_owned(),
             present: path.is_dir(),
             files: row.0 as u64,
@@ -601,7 +477,8 @@ pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
         volume_total,
         volume_free,
         store: Location {
-            id: "store".into(),
+            kind: LocationKind::Store,
+            app: None,
             path: store.home().store_dir().to_string_lossy().into_owned(),
             present: true,
             files: files as u64,
@@ -610,7 +487,8 @@ pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
             models: repos as u64,
         },
         archive: store.archive().map(|a| Location {
-            id: "archive".into(),
+            kind: LocationKind::Archive,
+            app: None,
             path: a.root().to_string_lossy().into_owned(),
             present: crate::archive::attached(a),
             files: 0,

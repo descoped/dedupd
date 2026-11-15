@@ -35,7 +35,7 @@ extension LibraryModel {
 extension ArchivePlan {
     /// The apps the model is taken out of, as "Bionic and Ollama".
     var appList: String {
-        ListFormatter.localizedString(byJoining: deactivate.map { ModelApp.shortTitle(for: $0.app) })
+        ListFormatter.localizedString(byJoining: deactivate.map(\.app.shortTitle))
     }
 
     /// Nothing would change: the model is in no app and has no file on the
@@ -66,7 +66,7 @@ extension ArchivePlan {
 }
 
 extension ModelMove {
-    var isArchive: Bool { kind == "archive" }
+    var isArchive: Bool { kind == .archive }
 
     /// How far the move is, from 0 to 1; nil when there is nothing to count.
     var fraction: Double? {

@@ -9,12 +9,15 @@ use crate::control::{error, hub_error, ok};
 use crate::{Call, Server, percent_decode, percent_encode, plain};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
+use dedupd_api::app::App;
+use dedupd_api::hub::{HubFile, HubModel, SearchHit, SearchPage};
+use dedupd_api::library::ModelMeta;
 use dedupd_core::db::PROVIDER_HF;
 use dedupd_core::fetch::encode_path;
-use dedupd_core::hub::{HubError, ModelMeta, TreeEntry, next_link};
+use dedupd_core::hub::{HubError, TreeEntry, model_meta, next_link};
 use dedupd_core::library;
 use dedupd_core::profile::Installed;
-use serde_json::{Value, json as j};
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -83,15 +86,22 @@ fn search_query(call: &Call) -> String {
 }
 
 /// One model of a search answer: what the provider says, and what is here.
-fn hit(info: &Value, here: &BTreeMap<String, Vec<String>>, busy: &[String]) -> Option<Value> {
+fn hit(info: &Value, here: &BTreeMap<String, Vec<App>>, busy: &[String]) -> Option<SearchHit> {
     let id = info.get("id").and_then(|v| v.as_str())?;
-    Some(j!({
-        "id": id,
-        "meta": ModelMeta::from_info(info),
-        "archived": here.contains_key(id),
-        "apps": here.get(id).cloned().unwrap_or_default(),
-        "downloading": busy.iter().any(|repo| repo == id),
-    }))
+    Some(SearchHit {
+        id: id.to_string(),
+        meta: model_meta(info),
+        archived: here.contains_key(id),
+        apps: here.get(id).cloned().unwrap_or_default(),
+        downloading: busy.iter().any(|repo| repo == id),
+    })
+}
+
+/// A search answer as the provider gave it, kept for a while.
+#[derive(Clone)]
+pub(crate) struct Found {
+    models: Vec<Value>,
+    next: Option<String>,
 }
 
 /// The repositories that have a download in the queue.
@@ -141,7 +151,7 @@ async fn search(server: &Arc<Server>, call: &Call) -> Response {
                 Ok(models) => models,
                 Err(e) => return hub_error(HubError::from(e)),
             };
-            let answer = j!({"models": models, "next": next});
+            let answer = Found { models, next };
             let mut kept = server.searches.lock().expect("lock");
             if kept.len() >= SEARCH_KEPT {
                 kept.clear();
@@ -157,11 +167,14 @@ async fn search(server: &Arc<Server>, call: &Call) -> Response {
         Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
     };
     let busy = downloading(server);
-    let models: Vec<Value> = answer["models"]
-        .as_array()
-        .map(|list| list.iter().filter_map(|m| hit(m, &here, &busy)).collect())
-        .unwrap_or_default();
-    ok(j!({"models": models, "next": answer["next"]}))
+    ok(SearchPage {
+        models: answer
+            .models
+            .iter()
+            .filter_map(|m| hit(m, &here, &busy))
+            .collect(),
+        next: answer.next,
+    })
 }
 
 /// The files the model info lists, as the rest of dedupd knows files.
@@ -190,7 +203,7 @@ fn siblings(info: &Value) -> Vec<TreeEntry> {
 
 /// Other repositories made from the same base model: the same model in
 /// other formats and quantizations.
-async fn related(server: &Arc<Server>, repo: &str, meta: &ModelMeta) -> Vec<Value> {
+async fn related(server: &Arc<Server>, repo: &str, meta: &ModelMeta) -> Vec<SearchHit> {
     let base = meta.base_model.as_deref().unwrap_or(repo);
     let mut query = format!(
         "filter={}&sort=downloads&direction=-1&limit=30",
@@ -279,7 +292,7 @@ async fn model(server: &Arc<Server>, repo: &str) -> Response {
         }
     };
     let info: Value = serde_json::from_str(&info_json).unwrap_or_default();
-    let meta = ModelMeta::from_info(&info);
+    let meta = model_meta(&info);
 
     let (related, readme) = match (&commit, from_archive) {
         (Some(commit), false) => tokio::join!(
@@ -307,26 +320,33 @@ async fn model(server: &Arc<Server>, repo: &str) -> Response {
         .flat_map(|r| r.files.iter().map(|f| (f.path.as_str(), f.stored)))
         .collect();
     let busy = downloading(server);
-    ok(j!({
-        "id": repo,
-        "commit": commit,
-        "from_archive": from_archive,
-        "meta": meta,
-        "files": files.iter().map(|f| j!({
-            "path": f.path,
-            "size": f.size,
-            "sha256": f.lfs_sha256,
-            "lfs": f.lfs_sha256.is_some(),
-            "stored": stored.get(f.path.as_str()).copied().unwrap_or(false),
-        })).collect::<Vec<_>>(),
-        "variants": variants,
-        "related": related,
-        "readme": readme.or_else(|| detail.as_ref().and_then(|d| d.readme.clone())),
-        "archived": detail.is_some(),
-        "apps": detail.as_ref().map(|d| d.model.apps.clone()).unwrap_or_default(),
-        "downloading": busy.iter().any(|r| r == repo),
-        "info_json": info_json,
-    }))
+    let files = files
+        .iter()
+        .map(|f| HubFile {
+            path: f.path.clone(),
+            size: f.size,
+            sha256: f.lfs_sha256.clone(),
+            lfs: f.lfs_sha256.is_some(),
+            stored: stored.get(f.path.as_str()).copied().unwrap_or(false),
+        })
+        .collect();
+    ok(HubModel {
+        id: repo.to_string(),
+        commit,
+        from_archive,
+        meta,
+        files,
+        variants,
+        related,
+        readme: readme.or_else(|| detail.as_ref().and_then(|d| d.readme.clone())),
+        archived: detail.is_some(),
+        apps: detail
+            .as_ref()
+            .map(|d| d.model.apps.clone())
+            .unwrap_or_default(),
+        downloading: busy.iter().any(|r| r == repo),
+        info_json,
+    })
 }
 
 pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Response {

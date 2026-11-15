@@ -2,6 +2,7 @@
 paths:
   - "macos-app/**"
   - "crates/dedupd-client/**"
+  - "crates/dedupd-api/**"
 ---
 
 # macOS app conventions

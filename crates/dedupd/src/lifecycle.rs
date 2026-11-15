@@ -3,9 +3,9 @@
 
 use crate::{Opened, human};
 use anyhow::Result;
+use dedupd_api::app::App;
 use dedupd_core::archive;
 use dedupd_core::maintain::{self, UnplacePlan};
-use dedupd_core::place::App;
 use std::time::Instant;
 
 /// Says how far a move is, one line per file, and nothing twice.
@@ -53,12 +53,12 @@ fn print_unplace(plan: &UnplacePlan, done: Option<usize>) {
         None => println!("{}: {files} files ({})", plan.app, human(plan.bytes)),
     }
     if done.is_none() {
-        for (path, size) in &plan.remove {
-            println!("  {:>10}  {path}", human(*size));
+        for file in &plan.remove {
+            println!("  {:>10}  {}", human(file.size), file.path);
         }
     }
-    for (path, why) in &plan.keep {
-        println!("  left in place: {path} ({why})");
+    for kept in &plan.keep {
+        println!("  left in place: {} ({})", kept.path, kept.why);
     }
 }
 

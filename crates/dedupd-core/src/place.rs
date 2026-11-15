@@ -1,60 +1,17 @@
 //! Placement: putting stored files where each app looks for them, as clones.
 
-use crate::adopt::Verify;
 use crate::clone::clone_into_place;
 use crate::db::{Db, NewPlacement, ORIGIN_ADOPTED, ORIGIN_PLACED, lock};
 use crate::hash::hash_file;
 use crate::ollama;
 use crate::store::{Fingerprint, Store};
 use anyhow::{Context, Result, bail};
+use dedupd_api::app::App;
+use dedupd_api::library::VerifyState;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum App {
-    Bionic,
-    Ollama,
-    /// The Hugging Face cache, which `huggingface_hub`, MLX tools and
-    /// llama.cpp all read.
-    Hf,
-}
-
-impl App {
-    pub const ALL: [App; 3] = [App::Bionic, App::Ollama, App::Hf];
-
-    /// The app's short name, as recorded in the database.
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            App::Bionic => "bionic",
-            App::Ollama => "ollama",
-            App::Hf => "hf",
-        }
-    }
-
-    /// The app's name in a sentence.
-    pub const fn title(self) -> &'static str {
-        match self {
-            App::Bionic => "Bionic",
-            App::Ollama => "Ollama",
-            App::Hf => "the Hugging Face cache",
-        }
-    }
-}
-
-impl std::str::FromStr for App {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        Ok(match s.trim().to_lowercase().as_str() {
-            "bionic" | "lmstudio" | "lm-studio" => App::Bionic,
-            "ollama" => App::Ollama,
-            "hf" | "huggingface" | "mlx" | "llama.cpp" | "llamacpp" => App::Hf,
-            other => bail!("unknown app {other}; use bionic, ollama or hf (also: mlx, llama.cpp)"),
-        })
-    }
-}
 
 /// Where each app keeps its models.
 #[derive(Debug, Clone)]
@@ -172,9 +129,9 @@ pub(crate) fn place_clone(
     let record = |shared: bool, origin: &str| -> Result<()> {
         let fp = Fingerprint::of(dst)?;
         let verify = if t.commit.is_some() {
-            Verify::Verified
+            VerifyState::Verified
         } else {
-            Verify::Unchecked
+            VerifyState::Unchecked
         };
         lock(dest.db).upsert_placement(&NewPlacement {
             app: t.app.as_str(),

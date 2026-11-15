@@ -1,0 +1,19 @@
+[package]
+name = "dedupd-api"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "The records and words of the dedupd daemon's control API, shared by the daemon and its clients"
+
+[features]
+# UniFFI derives, for the client the macOS app links. The daemon builds
+# without them.
+ffi = ["dep:uniffi"]
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+uniffi = { version = "0.32.2", optional = true }
+
+[dev-dependencies]
+serde_json = "1.0.154"

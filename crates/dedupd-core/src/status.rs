@@ -1,43 +1,18 @@
-use crate::db::Db;
-use anyhow::Result;
-use serde::Serialize;
+//! The totals: what the store holds, what each app holds, and each model.
 
-#[derive(Debug, Serialize)]
+use crate::db::{Db, app_column};
+use anyhow::Result;
+use dedupd_api::daemon::{AppUsage, Repository};
+
+#[derive(Debug, serde::Serialize)]
 pub struct Status {
     pub store_files: u64,
     pub store_bytes: u64,
     /// Bytes of app files that share their disk blocks with the store: what
     /// the apps would use on top of the store if each kept its own copy.
     pub shared_bytes: u64,
-    pub apps: Vec<AppStatus>,
-    pub repos: Vec<RepoStatus>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AppStatus {
-    pub app: String,
-    pub files: u64,
-    pub bytes: u64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct RepoStatus {
-    pub provider: String,
-    pub name: String,
-    /// The commit `main` pointed at when the provider was last asked.
-    pub commit: Option<String>,
-    /// Files of this repository's archived revisions that are in the store.
-    pub stored_files: u64,
-    pub stored_bytes: u64,
-    /// App files that hold this repository's content.
-    pub files: u64,
-    pub bytes: u64,
-    pub verified: u64,
-    pub mismatch: u64,
-    pub not_upstream: u64,
-    pub unchecked: u64,
-    /// The owner archived the model: its files are on the archive disk only.
-    pub archived: bool,
+    pub apps: Vec<AppUsage>,
+    pub repos: Vec<Repository>,
 }
 
 pub fn status(db: &Db) -> Result<Status> {
@@ -59,8 +34,8 @@ pub fn status(db: &Db) -> Result<Status> {
     )?;
     let apps = stmt
         .query_map([], |r| {
-            Ok(AppStatus {
-                app: r.get(0)?,
+            Ok(AppUsage {
+                app: app_column(r, 0)?,
                 files: r.get::<_, i64>(1)? as u64,
                 bytes: r.get::<_, i64>(2)? as u64,
             })
@@ -93,7 +68,7 @@ pub fn status(db: &Db) -> Result<Status> {
             let (stored_files, stored_bytes) = stored.query_row([r.get::<_, i64>(9)?], |s| {
                 Ok((s.get::<_, i64>(0)? as u64, s.get::<_, i64>(1)? as u64))
             })?;
-            Ok(RepoStatus {
+            Ok(Repository {
                 provider: r.get(0)?,
                 name: r.get(1)?,
                 commit: r.get(2)?,

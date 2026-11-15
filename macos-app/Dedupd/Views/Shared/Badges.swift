@@ -48,7 +48,7 @@ struct PrimaryFormat: View {
 
 /// The apps that have a model, as their short names.
 struct AppBadges: View {
-    let apps: [String]
+    let apps: [ModelApp]
     /// What to show when no app has it.
     var none = "—"
 
@@ -58,12 +58,12 @@ struct AppBadges: View {
                 .foregroundStyle(.tertiary)
         } else {
             HStack(spacing: 4) {
-                ForEach(apps, id: \.self) { app in
-                    Tag(text: ModelApp.badge(for: app), tint: .primary)
+                ForEach(apps) { app in
+                    Tag(text: app.badge, tint: .primary)
                 }
             }
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(apps.map(ModelApp.shortTitle(for:)).joined(separator: ", "))
+            .accessibilityLabel(apps.map(\.shortTitle).joined(separator: ", "))
         }
     }
 }

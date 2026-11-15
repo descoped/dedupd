@@ -7,12 +7,15 @@
 
 use crate::db::PROVIDER_HF;
 use crate::fetch::{Expect, NoSpace, Unavailable, Wait, WrongContent};
-use crate::governor::GovernorState;
 use crate::hub::{HubError, TreeEntry};
 use crate::now;
-use crate::place::App;
-use crate::pull::{self, Engine, PullOutcome, PullRequest, PullWatch, Skipped};
+use crate::pull::{self, Engine, PullRequest, PullWatch};
 use anyhow::{Result, bail};
+use dedupd_api::app::App;
+use dedupd_api::jobs::{
+    Downloads, FileStage, Job as JobSummary, JobAction, JobDetail, JobEvent, JobFile, JobKind,
+    JobState, NotActivated, PullResult,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -31,117 +34,11 @@ const MAX_FINISHED: usize = 50;
 /// Byte progress wakes the watchers at most this often.
 const PROGRESS_TICK_MS: u64 = 250;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum State {
-    Queued,
-    Resolving,
-    Downloading,
-    Verifying,
-    Placing,
-    Done,
-    /// Stopped by the owner; continues when they say so.
-    Paused,
-    /// The server asked for a pause; continues by itself.
-    WaitingServer,
-    /// The server cannot be reached; continues by itself.
-    WaitingNetwork,
-    /// Stopped for a reason only the owner can do something about.
-    NeedsAttention,
-    Cancelled,
-}
-
-impl State {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            State::Queued => "queued",
-            State::Resolving => "resolving",
-            State::Downloading => "downloading",
-            State::Verifying => "verifying",
-            State::Placing => "placing",
-            State::Done => "done",
-            State::Paused => "paused",
-            State::WaitingServer => "waiting_server",
-            State::WaitingNetwork => "waiting_network",
-            State::NeedsAttention => "needs_attention",
-            State::Cancelled => "cancelled",
-        }
-    }
-
-    /// A task is working on the job.
-    pub const fn is_working(self) -> bool {
-        matches!(
-            self,
-            State::Resolving
-                | State::Downloading
-                | State::Verifying
-                | State::Placing
-                | State::WaitingServer
-                | State::WaitingNetwork
-        )
-    }
-
-    /// Nothing more will happen to the job.
-    pub const fn is_finished(self) -> bool {
-        matches!(self, State::Done | State::Cancelled)
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FileStage {
-    Waiting,
-    Downloading,
-    Verifying,
-    Stored,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileState {
-    pub path: String,
-    pub size: u64,
-    /// Bytes on disk.
-    pub done: u64,
-    pub stage: FileStage,
-    /// sha256 of the content, for files the provider keeps in LFS.
-    pub sha256: Option<String>,
-    pub git_oid: String,
-}
-
-impl FileState {
-    fn expect(&self) -> Expect {
-        match &self.sha256 {
-            Some(sha) => Expect::Sha256(sha.clone()),
-            None => Expect::GitOid(self.git_oid.clone()),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Event {
-    /// Seconds since the Unix epoch.
-    pub at: i64,
-    pub text: String,
-}
-
-/// What a job is for, as the one who asked for it put it.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum JobKind {
-    /// Fetch a model, and put it into the apps named.
-    #[default]
-    Download,
-    /// Put a model that is stored into the apps named; anything missing is
-    /// fetched on the way.
-    Activation,
-}
-
-impl JobKind {
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            JobKind::Download => "download",
-            JobKind::Activation => "activation",
-        }
+/// Where a file of a job comes from, as the fetcher knows it.
+fn expect_of(file: &JobFile) -> Expect {
+    match &file.sha256 {
+        Some(sha) => Expect::Sha256(sha.clone()),
+        None => Expect::GitOid(file.git_oid.clone()),
     }
 }
 
@@ -160,7 +57,7 @@ pub struct JobRecord {
     /// Older builds kept no kind; their jobs read as downloads.
     #[serde(default)]
     pub kind: JobKind,
-    pub state: State,
+    pub state: JobState,
     /// Why the job is waiting or needs attention, in words.
     pub detail: Option<String>,
     /// When a wait the server asked for ends, in seconds since the epoch.
@@ -172,14 +69,14 @@ pub struct JobRecord {
     /// Bytes per second over the last moments.
     #[serde(default)]
     pub speed: u64,
-    pub files: Vec<FileState>,
-    pub events: Vec<Event>,
+    pub files: Vec<JobFile>,
+    pub events: Vec<JobEvent>,
     /// The job has files to download, as it found when it looked at the
     /// store; such a job is a download, whatever it was asked as.
     #[serde(default)]
     pub fetches: bool,
     /// What the pull did, once it is done.
-    pub outcome: Option<PullOutcome>,
+    pub outcome: Option<PullResult>,
     pub created_at: i64,
     pub updated_at: i64,
     pub finished_at: Option<i64>,
@@ -197,7 +94,7 @@ impl JobRecord {
     }
 
     fn note(&mut self, text: impl Into<String>) {
-        self.events.push(Event {
+        self.events.push(JobEvent {
             at: now(),
             text: text.into(),
         });
@@ -228,22 +125,22 @@ impl JobRecord {
     pub fn activated(&self) -> Vec<App> {
         self.outcome
             .as_ref()
-            .map(|o| o.activated().collect())
+            .map(PullResult::activated)
             .unwrap_or_default()
     }
 
     /// The apps the finished job was asked for that did not take the model,
     /// each with why. A job kept by an older build, which wrote no reasons,
     /// gets a plain one.
-    pub fn not_activated(&self) -> Vec<Skipped> {
+    pub fn not_activated(&self) -> Vec<NotActivated> {
         let Some(outcome) = self.outcome.as_ref() else {
             return Vec::new();
         };
-        let activated: Vec<App> = outcome.activated().collect();
+        let activated = outcome.activated();
         let mut skipped = outcome.skipped.clone();
         for app in &self.apps {
             if !activated.contains(app) && !skipped.iter().any(|s| s.app == *app) {
-                skipped.push(Skipped {
+                skipped.push(NotActivated {
                     app: *app,
                     reason: "no reason was kept".to_string(),
                     temporary: false,
@@ -260,6 +157,52 @@ impl JobRecord {
             .as_ref()
             .map(|o| o.notes.clone())
             .unwrap_or_default()
+    }
+
+    /// The job as the owner sees it in a list: without its files and
+    /// history, with what it did and what can be done to it.
+    pub fn summary(&self) -> JobSummary {
+        let files_done = self
+            .files
+            .iter()
+            .filter(|f| f.stage == FileStage::Stored)
+            .count();
+        JobSummary {
+            id: self.id,
+            model: self.model.clone(),
+            repo: self.repo.clone(),
+            revision: self.revision.clone(),
+            quant: self.quant.clone(),
+            include: self.include.clone(),
+            apps: self.apps.clone(),
+            offline: self.offline,
+            kind: self.shown_as(),
+            state: self.state,
+            detail: self.detail.clone(),
+            wait_until: self.wait_until,
+            commit: self.commit.clone(),
+            bytes_total: self.bytes_total,
+            bytes_done: self.bytes_done,
+            speed: self.speed,
+            files_total: self.files.len() as u64,
+            files_done: files_done as u64,
+            activated: self.activated(),
+            not_activated: self.not_activated(),
+            notes: self.notes(),
+            actions: self.state.actions().to_vec(),
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+            finished_at: self.finished_at,
+        }
+    }
+
+    /// The job with its files and its history.
+    pub fn detail(&self) -> JobDetail {
+        JobDetail {
+            job: self.summary(),
+            files: self.files.clone(),
+            events: self.events.clone(),
+        }
     }
 }
 
@@ -309,10 +252,10 @@ impl Job {
     }
 }
 
-/// The queue and what it is doing, for the owner to look at.
-#[derive(Debug, Clone, Serialize)]
+/// The queue and what it is doing.
+#[derive(Debug, Clone)]
 pub struct Snapshot {
-    pub governor: GovernorState,
+    pub governor: dedupd_api::jobs::Governor,
     /// Bytes per second of all jobs together.
     pub speed: u64,
     pub jobs: Vec<JobRecord>,
@@ -352,7 +295,7 @@ impl Queue {
                 continue;
             };
             if record.state.is_working() {
-                record.state = State::Queued;
+                record.state = JobState::Queued;
                 record.detail = None;
                 record.wait_until = None;
                 record.note("continued after the daemon restarted");
@@ -387,7 +330,7 @@ impl Queue {
             if working >= MAX_ACTIVE {
                 break;
             }
-            if job.record().state == State::Queued {
+            if job.record().state == JobState::Queued {
                 self.spawn(job);
                 working += 1;
             }
@@ -396,7 +339,7 @@ impl Queue {
 
     fn spawn(self: &Arc<Self>, job: &Arc<Job>) {
         job.stopped.store(false, Ordering::Relaxed);
-        self.set(job, State::Resolving, None);
+        self.set(job, JobState::Resolving, None);
         let (queue, running) = (self.clone(), job.clone());
         let handle = tokio::spawn(async move {
             queue.run(&running).await;
@@ -415,7 +358,10 @@ impl Queue {
         kind: JobKind,
     ) -> Result<i64> {
         let req = PullRequest::from_spec(model, include, apps, offline, 1)?;
-        let id = self.engine.db().insert_download(State::Queued.as_str())?;
+        let id = self
+            .engine
+            .db()
+            .insert_download(JobState::Queued.as_str())?;
         let at = now();
         let mut record = JobRecord {
             id,
@@ -427,7 +373,7 @@ impl Queue {
             apps: req.apps,
             offline,
             kind,
-            state: State::Queued,
+            state: JobState::Queued,
             detail: None,
             wait_until: None,
             commit: None,
@@ -468,16 +414,46 @@ impl Queue {
         }
     }
 
+    /// Do what the owner asked to a job, when its state allows it.
+    pub async fn act(self: &Arc<Self>, id: i64, action: JobAction) -> Result<()> {
+        match action {
+            JobAction::Pause => self.pause(id).await,
+            JobAction::Resume | JobAction::Retry => self.resume(id),
+            JobAction::Start => self.start_now(id),
+            JobAction::Cancel => self.cancel(id).await,
+            JobAction::Remove => self.remove(id),
+        }
+    }
+
+    /// The job, when its state allows `actions`; the reason otherwise. The
+    /// state decides, as `JobState::actions` lists it, so the app offers
+    /// exactly what is allowed here.
+    fn allowing(&self, id: i64, actions: &[JobAction]) -> Result<Arc<Job>> {
+        let job = self.job(id)?;
+        let state = job.record().state;
+        if !actions.iter().any(|a| state.allows(*a)) {
+            bail!(
+                "download {id} is {}; it cannot be {} now",
+                state.as_str().replace('_', " "),
+                match actions[0] {
+                    JobAction::Pause => "paused",
+                    JobAction::Resume | JobAction::Retry => "continued",
+                    JobAction::Start => "started ahead of the queue",
+                    JobAction::Cancel => "cancelled",
+                    JobAction::Remove => "removed",
+                }
+            );
+        }
+        Ok(job)
+    }
+
     /// Stop a job; what it has downloaded is kept.
     pub async fn pause(self: &Arc<Self>, id: i64) -> Result<()> {
-        let job = self.job(id)?;
-        if job.record().state.is_finished() {
-            bail!("download {id} is already finished");
-        }
+        let job = self.allowing(id, &[JobAction::Pause])?;
         self.stop(&job).await;
         {
             let mut r = job.record();
-            r.state = State::Paused;
+            r.state = JobState::Paused;
             r.detail = None;
             r.wait_until = None;
             r.speed = 0;
@@ -491,16 +467,10 @@ impl Queue {
 
     /// Continue a paused job, or try again one that needed attention.
     pub fn resume(self: &Arc<Self>, id: i64) -> Result<()> {
-        let job = self.job(id)?;
+        let job = self.allowing(id, &[JobAction::Resume, JobAction::Retry])?;
         {
             let mut r = job.record();
-            if !matches!(
-                r.state,
-                State::Paused | State::NeedsAttention | State::Cancelled
-            ) {
-                bail!("download {id} is not stopped");
-            }
-            r.state = State::Queued;
+            r.state = JobState::Queued;
             r.detail = None;
             r.finished_at = None;
             r.note("queued again");
@@ -513,31 +483,25 @@ impl Queue {
 
     /// Start a queued job now, even when others are working.
     pub fn start_now(self: &Arc<Self>, id: i64) -> Result<()> {
-        let job = self.job(id)?;
-        if job.record().state != State::Queued {
-            bail!("download {id} is not waiting for its turn");
-        }
+        let job = self.allowing(id, &[JobAction::Start])?;
         self.spawn(&job);
         Ok(())
     }
 
     /// Stop a job and remove what it has downloaded so far.
     pub async fn cancel(self: &Arc<Self>, id: i64) -> Result<()> {
-        let job = self.job(id)?;
-        if job.record().state.is_finished() {
-            bail!("download {id} is already finished");
-        }
+        let job = self.allowing(id, &[JobAction::Cancel])?;
         self.stop(&job).await;
         let files = job.record().files.clone();
         for file in files.iter().filter(|f| f.stage != FileStage::Stored) {
-            let wanted = file.expect();
+            let wanted = expect_of(file);
             if !self.wanted_elsewhere(id, &wanted) {
                 self.engine.fetcher.discard(&self.engine.store, &wanted);
             }
         }
         {
             let mut r = job.record();
-            r.state = State::Cancelled;
+            r.state = JobState::Cancelled;
             r.detail = None;
             r.wait_until = None;
             r.speed = 0;
@@ -555,16 +519,15 @@ impl Queue {
         let jobs = self.jobs.lock().expect("lock");
         jobs.iter().any(|(other, job)| {
             let r = job.record();
-            *other != id && !r.state.is_finished() && r.files.iter().any(|f| f.expect() == *wanted)
+            *other != id
+                && !r.state.is_finished()
+                && r.files.iter().any(|f| expect_of(f) == *wanted)
         })
     }
 
-    /// Take a job that is not working off the list.
+    /// Take a finished job off the list.
     pub fn remove(&self, id: i64) -> Result<()> {
-        let job = self.job(id)?;
-        if job.record().state.is_working() {
-            bail!("download {id} is working; cancel it first");
-        }
+        self.allowing(id, &[JobAction::Remove])?;
         self.engine.db().delete_download(id)?;
         self.jobs.lock().expect("lock").remove(&id);
         self.changed();
@@ -600,7 +563,7 @@ impl Queue {
                 .values()
                 .map(|job| {
                     let mut record = job.record().clone();
-                    record.speed = if record.state == State::Downloading {
+                    record.speed = if record.state == JobState::Downloading {
                         job.meter.rate()
                     } else {
                         0
@@ -608,6 +571,16 @@ impl Queue {
                     record
                 })
                 .collect(),
+        }
+    }
+
+    /// The queue as the owner sees it.
+    pub fn downloads(&self) -> Downloads {
+        let snapshot = self.snapshot();
+        Downloads {
+            governor: snapshot.governor,
+            speed: snapshot.speed,
+            jobs: snapshot.jobs.iter().map(JobRecord::summary).collect(),
         }
     }
 
@@ -633,7 +606,7 @@ impl Queue {
         let mut changes = self.subscribe();
         loop {
             let record = self.get(id)?;
-            if !record.state.is_working() && record.state != State::Queued {
+            if !record.state.is_working() && record.state != JobState::Queued {
                 return Ok(record);
             }
             if changes.changed().await.is_err() {
@@ -676,7 +649,7 @@ impl Queue {
     }
 
     /// Move a job to `state` from inside its own task.
-    fn set(&self, job: &Job, state: State, detail: Option<String>) {
+    fn set(&self, job: &Job, state: JobState, detail: Option<String>) {
         if job.stopped.load(Ordering::Relaxed) {
             return;
         }
@@ -686,7 +659,7 @@ impl Queue {
                 return;
             }
             r.state = state;
-            if state != State::WaitingServer {
+            if state != JobState::WaitingServer {
                 r.wait_until = None;
             }
             let line = match &detail {
@@ -695,7 +668,7 @@ impl Queue {
             };
             r.detail = detail;
             r.note(line);
-            if state.is_finished() || state == State::NeedsAttention {
+            if state.is_finished() || state == JobState::NeedsAttention {
                 r.speed = 0;
             }
             if state.is_finished() {
@@ -715,7 +688,7 @@ impl Queue {
                 Ok(req) => (req, r.commit.clone()),
                 Err(e) => {
                     drop(r);
-                    return self.set(job, State::NeedsAttention, Some(format!("{e:#}")));
+                    return self.set(job, JobState::NeedsAttention, Some(format!("{e:#}")));
                 }
             }
         };
@@ -724,7 +697,7 @@ impl Queue {
         // busy or cannot be reached.
         let mut failures = 0u32;
         let plan = loop {
-            self.set(job, State::Resolving, None);
+            self.set(job, JobState::Resolving, None);
             let problem = match pull::plan(engine, &req, pinned.as_deref()).await {
                 Ok(plan) => break plan,
                 Err(e) => problem_of(&e, &req),
@@ -739,11 +712,11 @@ impl Queue {
                 }
                 Problem::Busy(seconds) => {
                     job.record().wait_until = Some(now() + seconds as i64);
-                    self.set(job, State::WaitingServer, Some(wait_text(seconds)));
+                    self.set(job, JobState::WaitingServer, Some(wait_text(seconds)));
                     tokio::time::sleep(Duration::from_secs(seconds)).await;
                 }
                 Problem::Network(why) => {
-                    self.set(job, State::WaitingNetwork, Some(why));
+                    self.set(job, JobState::WaitingNetwork, Some(why));
                     let pause = Duration::from_secs(2u64.pow(failures.min(5)).min(30));
                     tokio::time::sleep(pause).await;
                 }
@@ -770,7 +743,7 @@ impl Queue {
                 plan.entries.len()
             ));
         }
-        self.set(job, State::Downloading, None);
+        self.set(job, JobState::Downloading, None);
 
         let watch = Arc::new(JobWatch {
             queue: self.clone(),
@@ -785,7 +758,7 @@ impl Queue {
             }
         };
 
-        self.set(job, State::Placing, None);
+        self.set(job, JobState::Placing, None);
         let files = items.len();
         match pull::place(engine, &req, &plan, items).await {
             Ok(placement) => {
@@ -819,9 +792,9 @@ impl Queue {
                 }
                 if !retry.is_empty() {
                     // `place` has told the history already.
-                    return self.set(job, State::NeedsAttention, Some(retry.join("; ")));
+                    return self.set(job, JobState::NeedsAttention, Some(retry.join("; ")));
                 }
-                self.set(job, State::Done, None);
+                self.set(job, JobState::Done, None);
                 self.forget_old();
                 let call = self.on_done.lock().expect("lock").clone();
                 if let Some(call) = call {
@@ -847,7 +820,7 @@ impl Queue {
                 crate::activity::record_stopped_activation(&home, &repo, &apps, &text);
             });
         }
-        self.set(job, State::NeedsAttention, Some(why));
+        self.set(job, JobState::NeedsAttention, Some(why));
     }
 
     /// Keep the list of finished jobs from growing without end.
@@ -879,8 +852,8 @@ impl Job {
     }
 }
 
-fn file_state(entry: &TreeEntry) -> FileState {
-    FileState {
+fn file_state(entry: &TreeEntry) -> JobFile {
+    JobFile {
         path: entry.path.clone(),
         size: entry.size,
         done: 0,
@@ -976,10 +949,10 @@ impl PullWatch for JobWatch {
                 }
             }
             // Bytes are arriving, so whatever the job was waiting for is over.
-            delta > 0 && matches!(r.state, State::WaitingServer | State::WaitingNetwork)
+            delta > 0 && matches!(r.state, JobState::WaitingServer | JobState::WaitingNetwork)
         };
         if resumed {
-            self.queue.set(&self.job, State::Downloading, None);
+            self.queue.set(&self.job, JobState::Downloading, None);
         } else {
             self.queue.ticked();
         }
@@ -995,11 +968,11 @@ impl PullWatch for JobWatch {
             Wait::Server { seconds } => {
                 self.job.record().wait_until = Some(now() + seconds as i64);
                 self.queue
-                    .set(&self.job, State::WaitingServer, Some(wait_text(seconds)));
+                    .set(&self.job, JobState::WaitingServer, Some(wait_text(seconds)));
             }
             Wait::Network => self.queue.set(
                 &self.job,
-                State::WaitingNetwork,
+                JobState::WaitingNetwork,
                 Some("the download server cannot be reached".to_string()),
             ),
         }
@@ -1016,7 +989,7 @@ impl PullWatch for JobWatch {
                 .all(|f| matches!(f.stage, FileStage::Verifying | FileStage::Stored))
         };
         if all_here {
-            self.queue.set(&self.job, State::Verifying, None);
+            self.queue.set(&self.job, JobState::Verifying, None);
         } else {
             self.queue.ticked();
         }
@@ -1039,7 +1012,7 @@ mod tests {
     fn finished(outcome: serde_json::Value) -> JobRecord {
         let mut whole = serde_json::json!({
             "repo": "org/model", "commit": "c0", "from_archive": false,
-            "files": 3, "bytes": 3, "downloaded": 0,
+            "files": 3, "bytes": 3, "downloaded": 0, "placed": [], "skipped": [], "notes": [],
         });
         whole
             .as_object_mut()
@@ -1055,37 +1028,39 @@ mod tests {
         .unwrap()
     }
 
-    #[test]
-    fn a_job_kept_by_an_older_build_says_what_it_placed() {
-        // An older build marked a job done when Ollama refused the model,
-        // and kept the reason only as a note.
-        let refused = finished(serde_json::json!({
-            "placed": [["bionic", {"cloned": 3, "present": 0, "conflicts": []}]],
-            "notes": ["not placed into Ollama: Ollama would not import a stand-in for the model"],
-        }));
-        assert_eq!(refused.activated(), [App::Bionic]);
-        let not = refused.not_activated();
-        assert_eq!(not.len(), 1);
-        assert_eq!(not[0].app, App::Ollama);
-        assert_eq!(not[0].reason, "no reason was kept");
-        // It downloaded nothing, so it reads as an activation.
-        assert_eq!(refused.shown_as(), JobKind::Activation);
+    fn placed(app: &str, conflicts: &[&str]) -> serde_json::Value {
+        serde_json::json!({"app": app, "cloned": 3, "present": 0, "conflicts": conflicts})
+    }
 
+    #[test]
+    fn a_finished_job_says_which_apps_took_the_model() {
         // Files of the app's own in the way: the app did not take the model.
         let blocked = finished(serde_json::json!({
-            "placed": [
-                ["bionic", {"cloned": 3, "present": 0, "conflicts": []}],
-                ["ollama", {"cloned": 0, "present": 0, "conflicts": ["blobs/sha256-ab"]}],
-            ],
-            "notes": [],
+            "placed": [placed("bionic", &[]), placed("ollama", &["blobs/sha256-ab"])],
         }));
         assert_eq!(blocked.activated(), [App::Bionic]);
         assert_eq!(blocked.not_activated()[0].app, App::Ollama);
+        // It downloaded nothing, so it reads as an activation.
+        assert_eq!(blocked.shown_as(), JobKind::Activation);
+        let summary = blocked.summary();
+        assert_eq!(summary.kind, JobKind::Activation);
+        assert_eq!(summary.actions, [JobAction::Remove]);
+
+        // An app the outcome does not mention gets a plain reason.
+        let silent = finished(serde_json::json!({"placed": [placed("bionic", &[])]}));
+        let not = silent.not_activated();
+        assert_eq!((not.len(), not[0].app), (1, App::Ollama));
+        assert_eq!(not[0].reason, "no reason was kept");
 
         // A job that has not finished has nothing to say yet.
         let mut working = blocked.clone();
         working.outcome = None;
+        working.state = JobState::Downloading;
         assert!(working.activated().is_empty() && working.not_activated().is_empty());
+        assert_eq!(
+            working.summary().actions,
+            [JobAction::Pause, JobAction::Cancel]
+        );
     }
 
     #[test]

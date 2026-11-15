@@ -1,12 +1,15 @@
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
-use dedupd_core::adopt::{self, Action, Event, Upstream, Verify};
+use dedupd_api::app::App;
+use dedupd_api::jobs::JobKind;
+use dedupd_api::library::VerifyState;
+use dedupd_core::adopt::{self, Action, Event, Upstream};
 use dedupd_core::config::Config;
 use dedupd_core::db::Db;
 use dedupd_core::fetch::{Fetcher, Progress};
 use dedupd_core::governor::Governor;
 use dedupd_core::hub::{DEFAULT_ENDPOINT, HubClient};
-use dedupd_core::place::{App, AppDirs};
+use dedupd_core::place::AppDirs;
 use dedupd_core::pull::{self, Engine, PullRequest};
 use dedupd_core::store::Store;
 use dedupd_core::{Home, archive, status};
@@ -328,17 +331,19 @@ async fn cmd_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
     };
     let result = if via_daemon {
         eprintln!("The dedupd daemon is running; it does the work.");
-        let apps = req.apps.iter().map(|a| a.as_str().to_string()).collect();
-        let (model, include) = (model_spec, req.selection.include.clone());
+        let (model, apps, include) = (model_spec, req.apps.clone(), req.selection.include.clone());
+        // `activate` is a pull from the kept copy: an activation.
+        let kind = if offline {
+            JobKind::Activation
+        } else {
+            JobKind::Download
+        };
         tokio::task::spawn_blocking(move || {
-            // `activate` is a pull from the kept copy: an activation.
-            dedupd_client::pull(address, model, apps, include, offline, offline)
+            dedupd_client::pull(address, model, apps, include, offline, kind)
         })
         .await?
         .map_err(anyhow::Error::from)
     } else {
-        // One mapping serves both paths: the outcome is read as the daemon
-        // would have sent it.
         // `pull` tells the activity list what it placed; an activation that
         // stops before placing is told here, as the daemon's queue would.
         pull::pull(&o.engine, &req, &progress)
@@ -352,10 +357,6 @@ async fn cmd_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
                         &format!("{e:#}"),
                     );
                 }
-            })
-            .and_then(|out| {
-                let sent = serde_json::to_string(&out)?;
-                Ok(dedupd_client::PullResult::from_json(&sent)?)
             })
     };
     ticker.abort();
@@ -479,7 +480,7 @@ async fn cmd_adopt(
 
     let files = || outcomes.iter().flat_map(|o| &o.files);
     let count = |a: Action| files().filter(|f| f.action == a).count();
-    let state = |v: Verify| files().filter(|f| f.verify == v).count();
+    let state = |v: VerifyState| files().filter(|f| f.verify == v).count();
     let hashed: u64 = files()
         .filter(|f| f.action != Action::Unchanged)
         .map(|f| f.size)
@@ -500,12 +501,14 @@ async fn cmd_adopt(
     );
     println!(
         "Verified against Hugging Face: {}. Different from upstream: {}. Not listed upstream: {}. Not checked: {}.",
-        state(Verify::Verified),
-        state(Verify::Mismatch),
-        state(Verify::NotUpstream),
-        state(Verify::Unchecked),
+        state(VerifyState::Verified),
+        state(VerifyState::Mismatch),
+        state(VerifyState::NotUpstream),
+        state(VerifyState::Unchecked),
     );
-    for f in files().filter(|f| matches!(f.verify, Verify::Mismatch | Verify::NotUpstream)) {
+    for f in
+        files().filter(|f| matches!(f.verify, VerifyState::Mismatch | VerifyState::NotUpstream))
+    {
         println!("  {}: {}/{}", f.verify.as_str(), f.repo, f.rel_path);
     }
     if !dry_run {
@@ -664,56 +667,13 @@ async fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use dedupd_core::place::{App, Placed};
-    use dedupd_core::pull::PullOutcome;
-
-    /// The client cannot depend on the core, so it carries its own copy of
-    /// the default address; the two must not drift.
+    /// The app asks the client where the daemon is when the owner has not
+    /// said; that must be where the daemon listens unless told otherwise.
     #[test]
     fn the_client_and_the_daemon_agree_on_the_default_address() {
         assert_eq!(
-            dedupd_client::DEFAULT_ADDRESS,
+            dedupd_client::default_address(),
             dedupd_core::config::DEFAULT_LISTEN
         );
-        assert_eq!(
-            dedupd_client::default_address(),
-            dedupd_client::DEFAULT_ADDRESS
-        );
-    }
-
-    #[test]
-    fn a_local_pull_outcome_reads_as_the_daemon_would_send_it() {
-        let out = PullOutcome {
-            repo: "org/repo".into(),
-            commit: "c".repeat(40),
-            from_archive: true,
-            files: 3,
-            bytes: 10,
-            downloaded: 1,
-            placed: vec![(
-                App::Hf,
-                Placed {
-                    cloned: 2,
-                    present: 1,
-                    conflicts: vec!["a".into()],
-                },
-            )],
-            skipped: vec![dedupd_core::pull::Skipped {
-                app: App::Ollama,
-                reason: "it cannot run this model".into(),
-                temporary: false,
-            }],
-            notes: vec!["n".into()],
-        };
-        let sent = serde_json::to_string(&out).unwrap();
-        let read = dedupd_client::PullResult::from_json(&sent).unwrap();
-        assert_eq!((read.files, read.downloaded, read.bytes), (3, 1, 10));
-        assert!(read.from_archive);
-        assert_eq!(read.placed[0].app, App::Hf.as_str());
-        assert_eq!((read.placed[0].cloned, read.placed[0].present), (2, 1));
-        assert_eq!(read.placed[0].conflicts, ["a"]);
-        assert_eq!(read.skipped[0].app, App::Ollama.as_str());
-        assert_eq!(read.skipped[0].reason, "it cannot run this model");
-        assert_eq!(read.notes, ["n"]);
     }
 }

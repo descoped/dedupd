@@ -74,13 +74,13 @@ final class DaemonStore {
     var activationJobs: [Job] { jobs.filter(\.isActivation) }
 
     /// The downloads the daemon is working on or will get to.
-    var activeJobs: [Job] { downloadJobs.filter { $0.phase.isActive } }
+    var activeJobs: [Job] { downloadJobs.filter { $0.state.isActive } }
 
     /// The downloads that wait for the owner.
-    var attentionJobs: [Job] { downloadJobs.filter { $0.phase == .needsAttention } }
+    var attentionJobs: [Job] { downloadJobs.filter { $0.state == .needsAttention } }
 
     /// Downloads and activations that wait for the owner.
-    var waitingJobs: [Job] { jobs.filter { $0.phase == .needsAttention } }
+    var waitingJobs: [Job] { jobs.filter { $0.state == .needsAttention } }
 
     /// Something waits for the owner; the menu bar shows a warning.
     var needsOwner: Bool { !waitingJobs.isEmpty }
@@ -198,7 +198,7 @@ final class DaemonStore {
             // then, whether or not the daemon also says the library changed.
             let first = library == nil
             let finished = event.downloads.jobs.contains { job in
-                job.phase == .done && before.first { $0.id == job.id }?.phase != .done
+                job.state == .done && before.first { $0.id == job.id }?.state != .done
             }
             let changed = library != event.library
             library = event.library

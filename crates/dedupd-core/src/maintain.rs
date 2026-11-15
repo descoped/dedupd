@@ -4,9 +4,11 @@
 use crate::clone::{clone_into_place, same_volume};
 use crate::db::{BlobRow, Db, PROVIDER_HF, lock};
 use crate::hash::hash_file;
-use crate::place::{App, AppDirs, hf_repo_dir};
+use crate::place::{AppDirs, hf_repo_dir};
 use crate::store::{Fingerprint, Store};
 use anyhow::{Context, Result, bail};
+use dedupd_api::app::App;
+use dedupd_api::moves::{KeptFile, PlannedFile, StoredFile};
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -190,6 +192,29 @@ pub struct GcPlan {
     pub offload: Vec<BlobRow>,
 }
 
+impl GcPlan {
+    /// The plan as the control API shows it; `freed` once it was done.
+    pub fn answer(&self, freed: Option<u64>) -> dedupd_api::moves::GcPlan {
+        let files = |list: &[BlobRow]| -> Vec<StoredFile> {
+            list.iter()
+                .map(|b| StoredFile {
+                    sha256: b.sha256.clone(),
+                    size: b.size,
+                    git_oid: b.git_oid.clone(),
+                })
+                .collect()
+        };
+        let bytes = |list: &[BlobRow]| list.iter().map(|b| b.size).sum();
+        dedupd_api::moves::GcPlan {
+            orphans: files(&self.orphans),
+            offload: files(&self.offload),
+            orphan_bytes: bytes(&self.orphans),
+            offload_bytes: bytes(&self.offload),
+            freed,
+        }
+    }
+}
+
 /// Work out what `gc` would remove. Removes nothing.
 pub fn gc_plan(db: &Mutex<Db>, store: &Store, offload: bool) -> Result<GcPlan> {
     let db = lock(db);
@@ -260,19 +285,41 @@ pub fn forget(db: &Mutex<Db>, repo: &str) -> Result<()> {
 
 /// What removing a repository from one app would do. Nothing in it is
 /// removed until `unplace_apply` is given the plan.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone)]
 pub struct UnplacePlan {
     pub repo: String,
-    pub app: String,
-    /// The app's files that would be removed, as `(path, size)`. Each is
-    /// exactly as it was when it was hashed, and its content stays in the
-    /// store.
-    pub remove: Vec<(String, u64)>,
+    pub app: App,
+    /// The app's files that would be removed. Each is exactly as it was
+    /// when it was hashed, and its content stays in the store.
+    pub remove: Vec<PlannedFile>,
     /// Links and manifests that go with them.
     pub links: Vec<String>,
-    /// Files that would be left alone, as `(path, reason)`.
-    pub keep: Vec<(String, String)>,
+    /// Files that would be left alone, and why.
+    pub keep: Vec<KeptFile>,
     pub bytes: u64,
+}
+
+impl UnplacePlan {
+    /// Only the files the owner agreed to, out of this plan.
+    pub fn only(mut self, agreed: &[String]) -> Self {
+        let agreed: HashSet<&str> = agreed.iter().map(String::as_str).collect();
+        self.remove.retain(|f| agreed.contains(f.path.as_str()));
+        self.bytes = self.remove.iter().map(|f| f.size).sum();
+        self
+    }
+
+    /// The plan as the control API shows it; `removed` once it was done.
+    pub fn answer(self, removed: Option<usize>) -> dedupd_api::moves::UnplacePlan {
+        dedupd_api::moves::UnplacePlan {
+            repo: self.repo,
+            app: self.app,
+            remove: self.remove,
+            links: self.links,
+            keep: self.keep,
+            bytes: self.bytes,
+            removed: removed.map(|n| n as u64),
+        }
+    }
 }
 
 /// Work out what removing `repo` from `app` would delete. The store keeps
@@ -286,8 +333,11 @@ pub fn unplace_plan(
 ) -> Result<UnplacePlan> {
     let mut plan = UnplacePlan {
         repo: repo.to_string(),
-        app: app.as_str().to_string(),
-        ..Default::default()
+        app,
+        remove: Vec::new(),
+        links: Vec::new(),
+        keep: Vec::new(),
+        bytes: 0,
     };
     let placed: Vec<_> = lock(db)
         .placements()?
@@ -317,17 +367,23 @@ pub fn unplace_plan(
             Ok(_) => None,
         };
         match reason {
-            Some(why) => plan.keep.push((p.path, why.to_string())),
+            Some(why) => plan.keep.push(KeptFile {
+                path: p.path,
+                why: why.to_string(),
+            }),
             None => {
                 plan.bytes += p.size;
-                plan.remove.push((p.path, p.size));
+                plan.remove.push(PlannedFile {
+                    path: p.path,
+                    size: p.size,
+                });
             }
         }
     }
     plan.links = match app {
         App::Ollama => manifests,
         App::Hf => {
-            let going: HashSet<&str> = plan.remove.iter().map(|(p, _)| p.as_str()).collect();
+            let going: HashSet<&str> = plan.remove.iter().map(|f| f.path.as_str()).collect();
             hf_links(&hf_repo_dir(dirs, repo), &going)
         }
         App::Bionic => Vec::new(),
@@ -395,18 +451,18 @@ pub fn deactivate(
     dirs: &AppDirs,
     plan: &UnplacePlan,
 ) -> Result<usize> {
-    let app: App = plan.app.parse()?;
+    let app = plan.app;
     let done = unplace_apply(db, dirs, plan);
     let left = || -> usize {
         lock(db).placements().map_or(0, |all| {
             all.iter()
-                .filter(|p| p.repo == plan.repo && p.app == plan.app)
+                .filter(|p| p.repo == plan.repo && p.app == app.as_str())
                 .count()
         })
     };
     crate::activity::record_result(
         store.home(),
-        crate::activity::Action::Deactivate,
+        dedupd_api::activity::ActivityAction::Deactivate,
         &plan.repo,
         Some(app),
         &done,
@@ -420,15 +476,15 @@ pub fn deactivate(
 }
 
 pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Result<usize> {
-    let app: App = plan.app.parse()?;
+    let app = plan.app;
     let recorded: std::collections::HashMap<String, Fingerprint> = lock(db)
         .placements()?
         .into_iter()
-        .filter(|p| p.repo == plan.repo && p.app == plan.app)
+        .filter(|p| p.repo == plan.repo && p.app == app.as_str())
         .map(|p| (p.path.clone(), p.fingerprint()))
         .collect();
     let mut removed = 0;
-    for (path, _) in &plan.remove {
+    for PlannedFile { path, .. } in &plan.remove {
         let unchanged = recorded
             .get(path)
             .is_some_and(|fp| Fingerprint::of(Path::new(path)).is_ok_and(|now| now == *fp));
@@ -460,7 +516,7 @@ pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Resu
     let mut folders: Vec<PathBuf> = plan
         .remove
         .iter()
-        .map(|(p, _)| p)
+        .map(|f| &f.path)
         .chain(&plan.links)
         .filter_map(|p| Path::new(p).parent().map(Path::to_path_buf))
         .collect();

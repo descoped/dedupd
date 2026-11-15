@@ -38,37 +38,37 @@ struct SettingsDraft: Equatable, Sendable {
     /// What to send the daemon to get from `original` to this.
     func changes(from original: SettingsDraft) -> [SettingChange] {
         var changes: [SettingChange] = []
-        func text(_ key: String, _ value: String, _ was: String, emptyUnsets: Bool = false) {
+        func text(_ key: Setting, _ value: String, _ was: String, emptyUnsets: Bool = false) {
             let value = value.trimmingCharacters(in: .whitespaces)
             guard value != was else {
                 return
             }
             changes.append(SettingChange(key: key, value: value.isEmpty && emptyUnsets ? .unset : .text(value: value)))
         }
-        func number(_ key: String, _ value: Int, _ was: Int) {
+        func number(_ key: Setting, _ value: Int, _ was: Int) {
             if value != was {
                 changes.append(SettingChange(key: key, value: .number(value: UInt64(max(0, value)))))
             }
         }
-        func flag(_ key: String, _ value: Bool, _ was: Bool) {
+        func flag(_ key: Setting, _ value: Bool, _ was: Bool) {
             if value != was {
                 changes.append(SettingChange(key: key, value: .flag(value: value)))
             }
         }
-        text("listen", listen, original.listen)
-        text("hf_endpoint", endpoint, original.endpoint, emptyUnsets: true)
-        text("archive", archive, original.archive, emptyUnsets: true)
-        text("bionic_models", bionic, original.bionic, emptyUnsets: true)
-        text("ollama_models", ollama, original.ollama, emptyUnsets: true)
-        text("hf_cache", hfCache, original.hfCache, emptyUnsets: true)
-        flag("reclaim", reclaim, original.reclaim)
-        flag("set_env", setEnvironment, original.setEnvironment)
-        number("verify_days", verifyDays, original.verifyDays)
-        number("scan_interval", scanInterval, original.scanInterval)
-        number("max_connections", maxConnections, original.maxConnections)
+        text(.listen, listen, original.listen)
+        text(.hfEndpoint, endpoint, original.endpoint, emptyUnsets: true)
+        text(.archive, archive, original.archive, emptyUnsets: true)
+        text(.bionicModels, bionic, original.bionic, emptyUnsets: true)
+        text(.ollamaModels, ollama, original.ollama, emptyUnsets: true)
+        text(.hfCache, hfCache, original.hfCache, emptyUnsets: true)
+        flag(.reclaim, reclaim, original.reclaim)
+        flag(.setEnv, setEnvironment, original.setEnvironment)
+        number(.verifyDays, verifyDays, original.verifyDays)
+        number(.scanInterval, scanInterval, original.scanInterval)
+        number(.maxConnections, maxConnections, original.maxConnections)
         if speedLimit != original.speedLimit {
             let bytes = UInt64(max(0, speedLimit) * 1_000_000)
-            changes.append(SettingChange(key: "speed_limit", value: .number(value: bytes)))
+            changes.append(SettingChange(key: .speedLimit, value: .number(value: bytes)))
         }
         return changes
     }

@@ -487,6 +487,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "dedupd-api",
  "dedupd-client",
  "dedupd-core",
  "dedupd-server",
@@ -495,9 +496,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dedupd-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "uniffi",
+]
+
+[[package]]
 name = "dedupd-client"
 version = "0.1.0"
 dependencies = [
+ "dedupd-api",
  "serde",
  "serde_json",
  "thiserror",
@@ -510,6 +521,7 @@ name = "dedupd-core"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dedupd-api",
  "futures-util",
  "hex",
  "libc",
@@ -534,6 +546,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "dedupd-api",
  "dedupd-client",
  "dedupd-core",
  "futures-util",

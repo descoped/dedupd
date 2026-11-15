@@ -1,4 +1,5 @@
 module dedupd_clientFFI {
+    header "dedupd_apiFFI.h"
     header "dedupd_clientFFI.h"
     export *
     use "Darwin"

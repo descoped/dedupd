@@ -113,8 +113,10 @@ pub fn cmd_install(o: &Opened, env: bool, label: &str) -> Result<()> {
     if env {
         // Asked for in so many words, so an existing `set_env = false` is
         // changed too; the rest of the file stays as it is.
-        let mut changes = serde_json::Map::new();
-        changes.insert("set_env".into(), serde_json::Value::Bool(true));
+        let changes = std::collections::BTreeMap::from([(
+            dedupd_api::daemon::Setting::SetEnv,
+            serde_json::Value::Bool(true),
+        )]);
         dedupd_core::config::Config::update(&o.home, &changes)?;
     }
     let domain = format!("gui/{}", uid());

@@ -29,7 +29,7 @@ struct DownloadsView: View {
                     Button("Clear Finished", systemImage: "checklist.checked") {
                         Task { await daemon.clearFinished() }
                     }
-                    .disabled(!daemon.downloadJobs.contains { $0.phase.isFinished })
+                    .disabled(!daemon.downloadJobs.contains { $0.state.isFinished })
                     .help("Take the downloads that are done or cancelled off the list")
                     .accessibilityIdentifier("clear-finished")
                     InspectorToggle(isShown: $showsInspector)
@@ -46,7 +46,7 @@ struct DownloadsView: View {
             (daemon.downloads?.governor.speedLimit ?? 0) == limit
         } set: { chosen in
             if chosen {
-                Task { await service.update([SettingChange(key: "speed_limit", value: .number(value: limit))]) }
+                Task { await service.update([SettingChange(key: .speedLimit, value: .number(value: limit))]) }
             }
         }
     }
@@ -104,14 +104,14 @@ struct DownloadRow: View {
                     .fontWeight(.medium)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                if job.phase.isActive || job.phase == .paused, job.phase != .queued || job.bytesDone > 0, let fraction = job.fraction {
+                if job.state.isActive || job.state == .paused, job.state != .queued || job.bytesDone > 0, let fraction = job.fraction {
                     ProgressView(value: fraction)
                         .controlSize(.small)
-                        .tint(job.phase == .paused ? .secondary : .accentColor)
+                        .tint(job.state == .paused ? .secondary : .accentColor)
                 }
                 Text(line)
                     .font(.caption)
-                    .foregroundStyle(job.phase == .needsAttention ? .orange : .secondary)
+                    .foregroundStyle(job.state == .needsAttention ? .orange : .secondary)
                     .lineLimit(2)
             }
             Spacer(minLength: 12)
@@ -125,7 +125,7 @@ struct DownloadRow: View {
 
     /// "41.94 MB of 106.07 MB · 11.80 MB/s · 5 s left".
     private var line: String {
-        switch job.phase {
+        switch job.state {
         case .downloading, .done:
             "\(job.progressText) · \(job.statusText)"
         case .paused where job.bytesTotal > 0:
@@ -135,36 +135,9 @@ struct DownloadRow: View {
         }
     }
 
-    @ViewBuilder private var actions: some View {
-        HStack(spacing: 2) {
-            switch job.phase {
-            case .queued:
-                button("Start Now", "forward.end.fill", .start, help: "Start this download ahead of the queue")
-                button("Pause", "pause.fill", .pause, help: "Keep it in the queue without downloading")
-                button("Cancel", "xmark", .cancel, help: "Stop and give up this download")
-            case .resolving, .downloading, .verifying, .placing, .waitingServer, .waitingNetwork:
-                button("Pause", "pause.fill", .pause, help: "Stop for now. What is downloaded is kept.")
-                button("Cancel", "xmark", .cancel, help: "Stop and give up this download")
-            case .paused:
-                button("Resume", "play.fill", .resume, help: "Continue where it stopped")
-                button("Cancel", "xmark", .cancel, help: "Give up this download")
-            case .needsAttention:
-                button("Try Again", "arrow.clockwise", .retry, help: "Try again from where it stopped")
-                button("Cancel", "xmark", .cancel, help: "Give up this download")
-            case .done, .cancelled, .unknown:
-                button("Remove", "minus.circle", .remove, help: "Take it off the list. Downloaded files stay.")
-            }
-        }
-        .buttonStyle(.borderless)
-        .labelStyle(.iconOnly)
-    }
-
-    private func button(_ title: String, _ symbol: String, _ action: JobAction, help: String) -> some View {
-        Button(title, systemImage: symbol) {
-            Task { await daemon.act(action, on: job) }
-        }
-        .help(help)
-        .accessibilityIdentifier("\(action.rawValue)-\(job.id)")
+    /// What the daemon says can be done to the job now.
+    private var actions: some View {
+        JobActionButtons(job: job)
     }
 }
 
@@ -245,5 +218,26 @@ struct GovernorStrip: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title): \(value), \(note)")
+    }
+}
+
+/// The buttons for what can be done to a job, as the daemon lists them.
+struct JobActionButtons: View {
+    let job: Job
+
+    @Environment(DaemonStore.self) private var daemon
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(job.actions, id: \.self) { action in
+                Button(action.title, systemImage: action.symbol) {
+                    Task { await daemon.act(action, on: job) }
+                }
+                .help(action.help(activation: job.isActivation))
+                .accessibilityIdentifier("\(action.name)-\(job.id)")
+            }
+        }
+        .buttonStyle(.borderless)
+        .labelStyle(.iconOnly)
     }
 }

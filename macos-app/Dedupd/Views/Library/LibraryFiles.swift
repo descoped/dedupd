@@ -25,7 +25,7 @@ struct LibraryFiles: View {
         if !detail.placements.isEmpty {
             InspectorSection(title: "In the apps") {
                 ForEach(ModelApp.allCases) { app in
-                    let files = detail.placements.filter { $0.app == app.rawValue }
+                    let files = detail.placements.filter { $0.app == app }
                     if !files.isEmpty {
                         PlacementGroup(app: app, files: files)
                     }
@@ -44,7 +44,7 @@ struct LibraryFiles: View {
 
     private static func note(_ file: RevisionFile) -> String {
         let place = file.stored ? "stored" : (file.archived ? "on the archive disk only" : "not downloaded")
-        let apps = file.apps.map(ModelApp.shortTitle(for:))
+        let apps = file.apps.map(\.shortTitle)
         return apps.isEmpty ? place : "\(place) · in \(ListFormatter.localizedString(byJoining: apps))"
     }
 }
@@ -131,10 +131,10 @@ private struct PlacementGroup: View {
 
     private static func state(_ file: Placement) -> String {
         switch file.verifyState {
-        case "verified": "verified"
-        case "mismatch": "differs"
-        case "not_upstream": "not on Hugging Face"
-        default: "not checked"
+        case .verified: "verified"
+        case .mismatch: "differs"
+        case .notUpstream: "not on Hugging Face"
+        case .unchecked: "not checked"
         }
     }
 }
@@ -148,7 +148,7 @@ struct RemovalSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Deactivate \(plan.repo) in \(ModelApp.title(for: plan.app))?")
+            Text("Deactivate \(plan.repo) in \(plan.app.title)?")
                 .font(.headline)
             Text(summary)
                 .foregroundStyle(.secondary)
