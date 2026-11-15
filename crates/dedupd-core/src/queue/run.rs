@@ -2,6 +2,30 @@
 
 use super::*;
 
+/// Put what an earlier run of the job did into the outcome of a run that
+/// tried again: the apps in `took` it placed the model into, what it
+/// downloaded, and its notes, each note once. Returns how many of the notes
+/// are the earlier run's, which the job's history already holds.
+fn carry_over(outcome: &mut PullResult, earlier: PullResult, took: &[App]) -> usize {
+    let mut placed: Vec<_> = earlier
+        .placed
+        .into_iter()
+        .filter(|p| took.contains(&p.app))
+        .collect();
+    placed.append(&mut outcome.placed);
+    outcome.placed = placed;
+    outcome.downloaded += earlier.downloaded;
+    let mut notes = earlier.notes;
+    let known = notes.len();
+    for note in std::mem::take(&mut outcome.notes) {
+        if !notes.contains(&note) {
+            notes.push(note);
+        }
+    }
+    outcome.notes = notes;
+    known
+}
+
 /// What stopped an attempt, by what to do about it.
 pub(super) enum Problem {
     Network(String),
@@ -119,28 +143,12 @@ impl Queue {
                 // full disk) waits for the owner to try again. The outcome
                 // says which apps took it and why the others did not.
                 let mut outcome = pull::outcome(&req, plan, files, downloaded, placement);
-                // The notes the job's history already holds.
-                let mut known = 0;
                 // Trying again asked only the apps that had not taken the
                 // model; what the earlier run did stays part of the job.
-                if let Some(earlier) = earlier.filter(|_| !took.is_empty()) {
-                    let mut placed: Vec<_> = earlier
-                        .placed
-                        .into_iter()
-                        .filter(|p| took.contains(&p.app))
-                        .collect();
-                    placed.append(&mut outcome.placed);
-                    outcome.placed = placed;
-                    outcome.downloaded += earlier.downloaded;
-                    let mut notes = earlier.notes;
-                    for note in std::mem::take(&mut outcome.notes) {
-                        if !notes.contains(&note) {
-                            notes.push(note);
-                        }
-                    }
-                    known = notes.len();
-                    outcome.notes = notes;
-                }
+                let known = match earlier.filter(|_| !took.is_empty()) {
+                    Some(earlier) => carry_over(&mut outcome, earlier, &took),
+                    None => 0,
+                };
                 let retry: Vec<String> = outcome
                     .skipped
                     .iter()
@@ -250,4 +258,52 @@ fn attention_text(e: &anyhow::Error, req: &PullRequest) -> String {
             .to_string();
     }
     format!("{e:#}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use dedupd_api::jobs::PlacedApp;
+
+    fn result(placed: &[App], downloaded: u64, notes: &[&str]) -> PullResult {
+        PullResult {
+            repo: "org/Repo".into(),
+            commit: "c".repeat(40),
+            from_archive: false,
+            files: 2,
+            bytes: 10,
+            downloaded,
+            placed: placed
+                .iter()
+                .map(|&app| PlacedApp {
+                    app,
+                    cloned: 2,
+                    present: 0,
+                    conflicts: vec![],
+                })
+                .collect(),
+            skipped: vec![],
+            notes: notes.iter().map(|n| n.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn trying_again_keeps_the_earlier_run_and_tells_only_what_is_new() {
+        let earlier = result(
+            &[App::Bionic, App::Hf],
+            2,
+            &["kept from the first run", "both"],
+        );
+        let mut outcome = result(&[App::Ollama], 0, &["both", "new in this run"]);
+        let known = carry_over(&mut outcome, earlier, &[App::Bionic]);
+        let apps: Vec<App> = outcome.placed.iter().map(|p| p.app).collect();
+        assert_eq!(apps, [App::Bionic, App::Ollama]);
+        assert_eq!(outcome.downloaded, 2);
+        assert_eq!(
+            outcome.notes,
+            ["kept from the first run", "both", "new in this run"]
+        );
+        // Only the note this run added goes into the job's history.
+        assert_eq!(outcome.notes[known..], ["new in this run"]);
+    }
 }
