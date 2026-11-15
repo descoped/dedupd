@@ -38,7 +38,8 @@ against Hugging Face. The inspector shows one model in full. Activate puts it in
 takes it out again and leaves the stored copy; a model leaves Ollama whole or not at all, because Ollama needs every
 file of it. While a model is being activated, the app's row says so. An app that
 cannot use the model has no Activate button; its row says why, for example the version of Ollama that cannot run
-the model's type.
+the model's type. A model whose weights are stored can be activated even when small files of it are missing, such as
+a README the app it came from did not download; activating it fetches them first.
 
 ![The Library screen](images/library.png)
 
