@@ -38,7 +38,7 @@ pub fn refs(hub_dir: &Path) -> Vec<(String, String, String)> {
         {
             let commit = std::fs::read_to_string(entry.path()).unwrap_or_default();
             let commit = commit.trim();
-            if crate::db::is_commit(commit) {
+            if crate::hub::is_commit(commit) {
                 out.push((
                     repo.clone(),
                     entry.file_name().to_string_lossy().into_owned(),

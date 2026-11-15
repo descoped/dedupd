@@ -20,6 +20,12 @@ impl Home {
         &self.root
     }
 
+    /// For a home on another disk, such as the archive: the disk is
+    /// attached (the folder, or the folder it goes in, is there).
+    pub fn attached(&self) -> bool {
+        self.root.is_dir() || self.root.parent().is_some_and(Path::is_dir)
+    }
+
     pub fn db_path(&self) -> PathBuf {
         self.root.join("dedupd.sqlite")
     }

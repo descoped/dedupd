@@ -173,7 +173,7 @@ pub fn model(
         holders.entry(&p.sha256).or_default().insert(p.app);
     }
 
-    let archive = store.archive().filter(|a| crate::archive::attached(a));
+    let archive = store.archive().filter(|a| a.attached());
     let refs = db.refs(repo_id)?;
     let rows = db.revisions_of(repo_id, model.commit.as_deref())?;
     let mut revisions = Vec::new();
@@ -292,7 +292,7 @@ pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
             kind: LocationKind::Archive,
             app: None,
             path: a.root().to_string_lossy().into_owned(),
-            present: crate::archive::attached(a),
+            present: a.attached(),
             files: 0,
             bytes: 0,
             shared_bytes: 0,

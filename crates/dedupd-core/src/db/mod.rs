@@ -1,7 +1,7 @@
 //! The database beside the store. It records what each stored file is, which
 //! repository revisions are archived, and every app file dedupd knows about.
 
-use crate::hub::{Snapshot, TreeEntry};
+use crate::hub::{Snapshot, TreeEntry, is_commit, ref_name};
 use crate::now;
 use crate::store::Fingerprint;
 use anyhow::{Context, Result};
@@ -834,17 +834,6 @@ fn blob_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<BlobRow> {
         size: r.get::<_, i64>(1)? as u64,
         git_oid: r.get(2)?,
     })
-}
-
-/// True for a full 40-character git commit id.
-pub fn is_commit(s: &str) -> bool {
-    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// The branch or tag name in `revision`; `None` when it is a commit id,
-/// which is not a ref.
-pub fn ref_name(revision: &str) -> Option<&str> {
-    (!is_commit(revision)).then_some(revision)
 }
 
 #[cfg(test)]

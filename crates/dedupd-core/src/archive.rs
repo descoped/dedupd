@@ -35,11 +35,6 @@ pub struct SyncReport {
     pub failed: Vec<(String, String)>,
 }
 
-/// True when the disk the archive lives on is attached.
-pub fn attached(archive: &Home) -> bool {
-    archive.root().is_dir() || archive.root().parent().is_some_and(|p| p.is_dir())
-}
-
 /// `sync` to the store's own archive folder, when one is configured and its
 /// disk is attached; `None` otherwise.
 pub fn sync_if_attached(
@@ -47,7 +42,7 @@ pub fn sync_if_attached(
     store: &Store,
     on_copy: &mut dyn FnMut(&str, u64),
 ) -> Option<Result<SyncReport>> {
-    let archive = store.archive().filter(|a| attached(a))?;
+    let archive = store.archive().filter(|a| a.attached())?;
     Some(sync(db, store, archive, on_copy))
 }
 
@@ -60,7 +55,7 @@ pub fn sync(
     archive: &Home,
     on_copy: &mut dyn FnMut(&str, u64),
 ) -> Result<SyncReport> {
-    if !attached(archive) {
+    if !archive.attached() {
         bail!(
             "the archive disk is not attached ({} not found)",
             archive.root().display()
@@ -168,7 +163,7 @@ fn attached_archive(store: &Store) -> Result<&Home> {
     let Some(archive) = store.archive() else {
         bail!("no archive folder is set (`archive` in config.toml)");
     };
-    if !attached(archive) {
+    if !archive.attached() {
         bail!(
             "the archive disk is not attached ({} not found)",
             archive.root().display()

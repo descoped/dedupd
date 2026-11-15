@@ -584,7 +584,7 @@ pub async fn place(
                 .await?
             }
             App::Hf => {
-                let ref_name = db::ref_name(&req.revision).map(str::to_string);
+                let ref_name = crate::hub::ref_name(&req.revision).map(str::to_string);
                 blocking(engine, move |engine| {
                     place::place_hf(
                         &dest(engine, repo_id, &repo),

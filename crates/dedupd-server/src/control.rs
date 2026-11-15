@@ -20,7 +20,7 @@ use dedupd_core::config::Config;
 use dedupd_core::db::{NotInLibrary, PROVIDER_HF};
 use dedupd_core::hub::{HubClient, HubError};
 use dedupd_core::profile::{self, Installed};
-use dedupd_core::{activity, archive, library, maintain, status};
+use dedupd_core::{Home, activity, archive, library, maintain, status};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use std::collections::{BTreeMap, HashSet};
@@ -108,7 +108,7 @@ fn status_answer(server: &Server) -> anyhow::Result<DaemonStatus> {
         home: path_text(server.home.root()),
         endpoint: server.engine.fetcher.endpoint().to_string(),
         archive_path: archive_home.as_ref().map(|a| path_text(a.root())),
-        archive_attached: archive_home.as_ref().is_some_and(archive::attached),
+        archive_attached: archive_home.as_ref().is_some_and(Home::attached),
         store_files: s.store_files,
         store_bytes: s.store_bytes,
         shared_bytes: s.shared_bytes,

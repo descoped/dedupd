@@ -137,7 +137,7 @@ pub struct VerifyReport {
 pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Result<VerifyReport> {
     let blobs = lock(db).all_blobs()?;
     let root = match (archive, store.archive()) {
-        (true, Some(a)) if !crate::archive::attached(a) => bail!(
+        (true, Some(a)) if !a.attached() => bail!(
             "the archive disk is not attached ({} not found)",
             a.root().display()
         ),
@@ -342,7 +342,7 @@ pub fn unplace_plan(
         .into_iter()
         .filter(|p| p.repo == repo && p.app == app.as_str())
         .collect();
-    let archive = store.archive().filter(|a| crate::archive::attached(a));
+    let archive = store.archive().filter(|a| a.attached());
     // Ollama keeps one file per layer, and models share layers.
     let (manifests, used_elsewhere) = match app {
         App::Ollama => ollama_use(dirs, repo),

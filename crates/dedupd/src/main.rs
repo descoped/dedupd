@@ -262,7 +262,7 @@ pub fn backup_if_attached(o: &Opened) {
     let Some(archive_home) = o.config.archive_home() else {
         return;
     };
-    if !archive::attached(&archive_home) {
+    if !archive_home.attached() {
         eprintln!(
             "The archive disk is not attached; {} will be updated by the next `dedupd backup`.",
             archive_home.root().display()
@@ -534,7 +534,7 @@ fn cmd_status(o: &Opened, json: bool) -> Result<()> {
         println!(
             "Archive: {}{}",
             a.root().display(),
-            if archive::attached(&a) {
+            if a.attached() {
                 ""
             } else {
                 " (disk not attached)"
