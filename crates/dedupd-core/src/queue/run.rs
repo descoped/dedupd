@@ -18,16 +18,30 @@ impl Queue {
     pub(super) async fn run(self: &Arc<Self>, job: &Arc<Job>) {
         let engine = &self.engine;
         let jobs = engine.governor.max_connections();
-        let (req, pinned) = {
+        let (mut req, pinned, earlier) = {
             let r = job.record();
             match r.request(jobs) {
-                Ok(req) => (req, r.commit.clone()),
+                Ok(req) => (req, r.commit.clone(), r.outcome.clone()),
                 Err(e) => {
                     drop(r);
                     return self.set(job, JobState::NeedsAttention, Some(format!("{e:#}")));
                 }
             }
         };
+        // Tried again after some apps took the model and others could not
+        // be asked: only those others are asked now, and the apps that took
+        // it keep their place in the outcome and are not told about twice.
+        let mut took: Vec<App> = earlier
+            .as_ref()
+            .map(PullResult::activated)
+            .unwrap_or_default();
+        if req.apps.iter().any(|a| !took.contains(a)) {
+            req.apps.retain(|a| !took.contains(a));
+        } else {
+            // Every app is asked again (a job cut off while placing): the
+            // new outcome is the whole answer.
+            took.clear();
+        }
 
         // Settle the revision and the files, waiting out a provider that is
         // busy or cannot be reached.
@@ -104,7 +118,16 @@ impl Queue {
                 // could not be asked just now (the provider out of reach, a
                 // full disk) waits for the owner to try again. The outcome
                 // says which apps took it and why the others did not.
-                let outcome = pull::outcome(&req, plan, files, downloaded, placement);
+                let mut outcome = pull::outcome(&req, plan, files, downloaded, placement);
+                if let Some(earlier) = earlier.filter(|_| !took.is_empty()) {
+                    let mut placed: Vec<_> = earlier
+                        .placed
+                        .into_iter()
+                        .filter(|p| took.contains(&p.app))
+                        .collect();
+                    placed.append(&mut outcome.placed);
+                    outcome.placed = placed;
+                }
                 let retry: Vec<String> = outcome
                     .skipped
                     .iter()

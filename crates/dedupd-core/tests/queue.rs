@@ -543,3 +543,40 @@ async fn an_app_that_could_not_be_asked_just_now_waits_for_the_owner() {
     // The file is stored all the same.
     assert!(s.engine.store.contains(&sha256(&up.weights)));
 }
+
+#[tokio::test]
+async fn trying_again_asks_only_the_apps_that_did_not_take_the_model() {
+    let up = upstream(true).await;
+    Mock::given(method("GET"))
+        .and(path(format!("/v2/{REPO}/manifests/Q4_K_M")))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&up.server)
+        .await;
+    let s = scene(&up);
+    let id = s
+        .queue
+        .add(
+            MODEL,
+            vec![],
+            vec![App::Bionic, App::Ollama],
+            false,
+            JobKind::Activation,
+        )
+        .unwrap();
+    let first = settled(&s.queue, id).await;
+    assert_eq!(first.state, JobState::NeedsAttention, "{}", history(&first));
+    assert_eq!(first.activated(), [App::Bionic]);
+
+    // Try Again: Ollama still cannot be asked. Bionic is not placed or told
+    // about again, and the job still says it took the model.
+    s.queue.resume(id).unwrap();
+    let again = settled(&s.queue, id).await;
+    assert_eq!(again.state, JobState::NeedsAttention, "{}", history(&again));
+    assert_eq!(again.activated(), [App::Bionic]);
+    assert_eq!(again.not_activated()[0].app, App::Ollama);
+    let told = dedupd_core::activity::recent(&s.home, 10)
+        .iter()
+        .filter(|e| e.app == Some(App::Bionic))
+        .count();
+    assert_eq!(told, 1);
+}
