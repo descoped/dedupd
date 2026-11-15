@@ -456,41 +456,62 @@ pub struct Recognised {
     pub bytes: u64,
     /// Files whose content does not hash to their name; left alone.
     pub damaged: u64,
+    /// Good files no repository the database knows refers to; left out of
+    /// the records, as before.
+    pub unused: u64,
 }
 
 /// Record the files that are in the store but not in the database. After
 /// the database is removed (there are no migrations), a scan of the app
 /// folders finds only what the apps hold; the store also has the files no
 /// app downloaded, such as a model's README, and a model without them
-/// would count as not fully stored. Each such file is read in full and
-/// recorded only when its content hashes to its name; one that does not is
-/// left for `verify` and `gc`.
-pub fn recognise_stored(db: &Mutex<Db>, store: &Store) -> Result<Recognised> {
+/// would count as not fully stored.
+///
+/// Each such file is read in full. It is recorded only when its content
+/// hashes to its name and a repository the database knows refers to it,
+/// so a recorded file is never one `gc` would offer to remove. A file that
+/// is damaged or that nothing refers to is put in `looked_at` with its size
+/// and time, and is not read again until one of them changes.
+pub fn recognise_stored(
+    db: &Mutex<Db>,
+    store: &Store,
+    looked_at: &mut HashMap<String, Fingerprint>,
+) -> Result<Recognised> {
     let known: HashSet<String> = lock(db)
         .all_blobs()?
         .into_iter()
         .map(|b| b.sha256)
         .collect();
+    looked_at.retain(|sha, _| !known.contains(sha));
     let mut found = Recognised::default();
     for sha in store.stored_hashes() {
         if known.contains(&sha) {
             continue;
         }
         let path = store.blob_path(&sha);
-        let Ok(size) = std::fs::metadata(&path).map(|m| m.len()) else {
+        // Gone a moment later (`gc`), or unreadable: not recorded.
+        let Ok(seen) = Fingerprint::of(&path) else {
             continue;
         };
-        // Read now and gone a moment later (`gc`), or unreadable: not recorded.
-        let Ok(hashes) = hash_file(&path, size <= GIT_OID_WITHOUT_TREE_MAX) else {
+        if looked_at.get(&sha) == Some(&seen) {
+            continue;
+        }
+        let Ok(hashes) = hash_file(&path, seen.size <= GIT_OID_WITHOUT_TREE_MAX) else {
             continue;
         };
         if hashes.sha256 != sha {
             found.damaged += 1;
+            looked_at.insert(sha, seen);
             continue;
         }
-        lock(db).upsert_blob(&sha, hashes.size, hashes.git_oid.as_deref())?;
-        found.files += 1;
-        found.bytes += hashes.size;
+        if lock(db).record_blob_if_used(&sha, hashes.size, hashes.git_oid.as_deref())? {
+            found.files += 1;
+            found.bytes += hashes.size;
+            looked_at.remove(&sha);
+        } else {
+            found.unused += 1;
+            looked_at.insert(sha, seen);
+        }
     }
     Ok(found)
 }

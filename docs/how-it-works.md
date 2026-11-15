@@ -74,7 +74,9 @@ each file once, verifies it, stores it and activates the model in the named appl
 **Adoption.** A background pass scans the application directories when they change and every 300 seconds. A new
 file that has been unmodified for 20 seconds is hashed and adopted: cloned into the store, with the application's
 file left untouched. The same pass records files that are in the store but not in the database, such as a model's
-README that no application downloaded; each is hashed first and recorded only when its content matches its name.
+README that no application downloaded; each is hashed first and recorded only when its content matches its name
+and a model dedupd knows refers to it. Any other file in the store is left out of the records, so `gc` never lists
+it.
 
 **Reclaim.** When an application holds a full copy of content that is already in the store, the copy is replaced by
 a clone, which releases its space. Reclaim is the only modification dedupd makes to an application's files without

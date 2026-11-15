@@ -509,7 +509,8 @@ async fn cmd_adopt(
     if !dry_run {
         // The files the store holds that no app folder has, such as a
         // model's README, after the database was removed.
-        let found = adopt::recognise_stored(&o.engine.db, &o.engine.store)?;
+        let found =
+            adopt::recognise_stored(&o.engine.db, &o.engine.store, &mut Default::default())?;
         if found.files > 0 {
             println!(
                 "Recorded {} files that were already in the store ({}).",

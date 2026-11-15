@@ -289,7 +289,9 @@ private struct HubVariantRow: View {
         } else if variant.canActivate, missing.isEmpty {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-                .help(chosen.isEmpty ? "Stored on this Mac" : "On this Mac, in every app chosen above")
+                .help(chosen.isEmpty
+                    ? (variant.isStored ? "Stored on this Mac" : "Its weights are stored on this Mac")
+                    : "On this Mac, in every app chosen above")
                 .accessibilityLabel("On this Mac")
         } else {
             Button(variant.canActivate ? "Activate" : "Download") {
