@@ -255,8 +255,17 @@ pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
         }
         lock(db).delete_blob(&blob.sha256)?;
     }
+    // The local copy of a file to offload goes only once the archive disk's
+    // copy has been read in full and is good; a damaged copy or a detached
+    // disk leaves it.
     for blob in &plan.offload {
-        freed += remove_local(blob)?;
+        let good = store.archive().is_some_and(|archive| {
+            hash_file(&archive.blob_path(&blob.sha256), false)
+                .is_ok_and(|h| h.sha256 == blob.sha256)
+        });
+        if good {
+            freed += remove_local(blob)?;
+        }
     }
     Ok(freed)
 }

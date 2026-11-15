@@ -237,6 +237,17 @@ async fn offload_frees_local_space_and_the_file_comes_back() {
     let plan = maintain::gc_plan(&fx.db, &fx.store, true).unwrap();
     assert!(plan.orphans.is_empty());
     assert_eq!(plan.offload.len(), 1);
+
+    // An archive copy of the right size but other bytes is not a copy: the
+    // local one stays.
+    let copy = fx.archive.blob_path(&sha);
+    let good = fs::read(&copy).unwrap();
+    fs::set_permissions(&copy, std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
+    fs::write(&copy, vec![6u8; 70_000]).unwrap();
+    assert_eq!(maintain::gc_apply(&fx.db, &fx.store, &plan).unwrap(), 0);
+    assert!(fx.store.contains(&sha));
+    fs::write(&copy, good).unwrap();
+
     assert_eq!(
         maintain::gc_apply(&fx.db, &fx.store, &plan).unwrap(),
         70_000
