@@ -73,6 +73,9 @@ impl Server {
                 }
             }
         }
+        // Copies cut short by a stop part of the way, here and on the
+        // archive disk.
+        engine.store.clear_leftovers();
         let queue = Queue::open(engine.clone())?;
         let server = Arc::new(Self {
             engine,

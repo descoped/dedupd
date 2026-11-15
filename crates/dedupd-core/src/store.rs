@@ -136,17 +136,63 @@ impl Store {
         }
         let tmp = self.tmp_path(&format!("{sha256}.restore.{}", std::process::id()));
         let _ = fs::remove_file(&tmp);
-        let copied = crate::hash::copy_hashing(&src, &tmp)
-            .with_context(|| format!("copying {} back from the archive", src.display()))?;
-        if copied != sha256 {
+        let result = (|| -> Result<()> {
+            let copied = crate::hash::copy_hashing(&src, &tmp)
+                .with_context(|| format!("copying {} back from the archive", src.display()))?;
+            if copied != sha256 {
+                bail!(
+                    "archive file {} is damaged: it hashes to {copied}",
+                    src.display()
+                );
+            }
+            self.add_tmp(&tmp, sha256)?;
+            Ok(())
+        })();
+        // A copy cut short (the disk went, the internal disk is full)
+        // leaves nothing behind.
+        if result.is_err() {
             let _ = fs::remove_file(&tmp);
-            bail!(
-                "archive file {} is damaged: it hashes to {copied}",
-                src.display()
-            );
         }
-        self.add_tmp(&tmp, sha256)?;
-        Ok(true)
+        result.map(|()| true)
+    }
+
+    /// Remove the half-made copies a process that stopped part of the way
+    /// left in the temp folders, here and on the archive disk: a file
+    /// cloned or copied into the store, copied back from the archive, or
+    /// copied to it. A copy that is still being written was written to a
+    /// moment ago and is left alone; partial downloads, which are
+    /// continued, are never touched. Returns how many were removed.
+    pub fn clear_leftovers(&self) -> usize {
+        let quiet_for = std::time::Duration::from_secs(600);
+        let mut dirs = vec![self.home.tmp_dir()];
+        dirs.extend(
+            self.archive
+                .as_ref()
+                .filter(|a| a.attached())
+                .map(Home::tmp_dir),
+        );
+        let mut removed = 0;
+        for entry in dirs
+            .iter()
+            .filter_map(|d| fs::read_dir(d).ok())
+            .flatten()
+            .flatten()
+        {
+            let name = entry.file_name();
+            if !is_leftover_copy(&name.to_string_lossy()) {
+                continue;
+            }
+            let idle = entry
+                .metadata()
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|at| at.elapsed().ok())
+                .is_some_and(|age| age >= quiet_for);
+            if idle && fs::remove_file(entry.path()).is_ok() {
+                removed += 1;
+            }
+        }
+        removed
     }
 
     pub fn blob_path(&self, sha256: &str) -> PathBuf {
@@ -210,6 +256,19 @@ impl Store {
     }
 }
 
+/// A temp file named as a copy on its way into the store or the archive:
+/// `<sha256>.<pid>` or `<sha256>.restore.<pid>`.
+fn is_leftover_copy(name: &str) -> bool {
+    let Some((sha, rest)) = name.split_once('.') else {
+        return false;
+    };
+    let pid = rest.strip_prefix("restore.").unwrap_or(rest);
+    sha.len() == 64
+        && sha.bytes().all(|b| b.is_ascii_hexdigit())
+        && !pid.is_empty()
+        && pid.bytes().all(|b| b.is_ascii_digit())
+}
+
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
@@ -243,6 +302,43 @@ mod tests {
         // The source keeps its own permissions and content.
         assert_ne!(fs::metadata(&src).unwrap().permissions().mode() & 0o222, 0);
         assert!(fs::read_dir(home.tmp_dir()).unwrap().next().is_none());
+    }
+
+    #[test]
+    fn half_made_copies_are_recognised_and_partial_downloads_are_not() {
+        let sha = "a".repeat(64);
+        assert!(is_leftover_copy(&format!("{sha}.123")));
+        assert!(is_leftover_copy(&format!("{sha}.restore.123")));
+        assert!(!is_leftover_copy(&format!("{sha}.part")));
+        assert!(!is_leftover_copy(&format!("{sha}.asm")));
+        assert!(!is_leftover_copy("ollama-asked-1-2"));
+        assert!(!is_leftover_copy(&format!("{}.123", "a".repeat(63))));
+    }
+
+    #[test]
+    fn a_left_over_copy_is_removed_once_it_has_been_idle() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let store = Store::open(&home).unwrap();
+        let (old, new, part) = (
+            home.tmp_dir().join(format!("{}.restore.7", "b".repeat(64))),
+            home.tmp_dir().join(format!("{}.8", "c".repeat(64))),
+            home.tmp_dir().join(format!("{}.part", "d".repeat(64))),
+        );
+        for path in [&old, &new, &part] {
+            fs::write(path, b"x").unwrap();
+        }
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        for path in [&old, &part] {
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(long_ago)
+                .unwrap();
+        }
+        assert_eq!(store.clear_leftovers(), 1);
+        assert!(!old.exists() && new.exists() && part.exists());
     }
 
     #[test]
