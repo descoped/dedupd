@@ -6,6 +6,7 @@ use crate::now;
 use crate::store::Fingerprint;
 use anyhow::{Context, Result};
 use dedupd_api::app::App;
+use dedupd_api::jobs::JobState;
 use dedupd_api::library::Origin;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
@@ -308,6 +309,25 @@ impl Db {
             .prepare("SELECT job_json FROM downloads ORDER BY id")?;
         let rows = stmt.query_map([], |r| r.get(0))?;
         Ok(rows.collect::<rusqlite::Result<Vec<String>>>()?)
+    }
+
+    /// Whether a job of the download queue that is not finished (queued,
+    /// running, paused, or waiting for the owner) is for `repo`. Such a job
+    /// can still fetch or place the model's files, so the model is not
+    /// archived or restored meanwhile.
+    pub fn has_unfinished_job(&self, repo: &str) -> Result<bool> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT job_json FROM downloads WHERE state NOT IN (?1, ?2)")?;
+        let finished = [JobState::Done.as_str(), JobState::Cancelled.as_str()];
+        let rows = stmt.query_map(finished, |r| r.get::<_, String>(0))?;
+        for json in rows {
+            let job: serde_json::Value = serde_json::from_str(&json?).unwrap_or_default();
+            if job.get("repo").and_then(serde_json::Value::as_str) == Some(repo) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn delete_download(&self, id: i64) -> Result<()> {

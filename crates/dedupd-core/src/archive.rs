@@ -342,6 +342,15 @@ fn secure(store: &Store, archive: &Home, blob: &BlobRow) -> Result<bool> {
 /// model out of every app, remove those files from the store and mark the
 /// model as archived. Nothing is removed unless every copy is good.
 /// `on_file` is told the size of each file as its copy has been checked.
+/// Why a model with a job in the download queue that is not finished is
+/// not archived or restored: the job could fetch or place its files again.
+pub fn busy(repo: &str) -> String {
+    format!(
+        "{repo} has a download or activation that is not finished (also when it is paused or \
+         needs attention); let it finish or cancel it first"
+    )
+}
+
 pub fn archive_apply(
     db: &Mutex<Db>,
     store: &Store,
@@ -368,6 +377,9 @@ fn archive_quietly(
     repo: &str,
     on_file: &mut dyn FnMut(u64),
 ) -> Result<ArchiveReport> {
+    if lock(db).has_unfinished_job(repo)? {
+        bail!("{}", busy(repo));
+    }
     let plan = archive_plan(db, store, dirs, repo)?;
     let archive = attached_archive(store)?;
     let id = repo_id(&lock(db), repo)?;
@@ -527,6 +539,9 @@ fn restore_quietly(
     repo: &str,
     on_file: &mut dyn FnMut(u64),
 ) -> Result<RestoreReport> {
+    if lock(db).has_unfinished_job(repo)? {
+        bail!("{}", busy(repo));
+    }
     let plan = restore_plan(db, store, repo)?;
     if plan.bytes > plan.free {
         bail!(

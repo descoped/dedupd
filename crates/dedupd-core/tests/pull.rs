@@ -465,6 +465,18 @@ async fn a_model_is_archived_and_restored() {
     let edited = offline.dirs.bionic.join(REPO).join("sub/config.json");
     fs::write(&edited, b"my own edit").unwrap();
     let e = offline;
+    // A paused download of the model could fetch its files again after the
+    // archive, so it holds the model until it is cancelled or finished.
+    let job = serde_json::json!({ "repo": REPO }).to_string();
+    let id = e.db().insert_download("paused").unwrap();
+    e.db().save_download(id, "paused", &job).unwrap();
+    let refused = archive::archive_apply(&e.db, &e.store, &e.dirs, REPO, &mut |_| {}).unwrap_err();
+    assert!(
+        format!("{refused:#}").contains("not finished"),
+        "{refused:#}"
+    );
+    assert!(archived_at(&e).is_none());
+    e.db().save_download(id, "cancelled", &job).unwrap();
     let report = archive::archive_apply(&e.db, &e.store, &e.dirs, REPO, &mut |_| {}).unwrap();
     let mut kept: Vec<(&str, &str)> = report
         .keep
