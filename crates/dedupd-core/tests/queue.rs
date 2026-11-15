@@ -332,7 +332,14 @@ async fn a_job_that_was_working_continues_after_a_restart() {
 
     // The daemon stops without a word: the job is "downloading" in the
     // database, and nothing is running.
-    let saved = s.engine.db().downloads().unwrap();
+    let saved: Vec<String> = s
+        .engine
+        .db()
+        .downloads()
+        .unwrap()
+        .into_iter()
+        .map(|(_, text)| text)
+        .collect();
     assert!(
         saved[0].contains(r#""state":"downloading""#),
         "{}",
@@ -542,6 +549,27 @@ async fn an_app_that_could_not_be_asked_just_now_waits_for_the_owner() {
     assert!(record.not_activated()[0].temporary);
     // The file is stored all the same.
     assert!(s.engine.store.contains(&sha256(&up.weights)));
+}
+
+#[tokio::test]
+async fn a_job_another_build_saved_is_removed_when_the_queue_opens() {
+    let up = upstream(true).await;
+    let s = scene(&up);
+    let db = s.engine.db();
+    let foreign = db.insert_download("queued").unwrap();
+    db.save_download(
+        foreign,
+        "queued",
+        r#"{"repo":"org/Repo","state":"teleporting"}"#,
+    )
+    .unwrap();
+    assert!(db.has_unfinished_job("org/Repo").unwrap());
+    drop(db);
+    let queue = Queue::open(s.engine.clone()).unwrap();
+    assert!(queue.get(foreign).is_err());
+    let db = s.engine.db();
+    assert!(db.downloads().unwrap().is_empty());
+    assert!(!db.has_unfinished_job("org/Repo").unwrap());
 }
 
 #[tokio::test]
