@@ -8,7 +8,7 @@ use crate::hub::{HubClient, HubError, Snapshot, TreeEntry, model_meta};
 use crate::ollama;
 use crate::ollama_mlx;
 use crate::place::{self, AppDirs, Dest, Item, Placed};
-use crate::profile::{self, Installed, Traits};
+use crate::profile::{self, Installed};
 use crate::refusals::{Refusal, Refusals};
 use crate::select::{self, Selection};
 use crate::store::Store;
@@ -424,24 +424,21 @@ async fn place_into_ollama(
     // The app's profile says whether this selection can go in, and why not.
     let weights = select::weights(entries);
     let info: serde_json::Value = serde_json::from_str(&snap.info_json).unwrap_or_default();
-    let mut traits = Traits::of_files(weights.len(), &model_meta(&info).formats);
     let config = items
         .iter()
         .find(|i| i.rel_path == "config.json")
         .map(|i| i.sha256.clone());
-    if weights.is_empty() {
-        traits = traits.with_bits(
-            config
-                .as_deref()
-                .and_then(|sha| profile::quantization_of(&engine.store.blob_path(sha))),
-        );
-    }
     let installed = Installed::detect(&engine.dirs);
-    let decision = profile::unless_refused(
-        profile::profile(App::Ollama).decide(&traits, installed.version(App::Ollama)),
+    let decision = profile::decide_for(
+        &engine.store,
+        &installed,
         &Refusals::load(engine.store.home()),
+        weights.len(),
+        &model_meta(&info).formats,
         config.as_deref(),
-    );
+    )
+    .of(App::Ollama)
+    .clone();
     if decision.state != DecisionState::Ready {
         return Ok(Err(skip(decision.reason)));
     }

@@ -1,5 +1,6 @@
 //! The apps dedupd puts models into.
 
+use crate::library::{Cost, Format};
 use serde::{Deserialize, Serialize};
 
 /// An app, or a family of tools that read one folder.
@@ -42,6 +43,36 @@ impl std::fmt::Display for App {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.pad(self.as_str())
     }
+}
+
+/// One app as dedupd sees it on this Mac.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct AppInfo {
+    pub app: App,
+    /// The app's name at the start of a sentence.
+    pub name: String,
+    /// The installed version, when dedupd found it.
+    pub version: Option<String>,
+    /// The formats dedupd can put into it, from its profile, each with the
+    /// cheapest way. Whether one model of such a format can go in is each
+    /// variant's decision.
+    pub takes: Vec<Taken>,
+}
+
+/// A format an app can be given, and the new disk space the cheapest way
+/// to do it takes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct Taken {
+    pub format: Format,
+    pub cost: Cost,
+}
+
+/// The answer to `apps`: every app, in the order of [`App::ALL`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppList {
+    pub apps: Vec<AppInfo>,
 }
 
 /// A name that is not one of the apps.

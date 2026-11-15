@@ -36,12 +36,19 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section("Where new models go") {
-                ForEach(ModelKind.allCases) { kind in
-                    LabeledContent(kind.title) {
-                        HStack(spacing: 12) {
-                            ForEach(apps(for: kind)) { app in
-                                Toggle(app.shortTitle, isOn: binding(app, kind))
-                                    .toggleStyle(.checkbox)
+                if daemon.apps.isEmpty {
+                    Text("Shown once dedupd is running: it knows which apps take which formats.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(ModelFormat.allCases) { format in
+                    let apps = daemon.apps.apps(taking: format)
+                    if !apps.isEmpty {
+                        LabeledContent(format.title) {
+                            HStack(spacing: 12) {
+                                ForEach(apps) { app in
+                                    Toggle(app.shortTitle, isOn: binding(app, format))
+                                        .toggleStyle(.checkbox)
+                                }
                             }
                         }
                     }
@@ -67,20 +74,11 @@ struct SettingsView: View {
         .modifier(MainWindowOpener())
     }
 
-    /// The apps that can use a kind of model.
-    private func apps(for kind: ModelKind) -> [ModelApp] {
-        switch kind {
-        case .gguf: [.bionic, .ollama, .huggingFace]
-        case .splitGGUF, .mlx: [.bionic, .huggingFace]
-        case .other: [.huggingFace]
-        }
-    }
-
-    private func binding(_ app: ModelApp, _ kind: ModelKind) -> Binding<Bool> {
+    private func binding(_ app: ModelApp, _ format: ModelFormat) -> Binding<Bool> {
         Binding {
-            settings.apps(for: kind).contains(app)
+            settings.apps(for: format, known: daemon.apps).contains(app)
         } set: { enabled in
-            settings.setApp(app, for: kind, to: enabled)
+            settings.setApp(app, for: format, to: enabled, known: daemon.apps)
         }
     }
 

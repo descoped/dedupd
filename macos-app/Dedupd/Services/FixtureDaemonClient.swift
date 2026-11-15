@@ -113,6 +113,11 @@ actor FixtureDaemonClient: DaemonClient {
         )
     }
 
+    func apps(at address: String) async throws -> [AppInfo] {
+        try answering(address)
+        return RecordedProfiles.apps
+    }
+
     func models(at address: String) async throws -> [LibraryModel] {
         try answering(address)
         return FixtureData.models.map(asHeld)

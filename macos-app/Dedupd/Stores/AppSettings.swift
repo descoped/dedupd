@@ -48,12 +48,12 @@ final class AppSettings {
         didSet { defaults.set(notifications, forKey: Key.notifications) }
     }
 
-    /// The apps a model goes into, remembered for each kind of model:
-    /// a GGUF file suits other apps than an MLX repository does.
-    private(set) var targets: [ModelKind: Set<ModelApp>] {
+    /// The apps a model goes into, as the owner chose them for each
+    /// format: a GGUF file suits other apps than an MLX repository does.
+    private(set) var targets: [ModelFormat: Set<ModelApp>] {
         didSet {
-            let stored = Dictionary(uniqueKeysWithValues: targets.map { kind, apps in
-                (kind.rawValue, apps.map(\.name).sorted())
+            let stored = Dictionary(uniqueKeysWithValues: targets.map { format, apps in
+                (format.name, apps.map(\.name).sorted())
             })
             defaults.set(stored, forKey: Key.targets)
         }
@@ -77,32 +77,32 @@ final class AppSettings {
         activitySeen = Int64(defaults.integer(forKey: Key.activitySeen))
         let stored = defaults.dictionary(forKey: Key.targets) as? [String: [String]] ?? [:]
         targets = Dictionary(uniqueKeysWithValues: stored.compactMap { kind, apps in
-            ModelKind(rawValue: kind).map { ($0, Set(apps.compactMap(ModelApp.init(name:)))) }
+            ModelFormat(name: kind).map { ($0, Set(apps.compactMap(ModelApp.init(name:)))) }
         })
         isFirstLaunch = !defaults.bool(forKey: Key.launched)
         defaults.set(true, forKey: Key.launched)
     }
 
-    /// Where a model of this kind goes: what the owner chose last, or the
-    /// usual apps for the kind.
-    func apps(for kind: ModelKind) -> Set<ModelApp> {
-        targets[kind] ?? kind.defaultApps
+    /// Where a model of this format goes: what the owner chose last, or
+    /// the daemon's apps that share the stored files at no cost.
+    func apps(for format: ModelFormat, known: [AppInfo]) -> Set<ModelApp> {
+        targets[format] ?? known.defaultApps(for: format)
     }
 
     /// The remembered apps a variant can actually be used by, in the order
     /// the daemon lists them.
-    func apps(for kind: ModelKind, usable: [ModelApp]) -> [ModelApp] {
-        let chosen = apps(for: kind)
+    func apps(for format: ModelFormat, usable: [ModelApp], known: [AppInfo]) -> [ModelApp] {
+        let chosen = apps(for: format, known: known)
         return usable.filter(chosen.contains)
     }
 
-    func setApp(_ app: ModelApp, for kind: ModelKind, to enabled: Bool) {
-        var apps = apps(for: kind)
+    func setApp(_ app: ModelApp, for format: ModelFormat, to enabled: Bool, known: [AppInfo]) {
+        var apps = apps(for: format, known: known)
         if enabled {
             apps.insert(app)
         } else {
             apps.remove(app)
         }
-        targets[kind] = apps
+        targets[format] = apps
     }
 }

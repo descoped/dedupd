@@ -1178,6 +1178,31 @@ fileprivate struct FfiConverterSequenceTypeActivityEntry: FfiConverterRustBuffer
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeAppInfo: FfiConverterRustBuffer {
+    typealias SwiftType = [AppInfo]
+
+    public static func write(_ value: [AppInfo], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeAppInfo.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [AppInfo] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [AppInfo]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeAppInfo.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeLibraryModel: FfiConverterRustBuffer {
     typealias SwiftType = [LibraryModel]
 
@@ -1257,6 +1282,18 @@ public func activity(address: String)throws  -> [ActivityEntry]  {
     return try  FfiConverterSequenceTypeActivityEntry.lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
         uniffiCallStatus in
     uniffi_dedupd_client_fn_func_activity(
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+})
+}
+/**
+ * Every app with its installed version and the formats dedupd can put
+ * into it, in the daemon's order.
+ */
+public func apps(address: String)throws  -> [AppInfo]  {
+    return try  FfiConverterSequenceTypeAppInfo.lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_apps(
         FfiConverterString.lower(address),uniffiCallStatus
     )
 })
@@ -1675,6 +1712,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.contractVersionMismatch
     }
     if (uniffi_dedupd_client_checksum_func_activity() != 9968) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dedupd_client_checksum_func_apps() != 4438) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_archive_model() != 58074) {

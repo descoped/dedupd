@@ -312,6 +312,11 @@ void uniffi_dedupd_client_fn_method_eventsubscription_cancel(uint64_t ptr, RustC
 RustBuffer uniffi_dedupd_client_fn_func_activity(RustBuffer address, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_APPS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_APPS
+RustBuffer uniffi_dedupd_client_fn_func_apps(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_MODEL
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_MODEL
 void uniffi_dedupd_client_fn_func_archive_model(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
@@ -731,6 +736,12 @@ void ffi_dedupd_client_rust_future_complete_void(uint64_t handle, RustCallStatus
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ACTIVITY
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ACTIVITY
 uint16_t uniffi_dedupd_client_checksum_func_activity(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_APPS
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_APPS
+uint16_t uniffi_dedupd_client_checksum_func_apps(void
     
 );
 #endif

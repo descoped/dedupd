@@ -165,43 +165,52 @@ struct DisplayTests {
         #expect(model.meta.plainTags == ["conversational"])
     }
 
-    @Test("Each kind of model has its own apps")
-    func kinds() {
-        let single = Variant(
-            kind: .gguf, name: "Q4_K_M", spec: "a/b:Q4_K_M", files: 1, bytes: 10, storedBytes: 10,
-            usableBy: [.bionic, .ollama, .huggingFace], placedIn: [.ollama],
-            decisions: FixtureData.decisions(usableBy: [.bionic, .ollama, .huggingFace])
+    /// A variant of 10 bytes with the recorded answers of the profiles.
+    private static func variant(
+        _ format: ModelFormat, _ decisions: [Decision], storedBytes: UInt64 = 10, placedIn: [ModelApp] = []
+    ) -> Variant {
+        let judged = FixtureData.Judged(format: format, decisions: decisions)
+        return Variant(
+            kind: format == .gguf ? .gguf : .files, format: format, name: "v", spec: "a/b", files: 1, bytes: 10,
+            storedBytes: storedBytes, usableBy: judged.usableBy, placedIn: placedIn, decisions: decisions
         )
-        var split = single
-        split.usableBy = [.bionic, .huggingFace]
-        var files = single
-        files.kind = .files
-        #expect(single.kind(formats: ["gguf"]) == .gguf)
-        #expect(split.kind(formats: ["gguf"]) == .splitGGUF)
-        #expect(files.kind(formats: ["mlx", "safetensors"]) == .mlx)
-        #expect(files.kind(formats: ["safetensors"]) == .other)
+    }
+
+    @Test("Which apps take a variant is the profiles' answer")
+    func usable() {
+        let single = Self.variant(.gguf, RecordedProfiles.gguf, storedBytes: 10, placedIn: [.ollama])
+        let split = Self.variant(.gguf, RecordedProfiles.splitGGUF, storedBytes: 0)
+        #expect(single.usableApps == [.bionic, .ollama, .huggingFace])
         #expect(single.isStored)
         #expect(single.isPlaced(in: .ollama))
         #expect(!single.isPlaced(in: .bionic))
+        #expect(split.format == .gguf, "a GGUF in parts is still a GGUF")
         #expect(split.usableApps == [.bionic, .huggingFace])
-        #expect(ModelKind.gguf.defaultApps == [.bionic, .ollama])
-        #expect(ModelKind.mlx.defaultApps == [.bionic])
+        #expect(!split.isStored)
+    }
+
+    @Test("Which apps take a format, and where a new model goes, come from the daemon")
+    func formats() {
+        let apps = RecordedProfiles.apps
+        #expect(apps.apps(taking: .gguf) == [.bionic, .ollama, .huggingFace])
+        #expect(apps.apps(taking: .mlx) == [.bionic, .ollama, .huggingFace])
+        #expect(apps.apps(taking: .other) == [.huggingFace])
+        // At no cost, and the Hugging Face cache only when nothing else takes it.
+        #expect(apps.defaultApps(for: .gguf) == [.bionic, .ollama])
+        #expect(apps.defaultApps(for: .mlx) == [.bionic], "Ollama takes MLX for some megabytes, so not by default")
+        #expect(apps.defaultApps(for: .other) == [.huggingFace])
+        #expect([AppInfo]().defaultApps(for: .gguf).isEmpty)
     }
 
     @Test("An app without the model says why, in the daemon's words")
     func notes() {
-        var mlx = Variant(
-            kind: .files, name: "all files", spec: "a/b", files: 8, bytes: 10, storedBytes: 10,
-            usableBy: [.bionic, .huggingFace], placedIn: [],
-            decisions: FixtureData.decisions(usableBy: [.bionic, .huggingFace], mlxBits: 6)
-        )
+        var mlx = Self.variant(.mlx, RecordedProfiles.mlx6)
         #expect([mlx].note(for: .bionic) == "Does not have it")
         #expect(
             [mlx].note(for: .ollama)
-                == "Ollama could not run 6-bit MLX models when dedupd tried it (0.40.16); it ran 4-bit and 8-bit ones"
+                == "Ollama 0.40.16 cannot run 6-bit MLX models; it runs 4-bit and 8-bit ones"
         )
-        mlx.usableBy = [.bionic, .ollama, .huggingFace]
-        mlx.decisions = FixtureData.decisions(usableBy: mlx.usableBy, mlxBits: 4)
+        mlx = Self.variant(.mlx, RecordedProfiles.mlx4)
         #expect([mlx].note(for: .ollama) == "Does not have it")
         #expect(mlx.decision(for: .ollama)?.cost == .megabytes)
         #expect(mlx.placeHelp(for: .ollama).hasSuffix("It takes a few megabytes."))

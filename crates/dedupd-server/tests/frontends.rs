@@ -1362,7 +1362,7 @@ async fn control_api_answers_match_the_recorded_ones() {
             Value::Object(fields) => {
                 for (key, field) in fields.iter_mut() {
                     let fixed = match key.as_str() {
-                        "version" => json!("0.0.0"),
+                        "version" if field.is_string() => json!("0.0.0"),
                         "executable" => json!("/Users/example/bin/dedupd"),
                         "pid" => json!(1),
                         "volume_total" => json!(1_000_000_000_000u64),
@@ -1428,6 +1428,7 @@ async fn control_api_answers_match_the_recorded_ones() {
     download(&fx, again).await;
     let (_, downloads) = control(&fx, "GET", "downloads", None).await;
     let (_, job) = control(&fx, "GET", "downloads/2", None).await;
+    let (_, apps) = control(&fx, "GET", "apps", None).await;
     let (_, models) = control(&fx, "GET", "models", None).await;
     let (_, model) = control(&fx, "GET", &format!("models/{REPO}"), None).await;
     let (_, locations) = control(&fx, "GET", "locations", None).await;
@@ -1488,6 +1489,7 @@ async fn control_api_answers_match_the_recorded_ones() {
         ("enqueue.json", enqueue),
         ("downloads.json", downloads),
         ("download.json", job),
+        ("apps.json", apps),
         ("models.json", models),
         ("model.json", model),
         ("locations.json", locations),

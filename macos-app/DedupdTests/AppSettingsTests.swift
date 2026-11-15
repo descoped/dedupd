@@ -85,29 +85,30 @@ struct AppSettingsTests {
         #expect(!again.notifications)
     }
 
-    @Test("Where a model goes is remembered for each kind of model")
+    @Test("Where a model goes is remembered for each format")
     func targets() {
         let suite = "io.descoped.dedupd.tests.\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite) ?? .standard
         defer { defaults.removePersistentDomain(forName: suite) }
+        let known = RecordedProfiles.apps
 
         let settings = AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642")
-        #expect(settings.apps(for: .gguf) == [.bionic, .ollama], "the usual apps until the owner chooses")
-        #expect(settings.apps(for: .mlx) == [.bionic])
+        #expect(settings.apps(for: .gguf, known: known) == [.bionic, .ollama], "the daemon's defaults until the owner chooses")
+        #expect(settings.apps(for: .mlx, known: known) == [.bionic])
 
-        settings.setApp(.bionic, for: .gguf, to: false)
-        settings.setApp(.huggingFace, for: .mlx, to: true)
+        settings.setApp(.bionic, for: .gguf, to: false, known: known)
+        settings.setApp(.huggingFace, for: .mlx, to: true, known: known)
 
         let again = AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642")
-        #expect(again.apps(for: .gguf) == [.ollama])
-        #expect(again.apps(for: .mlx) == [.bionic, .huggingFace])
-        #expect(again.apps(for: .splitGGUF) == [.bionic], "a kind the owner never touched keeps its usual apps")
+        #expect(again.apps(for: .gguf, known: known) == [.ollama])
+        #expect(again.apps(for: .mlx, known: known) == [.bionic, .huggingFace])
+        #expect(again.apps(for: .other, known: known) == [.huggingFace], "a format the owner never touched keeps its defaults")
         // An app that cannot use a variant is left out, in the daemon's order.
-        #expect(again.apps(for: .mlx, usable: [.bionic, .huggingFace]) == [.bionic, .huggingFace])
-        #expect(again.apps(for: .gguf, usable: [.bionic, .huggingFace]).isEmpty)
+        #expect(again.apps(for: .mlx, usable: [.bionic, .huggingFace], known: known) == [.bionic, .huggingFace])
+        #expect(again.apps(for: .gguf, usable: [.bionic, .huggingFace], known: known).isEmpty)
 
-        again.setApp(.ollama, for: .gguf, to: false)
-        #expect(AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642").apps(for: .gguf).isEmpty,
+        again.setApp(.ollama, for: .gguf, to: false, known: known)
+        #expect(AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642").apps(for: .gguf, known: known).isEmpty,
                 "choosing no app is a choice too: the store only")
     }
 

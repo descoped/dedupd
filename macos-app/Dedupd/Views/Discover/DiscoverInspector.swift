@@ -136,11 +136,18 @@ private struct HubLocalState: View {
 private struct HubDownloads: View {
     let model: HubModel
 
-    private var groups: [(kind: ModelKind, variants: [Variant])] {
-        ModelKind.allCases.compactMap { kind in
-            let variants = model.variants.filter { $0.kind(formats: model.meta.formats) == kind }
-            return variants.isEmpty ? nil : (kind, variants)
+    private var groups: [(format: ModelFormat, variants: [Variant])] {
+        ModelFormat.allCases.compactMap { format in
+            let variants = model.variants.filter { $0.format == format }
+            return variants.isEmpty ? nil : (format, variants)
         }
+    }
+
+    /// The apps at least one of the variants can go into. Each row then
+    /// sends only to the chosen apps that can take its own variant: a GGUF
+    /// in parts is not sent to Ollama.
+    private func usable(_ variants: [Variant]) -> [ModelApp] {
+        ModelApp.allCases.filter { app in variants.contains { $0.usableBy.contains(app) } }
     }
 
     var body: some View {
@@ -150,24 +157,25 @@ private struct HubDownloads: View {
                     .foregroundStyle(.secondary)
             }
         }
-        ForEach(groups, id: \.kind) { group in
-            InspectorSection(title: group.variants.count == 1 ? "Download" : "Download · \(group.kind.title)") {
-                TargetPicker(kind: group.kind, usable: group.variants.first?.usableApps ?? [])
+        ForEach(groups, id: \.format) { group in
+            InspectorSection(title: group.variants.count == 1 ? "Download" : "Download · \(group.format.title)") {
+                TargetPicker(format: group.format, usable: usable(group.variants))
                 ForEach(group.variants) { variant in
-                    HubVariantRow(variant: variant, kind: group.kind)
+                    HubVariantRow(variant: variant, format: group.format)
                 }
             }
         }
     }
 }
 
-/// The apps a kind of model is placed into. The choice is remembered for
-/// the kind, so the next GGUF goes where the last one went.
+/// The apps a format is placed into. The choice is remembered for the
+/// format, so the next GGUF goes where the last one went.
 private struct TargetPicker: View {
-    let kind: ModelKind
+    let format: ModelFormat
     let usable: [ModelApp]
 
     @Environment(AppSettings.self) private var settings
+    @Environment(DaemonStore.self) private var daemon
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -178,7 +186,7 @@ private struct TargetPicker: View {
                     Toggle(app.shortTitle, isOn: binding(app))
                         .toggleStyle(.checkbox)
                         .help(app.detail)
-                        .accessibilityIdentifier("target-\(kind.rawValue)-\(app.name)")
+                        .accessibilityIdentifier("target-\(format.name)-\(app.name)")
                 }
             }
             .font(.callout)
@@ -191,36 +199,36 @@ private struct TargetPicker: View {
 
     private func binding(_ app: ModelApp) -> Binding<Bool> {
         Binding {
-            settings.apps(for: kind).contains(app)
+            settings.apps(for: format, known: daemon.apps).contains(app)
         } set: { enabled in
-            settings.setApp(app, for: kind, to: enabled)
+            settings.setApp(app, for: format, to: enabled, known: daemon.apps)
         }
     }
 
     private var note: String {
         let others = ModelApp.allCases.filter { !usable.contains($0) }.map(\.shortTitle)
-        let remembered = "Remembered for \(kind.title) models."
-        if settings.apps(for: kind, usable: usable).isEmpty {
+        let remembered = "Remembered for \(format.title) models."
+        if settings.apps(for: format, usable: usable, known: daemon.apps).isEmpty {
             return "With no app chosen the files are kept in the store only. \(remembered)"
         }
         if others.isEmpty {
             return "Each app gets a clone of the one stored copy. \(remembered)"
         }
-        return "\(ListFormatter.localizedString(byJoining: others)) cannot use this kind. \(remembered)"
+        return "\(ListFormatter.localizedString(byJoining: others)) cannot use this model. \(remembered)"
     }
 }
 
 /// One variant: its name and size, and the button that fetches it.
 private struct HubVariantRow: View {
     let variant: Variant
-    let kind: ModelKind
+    let format: ModelFormat
 
     @Environment(AppSettings.self) private var settings
     @Environment(DaemonStore.self) private var daemon
     @Environment(DiscoverStore.self) private var discover
 
     private var chosen: [ModelApp] {
-        settings.apps(for: kind, usable: variant.usableApps)
+        settings.apps(for: format, usable: variant.usableApps, known: daemon.apps)
     }
 
     private var missing: [ModelApp] {

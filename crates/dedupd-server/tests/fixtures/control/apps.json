@@ -1,0 +1,53 @@
+{
+  "apps": [
+    {
+      "app": "bionic",
+      "name": "Bionic",
+      "takes": [
+        {
+          "cost": "none",
+          "format": "gguf"
+        },
+        {
+          "cost": "none",
+          "format": "mlx"
+        }
+      ],
+      "version": null
+    },
+    {
+      "app": "ollama",
+      "name": "Ollama",
+      "takes": [
+        {
+          "cost": "none",
+          "format": "gguf"
+        },
+        {
+          "cost": "megabytes",
+          "format": "mlx"
+        }
+      ],
+      "version": null
+    },
+    {
+      "app": "hf",
+      "name": "The Hugging Face cache",
+      "takes": [
+        {
+          "cost": "none",
+          "format": "gguf"
+        },
+        {
+          "cost": "none",
+          "format": "mlx"
+        },
+        {
+          "cost": "none",
+          "format": "other"
+        }
+      ],
+      "version": null
+    }
+  ]
+}

@@ -130,14 +130,6 @@ extension SearchHit: @retroactive Identifiable {
 extension Variant: @retroactive Identifiable {
     public var id: String { spec }
 
-    /// Which kind of model this is, for remembering where such models go.
-    func kind(formats: [String]) -> ModelKind {
-        if kind == .gguf {
-            return usableBy.contains(.ollama) ? .gguf : .splitGGUF
-        }
-        return formats.contains("mlx") ? .mlx : .other
-    }
-
     /// Every file of it is on the internal disk.
     var isStored: Bool { bytes > 0 && storedBytes >= bytes }
 

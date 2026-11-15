@@ -689,6 +689,93 @@ public func FfiConverterTypeActivityEntry_lower(_ value: ActivityEntry) -> RustB
 
 
 /**
+ * One app as dedupd sees it on this Mac.
+ */
+public struct AppInfo: Equatable, Hashable {
+    public var app: ModelApp
+    /**
+     * The app's name at the start of a sentence.
+     */
+    public var name: String
+    /**
+     * The installed version, when dedupd found it.
+     */
+    public var version: String?
+    /**
+     * The formats dedupd can put into it, from its profile, each with the
+     * cheapest way. Whether one model of such a format can go in is each
+     * variant's decision.
+     */
+    public var takes: [Taken]
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(app: ModelApp, 
+        /**
+         * The app's name at the start of a sentence.
+         */name: String, 
+        /**
+         * The installed version, when dedupd found it.
+         */version: String?, 
+        /**
+         * The formats dedupd can put into it, from its profile, each with the
+         * cheapest way. Whether one model of such a format can go in is each
+         * variant's decision.
+         */takes: [Taken]) {
+        self.app = app
+        self.name = name
+        self.version = version
+        self.takes = takes
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension AppInfo: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeAppInfo: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> AppInfo {
+        return
+            try AppInfo(
+                app: FfiConverterTypeModelApp.read(from: &buf), 
+                name: FfiConverterString.read(from: &buf), 
+                version: FfiConverterOptionString.read(from: &buf), 
+                takes: FfiConverterSequenceTypeTaken.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: AppInfo, into buf: inout [UInt8]) {
+        FfiConverterTypeModelApp.write(value.app, into: &buf)
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterOptionString.write(value.version, into: &buf)
+        FfiConverterSequenceTypeTaken.write(value.takes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppInfo_lift(_ buf: RustBuffer) throws -> AppInfo {
+    return try FfiConverterTypeAppInfo.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeAppInfo_lower(_ value: AppInfo) -> RustBuffer {
+    return FfiConverterTypeAppInfo.lower(value)
+}
+
+
+/**
  * What an app holds of one model.
  */
 public struct AppPresence: Equatable, Hashable {
@@ -4745,6 +4832,64 @@ public func FfiConverterTypeStoredFile_lower(_ value: StoredFile) -> RustBuffer 
 
 
 /**
+ * A format an app can be given, and the new disk space the cheapest way
+ * to do it takes.
+ */
+public struct Taken: Equatable, Hashable {
+    public var format: ModelFormat
+    public var cost: Cost
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(format: ModelFormat, cost: Cost) {
+        self.format = format
+        self.cost = cost
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Taken: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeTaken: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Taken {
+        return
+            try Taken(
+                format: FfiConverterTypeModelFormat.read(from: &buf), 
+                cost: FfiConverterTypeCost.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Taken, into buf: inout [UInt8]) {
+        FfiConverterTypeModelFormat.write(value.format, into: &buf)
+        FfiConverterTypeCost.write(value.cost, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaken_lift(_ buf: RustBuffer) throws -> Taken {
+    return try FfiConverterTypeTaken.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeTaken_lower(_ value: Taken) -> RustBuffer {
+    return FfiConverterTypeTaken.lower(value)
+}
+
+
+/**
  * What taking a model out of one app would do, or did.
  */
 public struct UnplacePlan: Equatable, Hashable {
@@ -4921,6 +5066,10 @@ public func FfiConverterTypeUpstreamCheck_lower(_ value: UpstreamCheck) -> RustB
  */
 public struct Variant: Equatable, Hashable {
     public var kind: VariantKind
+    /**
+     * The form its weights are in, as the app profiles judge it.
+     */
+    public var format: ModelFormat
     public var name: String
     /**
      * What to ask for to get it: `org/repo:Q4_K_M`, or `org/repo`.
@@ -4944,7 +5093,10 @@ public struct Variant: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: VariantKind, name: String, 
+    public init(kind: VariantKind, 
+        /**
+         * The form its weights are in, as the app profiles judge it.
+         */format: ModelFormat, name: String, 
         /**
          * What to ask for to get it: `org/repo:Q4_K_M`, or `org/repo`.
          */spec: String, files: UInt64, bytes: UInt64, storedBytes: UInt64, 
@@ -4958,6 +5110,7 @@ public struct Variant: Equatable, Hashable {
          * For every app: whether it can take this, how, at what cost, and why.
          */decisions: [Decision]) {
         self.kind = kind
+        self.format = format
         self.name = name
         self.spec = spec
         self.files = files
@@ -4985,6 +5138,7 @@ public struct FfiConverterTypeVariant: FfiConverterRustBuffer {
         return
             try Variant(
                 kind: FfiConverterTypeVariantKind.read(from: &buf), 
+                format: FfiConverterTypeModelFormat.read(from: &buf), 
                 name: FfiConverterString.read(from: &buf), 
                 spec: FfiConverterString.read(from: &buf), 
                 files: FfiConverterUInt64.read(from: &buf), 
@@ -4998,6 +5152,7 @@ public struct FfiConverterTypeVariant: FfiConverterRustBuffer {
 
     public static func write(_ value: Variant, into buf: inout [UInt8]) {
         FfiConverterTypeVariantKind.write(value.kind, into: &buf)
+        FfiConverterTypeModelFormat.write(value.format, into: &buf)
         FfiConverterString.write(value.name, into: &buf)
         FfiConverterString.write(value.spec, into: &buf)
         FfiConverterUInt64.write(value.files, into: &buf)
@@ -5872,6 +6027,86 @@ public func FfiConverterTypeModelApp_lift(_ buf: RustBuffer) throws -> ModelApp 
 #endif
 public func FfiConverterTypeModelApp_lower(_ value: ModelApp) -> RustBuffer {
     return FfiConverterTypeModelApp.lower(value)
+}
+
+
+
+/**
+ * The form a model's weights are in. App profiles name the formats each
+ * method takes, and the app remembers per format where new models go.
+ */
+
+public enum ModelFormat: Equatable, Hashable, CaseIterable {
+    
+    case gguf
+    case mlx
+    /**
+     * Anything else: plain safetensors, ONNX and so on.
+     */
+    case other
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension ModelFormat: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeModelFormat: FfiConverterRustBuffer {
+    typealias SwiftType = ModelFormat
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ModelFormat {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .gguf
+        
+        case 2: return .mlx
+        
+        case 3: return .other
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: ModelFormat, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .gguf:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .mlx:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .other:
+            writeInt(&buf, Int32(3))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelFormat_lift(_ buf: RustBuffer) throws -> ModelFormat {
+    return try FfiConverterTypeModelFormat.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeModelFormat_lower(_ value: ModelFormat) -> RustBuffer {
+    return FfiConverterTypeModelFormat.lower(value)
 }
 
 
@@ -7309,6 +7544,31 @@ fileprivate struct FfiConverterSequenceTypeStoredFile: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeStoredFile.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeTaken: FfiConverterRustBuffer {
+    typealias SwiftType = [Taken]
+
+    public static func write(_ value: [Taken], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeTaken.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Taken] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Taken]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeTaken.read(from: &buf))
         }
         return seq
     }

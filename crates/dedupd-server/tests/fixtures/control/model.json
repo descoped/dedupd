@@ -149,7 +149,7 @@
           "method": "clone",
           "reason": "Shares the stored files",
           "state": "ready",
-          "version": "0.0.0",
+          "version": null,
           "version_state": "unknown"
         },
         {
@@ -158,7 +158,7 @@
           "method": "clone",
           "reason": "Shares the stored file",
           "state": "ready",
-          "version": "0.0.0",
+          "version": null,
           "version_state": "unknown"
         },
         {
@@ -167,11 +167,12 @@
           "method": "clone",
           "reason": "Shares the stored files",
           "state": "ready",
-          "version": "0.0.0",
+          "version": null,
           "version_state": "unknown"
         }
       ],
       "files": 2,
+      "format": "gguf",
       "kind": "gguf",
       "name": "model",
       "placed_in": [

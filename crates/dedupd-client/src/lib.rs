@@ -9,7 +9,7 @@ mod events;
 pub use events::{EventListener, EventSubscription, subscribe};
 
 use dedupd_api::activity::{ActivityEntry, ActivityList};
-use dedupd_api::app::App;
+use dedupd_api::app::{App, AppInfo, AppList};
 use dedupd_api::daemon::{
     DEFAULT_ADDRESS, DaemonSettings, DaemonStatus, Failure, LogTail, ScanResult, SettingChange,
     StoreCheck,
@@ -195,6 +195,13 @@ pub fn scan(address: String) -> Result<ScanResult, ClientError> {
 #[uniffi::export]
 pub fn models(address: String) -> Result<Vec<LibraryModel>, ClientError> {
     get::<ModelList>(&address, "models", QUICK).map(|list| list.models)
+}
+
+/// Every app with its installed version and the formats dedupd can put
+/// into it, in the daemon's order.
+#[uniffi::export]
+pub fn apps(address: String) -> Result<Vec<AppInfo>, ClientError> {
+    get::<AppList>(&address, "apps", QUICK).map(|list| list.apps)
 }
 
 /// Everything about one model in the library: its revisions and files,

@@ -202,6 +202,31 @@ pub struct Placement {
     pub origin: Origin,
 }
 
+/// The form a model's weights are in. App profiles name the formats each
+/// method takes, and the app remembers per format where new models go.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum), uniffi(name = "ModelFormat"))]
+pub enum Format {
+    Gguf,
+    Mlx,
+    /// Anything else: plain safetensors, ONNX and so on.
+    Other,
+}
+
+impl Format {
+    pub const ALL: [Format; 3] = [Format::Gguf, Format::Mlx, Format::Other];
+
+    /// The format's name in a sentence.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Format::Gguf => "GGUF",
+            Format::Mlx => "MLX",
+            Format::Other => "other",
+        }
+    }
+}
+
 /// What a variant is made of.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -277,6 +302,8 @@ pub struct Decision {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Variant {
     pub kind: VariantKind,
+    /// The form its weights are in, as the app profiles judge it.
+    pub format: Format,
     pub name: String,
     /// What to ask for to get it: `org/repo:Q4_K_M`, or `org/repo`.
     pub spec: String,

@@ -8,7 +8,7 @@ use axum::body::{Body, Bytes};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
 use dedupd_api::activity::ActivityList;
-use dedupd_api::app::App;
+use dedupd_api::app::{App, AppList};
 use dedupd_api::daemon::{
     DaemonEvent, DaemonInfo, DaemonSettings, DaemonStatus, Failure, LogTail, Setting, Started,
 };
@@ -19,7 +19,7 @@ use dedupd_core::config::Config;
 use dedupd_core::db::PROVIDER_HF;
 use dedupd_core::fetch::encode_path;
 use dedupd_core::hub::{HubClient, HubError};
-use dedupd_core::profile::Installed;
+use dedupd_core::profile::{self, Installed};
 use dedupd_core::{activity, archive, library, maintain, status};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -445,6 +445,14 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
         },
         (&Method::POST, ["downloads", id, action]) => download_action(server, id, action).await,
 
+        (&Method::GET, ["apps"]) => answer(
+            blocking(move || {
+                Ok(AppList {
+                    apps: profile::apps(&Installed::detect(&engine.dirs)),
+                })
+            })
+            .await,
+        ),
         (&Method::GET, ["models"]) => answer(
             blocking(move || {
                 Ok(ModelList {
