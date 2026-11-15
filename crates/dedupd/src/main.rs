@@ -211,20 +211,7 @@ fn short(commit: &str) -> &str {
     &commit[..12]
 }
 
-pub fn human(bytes: u64) -> String {
-    const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
-    let mut value = bytes as f64;
-    let mut unit = 0;
-    while value >= 1000.0 && unit < UNITS.len() - 1 {
-        value /= 1000.0;
-        unit += 1;
-    }
-    if unit == 0 {
-        format!("{bytes} B")
-    } else {
-        format!("{value:.2} {}", UNITS[unit])
-    }
-}
+pub use dedupd_core::human;
 
 /// The opened store, database and clients, plus the settings they came from.
 pub struct Opened {

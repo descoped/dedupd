@@ -106,7 +106,7 @@ struct ContractTests {
         #expect(entries.map(\.action) == [.archive, .activate, .activate])
         #expect(entries.map(\.app) == [nil, .huggingFace, .bionic])
         #expect(entries.allSatisfy { $0.ok })
-        #expect(entries[0].text == "Moved to the archive disk")
+        #expect(entries[0].text == "Moved to the archive disk: 2 files, 300.01 KB freed on this Mac")
         #expect(entries[0].id > entries[1].id)
     }
 

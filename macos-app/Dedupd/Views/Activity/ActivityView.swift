@@ -1,8 +1,9 @@
 import DedupdClient
 import SwiftUI
 
-/// What happened to the models in the apps: activations that are running,
-/// then each activation, deactivation, archive and restore with its result.
+/// What happened to the models in the apps: the archive or restore and the
+/// activations that are running, then each activation, deactivation,
+/// archive and restore with its result, a refusal or a failure included.
 /// Double-click a line to open the model in the Library.
 struct ActivityView: View {
     @Environment(DaemonStore.self) private var daemon
@@ -25,7 +26,7 @@ struct ActivityView: View {
     @ViewBuilder private var content: some View {
         if !daemon.isRunning {
             DaemonAwayView()
-        } else if activity.entries.isEmpty, activity.running.isEmpty {
+        } else if activity.entries.isEmpty, activity.runningCount == 0 {
             ContentUnavailableView {
                 Label("Nothing has happened yet", systemImage: Pane.activity.symbol)
             } description: {
@@ -37,15 +38,19 @@ struct ActivityView: View {
             }
         } else {
             List(selection: $selection) {
-                if !activity.running.isEmpty {
+                if activity.runningCount > 0 {
                     Section("Now") {
+                        if let move = activity.move {
+                            RunningMoveRow(move: move)
+                                .tag(ActivityLine.move)
+                        }
                         ForEach(activity.running) { job in
                             RunningActivationRow(job: job)
                                 .tag(ActivityLine.job(job.id))
                         }
                     }
                 }
-                Section(activity.running.isEmpty ? "" : "Earlier") {
+                Section(activity.runningCount == 0 ? "" : "Earlier") {
                     ForEach(activity.entries, id: \.id) { entry in
                         ActivityRow(entry: entry)
                             .tag(ActivityLine.entry(entry.id))
@@ -67,7 +72,7 @@ struct ActivityView: View {
     }
 
     private func show(_ repo: String) {
-        library.selection = repo
+        library.select(repo: repo)
         navigation.pane = .library
     }
 }
@@ -103,6 +108,45 @@ struct ActivityRow: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(entry.repo): \(entry.ok ? entry.text : "\(entry.failureTitle). \(entry.text)")")
         .accessibilityIdentifier("activity-\(entry.id)")
+    }
+}
+
+/// The archive or restore the daemon is doing: how far it is, how fast it
+/// goes and how long it has left.
+private struct RunningMoveRow: View {
+    let move: ModelMove
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: move.isArchive ? "archivebox" : "arrow.uturn.backward.circle")
+                .font(.title3)
+                .foregroundStyle(.secondary)
+                .frame(width: 24)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(move.repo)
+                    .fontWeight(.medium)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let fraction = move.fraction {
+                    ProgressView(value: fraction)
+                        .controlSize(.small)
+                } else {
+                    ProgressView()
+                        .progressViewStyle(.linear)
+                        .controlSize(.small)
+                }
+                Text([move.statusText, move.pace()].compactMap(\.self).joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 3)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(move.repo): \(move.statusText)")
+        .accessibilityIdentifier("moving")
     }
 }
 

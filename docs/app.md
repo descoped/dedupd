@@ -66,8 +66,10 @@ says which app and why.
 ## Activity
 
 What happened to the models in the apps: each activation, deactivation, archive and restore, newest first, with
-its result. An app that would not take a model is listed with its reason, and the sidebar counts such entries
-until the screen has been opened. Activations in progress are shown at the top. Double-click an entry to open the
+its result. An archive says how many files left the internal disk and how much space that freed, a restore how
+much it copied back. A failure is listed with its reason, also an archive or restore the daemon refused to start,
+and the sidebar counts failures until the screen has been opened. What is in progress is shown at the top: the
+archive or restore with its progress, speed and time left, and the activations. Double-click an entry to open the
 model in the Library. The command line adds its own activations, deactivations, archives and restores to the same
 list, which is kept in `~/.dedupd/activity.jsonl`.
 

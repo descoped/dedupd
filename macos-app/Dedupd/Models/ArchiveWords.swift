@@ -76,6 +76,19 @@ extension ModelMove {
         return min(1, Double(bytesDone) / Double(bytesTotal))
     }
 
+    /// How fast it goes and how long it has left, once there is enough to
+    /// tell: "120 MB/s · about 3 min left". The rate is the average since
+    /// it started; one large file is counted only when it is done.
+    func pace(at now: Date = Date()) -> String? {
+        let elapsed = now.timeIntervalSince1970 - Double(startedAt)
+        guard running, bytesDone > 0, bytesTotal > bytesDone, elapsed >= 2 else {
+            return nil
+        }
+        let rate = Double(bytesDone) / elapsed
+        let left = Double(bytesTotal - bytesDone) / rate
+        return "\(ByteFormat.speed(UInt64(rate))) · about \(ByteFormat.duration(seconds: UInt64(left))) left"
+    }
+
     /// One line on the move: how far it is, or why it failed.
     var statusText: String {
         if let error {

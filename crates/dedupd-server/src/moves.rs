@@ -4,8 +4,9 @@
 //! stream says how far it is.
 
 use crate::Server;
+use dedupd_api::activity::ActivityAction;
 use dedupd_api::moves::{ModelMove, MoveKind};
-use dedupd_core::archive;
+use dedupd_core::{activity, archive};
 use std::sync::Arc;
 
 /// The size of the files a move would deal with.
@@ -44,12 +45,41 @@ pub(crate) fn refuses_job(moving: Option<&ModelMove>, model: &str) -> Option<Str
 
 /// Start the move in the background. Refused, with the reason, when another
 /// move is running, when the model is being downloaded, or when the plan
-/// cannot be made (no archive disk, a model dedupd does not have).
+/// cannot be made (no archive disk, a model dedupd does not have). A
+/// refusal goes into the activity list too, as the move's failure, so the
+/// list tells every archive and restore the owner asked for.
 pub(crate) async fn start(
     server: &Arc<Server>,
     kind: MoveKind,
     repo: String,
 ) -> Result<(), String> {
+    let started = begin(server, kind, repo.clone()).await;
+    if let Err(why) = &started
+        && dedupd_core::names::is_repo_name(&repo)
+    {
+        let action = match kind {
+            MoveKind::Archive => ActivityAction::Archive,
+            MoveKind::Restore => ActivityAction::Restore,
+        };
+        let (home, why) = (server.engine.store.home().clone(), why.clone());
+        let _ = tokio::task::spawn_blocking(move || {
+            activity::record(
+                &home,
+                activity::Happened {
+                    action,
+                    repo,
+                    app: None,
+                    result: Err(why),
+                },
+            );
+        })
+        .await;
+        server.touch();
+    }
+    started
+}
+
+async fn begin(server: &Arc<Server>, kind: MoveKind, repo: String) -> Result<(), String> {
     let total = {
         let (server, repo) = (server.clone(), repo.clone());
         tokio::task::spawn_blocking(move || bytes(&server, kind, &repo))
