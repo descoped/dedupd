@@ -1,3 +1,4 @@
+import DedupdClient
 import SwiftUI
 
 /// The app's own settings: where the daemon is, how the tables look, where

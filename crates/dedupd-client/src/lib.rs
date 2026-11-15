@@ -5,12 +5,28 @@
 //! the store: the daemon owns everything.
 
 mod events;
-mod types;
 
 pub use events::{EventListener, EventSubscription, subscribe};
-pub use types::*;
 
-use serde::Deserialize;
+use dedupd_api::activity::{ActivityEntry, ActivityList};
+use dedupd_api::app::App;
+use dedupd_api::daemon::{
+    DEFAULT_ADDRESS, DaemonSettings, DaemonStatus, Failure, LogTail, ScanResult, SettingChange,
+    StoreCheck,
+};
+use dedupd_api::hub::{HubModel, SearchPage, SearchQuery};
+use dedupd_api::jobs::{
+    Cleared, Downloads, Enqueued, JobAction, JobDetail, JobKind, PullBody, PullResult,
+};
+use dedupd_api::library::{
+    LibraryModel, Locations, ModelDetail, ModelList, RepoBody, UpstreamCheck,
+};
+use dedupd_api::moves::{
+    ArchivePlan, GcBody, GcPlan, ModelMove, MoveBody, RestorePlan, UnplaceBody, UnplacePlan,
+};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 uniffi::setup_scaffolding!();
@@ -19,10 +35,6 @@ uniffi::setup_scaffolding!();
 const QUICK: Duration = Duration::from_secs(20);
 /// How long a call that asks the provider may take.
 const PATIENT: Duration = Duration::from_secs(90);
-
-/// Where the daemon listens unless `listen` in its `config.toml` says
-/// otherwise. The same value as the core library's default.
-pub const DEFAULT_ADDRESS: &str = "127.0.0.1:8642";
 
 /// The address to try when the user has not chosen one.
 #[uniffi::export]
@@ -43,180 +55,6 @@ pub enum ClientError {
     Protocol { message: String },
 }
 
-#[derive(Debug, Clone, Deserialize, uniffi::Record)]
-pub struct AppUsage {
-    pub app: String,
-    pub files: u64,
-    pub bytes: u64,
-}
-
-#[derive(Debug, Clone, Deserialize, uniffi::Record)]
-pub struct Repository {
-    pub provider: String,
-    pub name: String,
-    pub commit: Option<String>,
-    /// Files of the archived revisions that are in the store.
-    #[serde(default)]
-    pub stored_files: u64,
-    #[serde(default)]
-    pub stored_bytes: u64,
-    /// App files that hold this repository's content.
-    pub files: u64,
-    pub bytes: u64,
-    pub verified: u64,
-    pub mismatch: u64,
-    pub not_upstream: u64,
-    pub unchecked: u64,
-}
-
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct DaemonStatus {
-    pub version: String,
-    pub home: String,
-    pub endpoint: String,
-    /// The archive folder, when one is configured.
-    pub archive_path: Option<String>,
-    pub archive_attached: bool,
-    pub store_files: u64,
-    pub store_bytes: u64,
-    /// Bytes of app files that share disk blocks with the store.
-    pub shared_bytes: u64,
-    /// Bytes of the downloads in flight, and how many have arrived.
-    pub downloading_total: u64,
-    pub downloading_done: u64,
-    pub apps: Vec<AppUsage>,
-    pub repositories: Vec<Repository>,
-    /// The daemon as a process, and its limits.
-    pub daemon: DaemonInfo,
-}
-
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct PlacedApp {
-    pub app: String,
-    pub cloned: u64,
-    pub present: u64,
-    pub conflicts: Vec<String>,
-}
-
-#[derive(Debug, Clone, uniffi::Record)]
-pub struct PullResult {
-    pub repo: String,
-    pub commit: String,
-    pub from_archive: bool,
-    pub files: u64,
-    pub bytes: u64,
-    pub downloaded: u64,
-    pub placed: Vec<PlacedApp>,
-    /// The apps asked for that did not take the model, each with why.
-    pub skipped: Vec<NotActivated>,
-    pub notes: Vec<String>,
-}
-
-#[derive(Debug, Clone, Deserialize, uniffi::Record)]
-pub struct ScanResult {
-    pub forgotten: u64,
-    pub adopted: u64,
-    pub adopted_bytes: u64,
-    pub reclaimed: u64,
-    pub reclaimed_bytes: u64,
-    pub archived: u64,
-    pub errors: Vec<String>,
-}
-
-// The wire shapes, as the daemon's control API sends them, where they differ
-// from the records above.
-
-#[derive(Deserialize)]
-struct WireArchive {
-    path: String,
-    attached: bool,
-}
-
-#[derive(Deserialize)]
-struct WireProgress {
-    total: u64,
-    done: u64,
-}
-
-#[derive(Deserialize)]
-struct WireStore {
-    store_files: u64,
-    store_bytes: u64,
-    shared_bytes: u64,
-    apps: Vec<AppUsage>,
-    repos: Vec<Repository>,
-}
-
-#[derive(Deserialize)]
-struct WireStatus {
-    version: String,
-    home: String,
-    endpoint: String,
-    archive: Option<WireArchive>,
-    downloading: WireProgress,
-    daemon: DaemonInfo,
-    status: WireStore,
-}
-
-#[derive(Deserialize)]
-struct WirePlaced {
-    cloned: u64,
-    present: u64,
-    conflicts: Vec<String>,
-}
-
-#[derive(Deserialize)]
-struct WirePull {
-    repo: String,
-    commit: String,
-    from_archive: bool,
-    files: u64,
-    bytes: u64,
-    downloaded: u64,
-    placed: Vec<(String, WirePlaced)>,
-    #[serde(default)]
-    skipped: Vec<NotActivated>,
-    notes: Vec<String>,
-}
-
-impl From<WirePull> for PullResult {
-    fn from(w: WirePull) -> Self {
-        Self {
-            repo: w.repo,
-            commit: w.commit,
-            from_archive: w.from_archive,
-            files: w.files,
-            bytes: w.bytes,
-            downloaded: w.downloaded,
-            placed: w
-                .placed
-                .into_iter()
-                .map(|(app, p)| PlacedApp {
-                    app,
-                    cloned: p.cloned,
-                    present: p.present,
-                    conflicts: p.conflicts,
-                })
-                .collect(),
-            skipped: w.skipped,
-            notes: w.notes,
-        }
-    }
-}
-
-impl PullResult {
-    /// Read the outcome of a pull as the daemon sends it, which is also how
-    /// the core library's own outcome serialises.
-    pub fn from_json(text: &str) -> Result<Self, ClientError> {
-        parse::<WirePull>(text).map(Self::from)
-    }
-}
-
-#[derive(Deserialize)]
-struct WireError {
-    error: String,
-}
-
 pub(crate) fn agent(timeout: Option<Duration>) -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_connect(Some(Duration::from_secs(2)))
@@ -226,7 +64,7 @@ pub(crate) fn agent(timeout: Option<Duration>) -> ureq::Agent {
         .into()
 }
 
-fn finish<T: serde::de::DeserializeOwned>(
+fn finish<T: DeserializeOwned>(
     address: &str,
     sent: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
 ) -> Result<T, ClientError> {
@@ -246,7 +84,7 @@ fn finish<T: serde::de::DeserializeOwned>(
             message: e.to_string(),
         })?;
     if !(200..300).contains(&status) {
-        let message = serde_json::from_str::<WireError>(&text)
+        let message = serde_json::from_str::<Failure>(&text)
             .map(|e| e.error)
             .unwrap_or(text);
         return Err(ClientError::Failed { message });
@@ -254,7 +92,7 @@ fn finish<T: serde::de::DeserializeOwned>(
     parse(&text)
 }
 
-fn parse<T: serde::de::DeserializeOwned>(text: &str) -> Result<T, ClientError> {
+fn parse<T: DeserializeOwned>(text: &str) -> Result<T, ClientError> {
     serde_json::from_str(text).map_err(|e| ClientError::Protocol {
         message: e.to_string(),
     })
@@ -283,7 +121,7 @@ fn encode_repo(repo: &str) -> String {
     repo.split('/').map(encode).collect::<Vec<_>>().join("/")
 }
 
-fn get<T: serde::de::DeserializeOwned>(
+fn get<T: DeserializeOwned>(
     address: &str,
     path: &str,
     timeout: Duration,
@@ -291,10 +129,10 @@ fn get<T: serde::de::DeserializeOwned>(
     finish(address, agent(Some(timeout)).get(url(address, path)).call())
 }
 
-fn post<T: serde::de::DeserializeOwned>(
+fn post<T: DeserializeOwned>(
     address: &str,
     path: &str,
-    body: &serde_json::Value,
+    body: &impl Serialize,
     timeout: Duration,
 ) -> Result<T, ClientError> {
     let sent = agent(Some(timeout))
@@ -307,47 +145,42 @@ fn post<T: serde::de::DeserializeOwned>(
 /// no daemon answers, which is also how to find out whether one is there.
 #[uniffi::export]
 pub fn status(address: String) -> Result<DaemonStatus, ClientError> {
-    let sent = agent(Some(Duration::from_secs(10)))
-        .get(url(&address, "status"))
-        .call();
-    let w: WireStatus = finish(&address, sent)?;
-    Ok(DaemonStatus {
-        version: w.version,
-        home: w.home,
-        endpoint: w.endpoint,
-        archive_attached: w.archive.as_ref().is_some_and(|a| a.attached),
-        archive_path: w.archive.map(|a| a.path),
-        store_files: w.status.store_files,
-        store_bytes: w.status.store_bytes,
-        shared_bytes: w.status.shared_bytes,
-        downloading_total: w.downloading.total,
-        downloading_done: w.downloading.done,
-        apps: w.status.apps,
-        repositories: w.status.repos,
-        daemon: w.daemon,
-    })
+    get(&address, "status", Duration::from_secs(10))
 }
 
-/// Fetch a model into the store and place it into `apps` (`bionic`,
-/// `ollama`, `hf`). Returns when the daemon has finished, which for a large
-/// model takes as long as the download; `status` reports progress meanwhile.
-/// With `offline`, only what is archived is used. With `activation`, the job
-/// is shown as an activation of a stored model rather than a download.
+fn pull_body(
+    model: String,
+    apps: Vec<App>,
+    include: Vec<String>,
+    offline: bool,
+    kind: JobKind,
+) -> PullBody {
+    PullBody {
+        model,
+        apps,
+        include,
+        offline,
+        kind,
+    }
+}
+
+/// Fetch a model into the store and activate it in `apps`. Returns when the
+/// daemon has finished, which for a large model takes as long as the
+/// download; `status` reports progress meanwhile. With `offline`, only what
+/// dedupd has kept is used. `kind` says whether the job is shown as a
+/// download or as an activation of a stored model.
 #[uniffi::export]
 pub fn pull(
     address: String,
     model: String,
-    apps: Vec<String>,
+    apps: Vec<App>,
     include: Vec<String>,
     offline: bool,
-    activation: bool,
+    kind: JobKind,
 ) -> Result<PullResult, ClientError> {
-    let body = serde_json::json!({
-        "model": model, "apps": apps, "include": include, "offline": offline,
-        "kind": kind(activation),
-    });
+    let body = pull_body(model, apps, include, offline, kind);
     let sent = agent(None).post(url(&address, "pull")).send_json(&body);
-    finish::<WirePull>(&address, sent).map(PullResult::from)
+    finish(&address, sent)
 }
 
 /// Have the daemon look at the app folders now instead of waiting for its
@@ -358,18 +191,14 @@ pub fn scan(address: String) -> Result<ScanResult, ClientError> {
     finish(&address, sent)
 }
 
-/// Every repository the daemon knows.
+/// Every model the daemon knows.
 #[uniffi::export]
 pub fn models(address: String) -> Result<Vec<LibraryModel>, ClientError> {
-    #[derive(Deserialize)]
-    struct Wire {
-        models: Vec<LibraryModel>,
-    }
-    get::<Wire>(&address, "models", QUICK).map(|w| w.models)
+    get::<ModelList>(&address, "models", QUICK).map(|list| list.models)
 }
 
-/// Everything about one repository in the library: its revisions and
-/// files, where each app has them, and how it can be used.
+/// Everything about one model in the library: its revisions and files,
+/// where each app has them, and how it can be used.
 #[uniffi::export]
 pub fn model(address: String, repo: String) -> Result<ModelDetail, ClientError> {
     get(&address, &format!("models/{}", encode_repo(&repo)), QUICK)
@@ -406,7 +235,7 @@ pub fn search(address: String, query: SearchQuery) -> Result<SearchPage, ClientE
     )
 }
 
-/// Everything the provider says about one repository, before anything is
+/// Everything the provider says about one model, before anything is
 /// downloaded: its files, the ways it can be used, and related models.
 #[uniffi::export]
 pub fn hub_model(address: String, repo: String) -> Result<HubModel, ClientError> {
@@ -424,96 +253,82 @@ pub fn downloads(address: String) -> Result<Downloads, ClientError> {
     get(&address, "downloads", QUICK)
 }
 
-/// What the daemon calls a job of this kind.
-fn kind(activation: bool) -> &'static str {
-    if activation { "activation" } else { "download" }
-}
-
 /// What happened to the models in the apps, newest first: activations,
 /// deactivations, archives and restores, each with its result.
 #[uniffi::export]
 pub fn activity(address: String) -> Result<Vec<ActivityEntry>, ClientError> {
-    get::<WireActivity>(&address, "activity", QUICK).map(|w| w.entries)
+    get::<ActivityList>(&address, "activity", QUICK).map(|list| list.entries)
 }
 
-/// One download with its files and its history.
+/// One job with its files and its history.
 #[uniffi::export]
 pub fn download(address: String, id: i64) -> Result<JobDetail, ClientError> {
-    get::<WireJobDetail>(&address, &format!("downloads/{id}"), QUICK).map(JobDetail::from)
+    get(&address, &format!("downloads/{id}"), QUICK)
 }
 
-/// Queue a download of `model` (`org/repo`, `org/repo:Q4_K_M` or
-/// `org/repo@revision`) to be activated in `apps`. Returns at once; the
-/// event stream tells how it goes. With `offline`, only what dedupd has kept
-/// is used, which activates a stored model without asking the provider.
-/// With `activation`, the job is shown as an activation rather than a
-/// download.
+/// Queue `model` (`org/repo`, `org/repo:Q4_K_M` or `org/repo@revision`) to
+/// be activated in `apps`. Returns at once; the event stream tells how it
+/// goes. With `offline`, only what dedupd has kept is used, which activates
+/// a stored model without asking the provider. `kind` says whether the job
+/// is shown as a download or as an activation.
 #[uniffi::export]
 pub fn enqueue(
     address: String,
     model: String,
-    apps: Vec<String>,
+    apps: Vec<App>,
     include: Vec<String>,
     offline: bool,
-    activation: bool,
+    kind: JobKind,
 ) -> Result<Enqueued, ClientError> {
-    let body = serde_json::json!({
-        "model": model, "apps": apps, "include": include, "offline": offline,
-        "kind": kind(activation),
-    });
+    let body = pull_body(model, apps, include, offline, kind);
     post(&address, "downloads", &body, QUICK)
 }
 
-/// Act on a download: `pause`, `resume`, `retry`, `start` (now, ahead of
-/// the queue), `cancel`, or `remove` (a finished one from the list).
+/// Act on a job. The job's `actions` say which ones its state allows; the
+/// daemon refuses the others.
 #[uniffi::export]
-pub fn download_action(address: String, id: i64, action: String) -> Result<(), ClientError> {
-    let path = format!("downloads/{id}/{}", encode(&action));
+pub fn download_action(address: String, id: i64, action: JobAction) -> Result<(), ClientError> {
+    let path = format!("downloads/{id}/{}", action.as_str());
     post::<serde_json::Value>(&address, &path, &serde_json::json!({}), QUICK).map(|_| ())
 }
 
-/// Drop the finished and cancelled downloads from the list. Returns how
-/// many there were.
+/// Drop the finished and cancelled jobs from the list. Returns how many
+/// there were.
 #[uniffi::export]
 pub fn clear_downloads(address: String) -> Result<u64, ClientError> {
-    #[derive(Deserialize)]
-    struct Wire {
-        removed: u64,
-    }
-    post::<Wire>(&address, "downloads/clear", &serde_json::json!({}), QUICK).map(|w| w.removed)
+    post::<Cleared>(&address, "downloads/clear", &serde_json::json!({}), QUICK).map(|c| c.removed)
 }
 
 /// Ask the provider whether it still has `repo` and whether `main` moved.
 #[uniffi::export]
 pub fn check_upstream(address: String, repo: String) -> Result<UpstreamCheck, ClientError> {
-    post(
-        &address,
-        "check",
-        &serde_json::json!({"repo": repo}),
-        PATIENT,
-    )
+    post(&address, "check", &RepoBody { repo }, PATIENT)
 }
 
 /// Drop `repo` from the library, so its files can be cleaned up.
 /// Refused while an app still has files of it.
 #[uniffi::export]
 pub fn forget(address: String, repo: String) -> Result<(), ClientError> {
-    let body = serde_json::json!({"repo": repo});
-    post::<serde_json::Value>(&address, "forget", &body, QUICK).map(|_| ())
+    post::<serde_json::Value>(&address, "forget", &RepoBody { repo }, QUICK).map(|_| ())
 }
 
-/// What removing `repo` from `app` would delete; with `apply`, delete it.
+/// What taking `repo` out of `app` would delete; with `apply`, delete it.
 /// `paths` limits the removal to the files the owner saw and agreed to.
 /// The store keeps everything, so the model can be activated again.
 #[uniffi::export]
 pub fn unplace(
     address: String,
     repo: String,
-    app: String,
+    app: App,
     apply: bool,
     paths: Option<Vec<String>>,
 ) -> Result<UnplacePlan, ClientError> {
-    let body = serde_json::json!({"repo": repo, "app": app, "apply": apply, "paths": paths});
+    let body = UnplaceBody {
+        repo,
+        app,
+        apply,
+        paths,
+    };
     post(&address, "unplace", &body, PATIENT)
 }
 
@@ -522,7 +337,7 @@ pub fn unplace(
 /// archive disk is not attached.
 #[uniffi::export]
 pub fn archive_plan(address: String, repo: String) -> Result<ArchivePlan, ClientError> {
-    let body = serde_json::json!({"repo": repo, "apply": false});
+    let body = MoveBody { repo, apply: false };
     post(&address, "archive", &body, PATIENT)
 }
 
@@ -531,14 +346,14 @@ pub fn archive_plan(address: String, repo: String) -> Result<ArchivePlan, Client
 /// stream tells how it goes (`moving`).
 #[uniffi::export]
 pub fn archive_model(address: String, repo: String) -> Result<(), ClientError> {
-    let body = serde_json::json!({"repo": repo, "apply": true});
+    let body = MoveBody { repo, apply: true };
     post::<serde_json::Value>(&address, "archive", &body, PATIENT).map(|_| ())
 }
 
 /// What restoring `repo` would copy back from the archive disk.
 #[uniffi::export]
 pub fn restore_plan(address: String, repo: String) -> Result<RestorePlan, ClientError> {
-    let body = serde_json::json!({"repo": repo, "apply": false});
+    let body = MoveBody { repo, apply: false };
     post(&address, "restore", &body, PATIENT)
 }
 
@@ -546,7 +361,7 @@ pub fn restore_plan(address: String, repo: String) -> Result<RestorePlan, Client
 /// stream tells how it goes (`moving`). The model is put into no app.
 #[uniffi::export]
 pub fn restore_model(address: String, repo: String) -> Result<(), ClientError> {
-    let body = serde_json::json!({"repo": repo, "apply": true});
+    let body = MoveBody { repo, apply: true };
     post::<serde_json::Value>(&address, "restore", &body, PATIENT).map(|_| ())
 }
 
@@ -573,8 +388,7 @@ pub fn gc_apply(
     orphans: Vec<String>,
     offload: Vec<String>,
 ) -> Result<GcPlan, ClientError> {
-    let body = serde_json::json!({"orphans": orphans, "offload": offload});
-    post(&address, "gc", &body, PATIENT)
+    post(&address, "gc", &GcBody { orphans, offload }, PATIENT)
 }
 
 /// Start a check of the whole store. It runs in the daemon, for as long
@@ -603,19 +417,10 @@ pub fn update_settings(
     address: String,
     changes: Vec<SettingChange>,
 ) -> Result<DaemonSettings, ClientError> {
-    let mut body = serde_json::Map::new();
-    for change in changes {
-        let value = match change.value {
-            SettingValue::Text { value } => serde_json::Value::String(value),
-            SettingValue::Number { value } => serde_json::json!(value),
-            SettingValue::Flag { value } => serde_json::Value::Bool(value),
-            SettingValue::Unset => serde_json::Value::Null,
-        };
-        body.insert(change.key, value);
-    }
+    let body: BTreeMap<_, _> = changes.into_iter().map(|c| (c.key, c.value)).collect();
     let sent = agent(Some(QUICK))
         .put(url(&address, "config"))
-        .send_json(serde_json::Value::Object(body));
+        .send_json(&body);
     finish(&address, sent)
 }
 

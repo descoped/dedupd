@@ -5,8 +5,8 @@
 //! nothing happens, holds one event at a time, and finds the daemon again
 //! by itself when it has been away.
 
-use crate::types::DaemonEvent;
 use crate::{agent, url};
+use dedupd_api::daemon::DaemonEvent;
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};

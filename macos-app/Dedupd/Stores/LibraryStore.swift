@@ -78,7 +78,7 @@ final class LibraryStore {
             .filter { model in
                 (words.isEmpty || model.repo.lowercased().contains(words))
                     && (filterFormat.isEmpty || model.meta.formats.contains(filterFormat))
-                    && (filterApp.isEmpty || model.appNames.contains(filterApp))
+                    && (filterApp.isEmpty || model.appNames.contains { $0.name == filterApp })
             }
             .sorted(using: sortOrder)
     }
@@ -159,7 +159,7 @@ final class LibraryStore {
     /// store has every file; the daemon reports it as a download that is
     /// done at once.
     func place(_ variant: Variant, into app: ModelApp) async {
-        await daemon.enqueue(PullRequest(model: variant.spec, apps: [app.rawValue], activation: true))
+        await daemon.enqueue(PullRequest(model: variant.spec, apps: [app], kind: .activation))
     }
 
     /// Fetch the files of a variant that are not on this Mac, for the apps
@@ -169,7 +169,7 @@ final class LibraryStore {
     }
 
     /// Ask what removing the selected model from an app would delete.
-    func planRemoval(from app: String) async {
+    func planRemoval(from app: ModelApp) async {
         guard let model = selected else {
             return
         }

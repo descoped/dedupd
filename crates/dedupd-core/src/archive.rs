@@ -7,14 +7,17 @@
 //! its files leave the internal disk, so only the archive disk has them
 //! (`archive_plan`, `archive_apply`); `restore` brings them back.
 
-use crate::activity::{self, Action};
+use crate::activity;
 use crate::db::{BlobRow, Db, PROVIDER_HF, lock};
 use crate::hash::{copy_hashing, hash_file};
 use crate::maintain::{self, UnplacePlan};
 use crate::paths::Home;
-use crate::place::{App, AppDirs};
+use crate::place::AppDirs;
 use crate::store::Store;
 use anyhow::{Context, Result, bail};
+use dedupd_api::activity::ActivityAction;
+use dedupd_api::app::App;
+use dedupd_api::moves::KeptStored;
 use std::collections::HashSet;
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -181,16 +184,8 @@ fn repo_id(db: &Db, repo: &str) -> Result<i64> {
     }
 }
 
-/// A stored file that archiving a model leaves on the internal disk.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct Kept {
-    pub sha256: String,
-    pub size: u64,
-    pub why: String,
-}
-
 /// What archiving one model would do. Nothing happens until `archive_apply`.
-#[derive(Debug, Clone, Default, serde::Serialize)]
+#[derive(Debug, Clone, Default)]
 pub struct ArchivePlan {
     pub repo: String,
     /// The archive folder.
@@ -205,7 +200,32 @@ pub struct ArchivePlan {
     pub copy_files: u64,
     pub copy_bytes: u64,
     /// Stored files that stay on the internal disk, and why.
-    pub keep: Vec<Kept>,
+    pub keep: Vec<KeptStored>,
+}
+
+impl ArchivePlan {
+    /// The plan as the control API shows it.
+    pub fn answer(&self) -> dedupd_api::moves::ArchivePlan {
+        dedupd_api::moves::ArchivePlan {
+            repo: self.repo.clone(),
+            archive: self.archive.clone(),
+            deactivate: self
+                .deactivate
+                .iter()
+                .map(|d| dedupd_api::moves::DeactivateStep {
+                    app: d.app,
+                    files: d.remove.len() as u64,
+                    bytes: d.bytes,
+                    keep: d.keep.clone(),
+                })
+                .collect(),
+            files: self.remove.len() as u64,
+            bytes: self.bytes,
+            copy_files: self.copy_files,
+            copy_bytes: self.copy_bytes,
+            keep: self.keep.clone(),
+        }
+    }
 }
 
 /// Work out what archiving `repo` would do: take it out of every app, and
@@ -239,7 +259,7 @@ pub fn archive_plan(
     let going: HashSet<&str> = plan
         .deactivate
         .iter()
-        .flat_map(|d| d.remove.iter().map(|(path, _)| path.as_str()))
+        .flat_map(|d| d.remove.iter().map(|f| f.path.as_str()))
         .collect();
     let in_apps: HashSet<&str> = placements
         .iter()
@@ -263,7 +283,7 @@ pub fn archive_plan(
             None
         };
         match why {
-            Some(why) => plan.keep.push(Kept {
+            Some(why) => plan.keep.push(KeptStored {
                 sha256: blob.sha256,
                 size: blob.size,
                 why: why.to_string(),
@@ -292,9 +312,9 @@ pub struct ArchiveReport {
     /// Files copied to the archive disk first, because it lacked them.
     pub copied: u64,
     /// App files removed, as `(app, files)`.
-    pub deactivated: Vec<(String, usize)>,
+    pub deactivated: Vec<(App, usize)>,
     /// Stored files left on the internal disk, and why.
-    pub keep: Vec<Kept>,
+    pub keep: Vec<KeptStored>,
 }
 
 /// Make sure the archive holds a good copy of a stored file: hash the copy
@@ -330,9 +350,14 @@ pub fn archive_apply(
     on_file: &mut dyn FnMut(u64),
 ) -> Result<ArchiveReport> {
     let done = archive_quietly(db, store, dirs, repo, on_file);
-    activity::record_result(store.home(), Action::Archive, repo, None, &done, |_| {
-        Some(activity::ARCHIVED.to_string())
-    });
+    activity::record_result(
+        store.home(),
+        ActivityAction::Archive,
+        repo,
+        None,
+        &done,
+        |_| Some(activity::ARCHIVED.to_string()),
+    );
     done
 }
 
@@ -368,7 +393,7 @@ fn archive_quietly(
 
     for step in &plan.deactivate {
         let removed = maintain::unplace_apply(db, dirs, step)?;
-        report.deactivated.push((step.app.clone(), removed));
+        report.deactivated.push((step.app, removed));
     }
     // An app file that could not be removed keeps its stored file here.
     let in_apps: HashSet<String> = lock(db)
@@ -379,7 +404,7 @@ fn archive_quietly(
     report.keep = plan.keep;
     for blob in plan.remove {
         if in_apps.contains(&blob.sha256) {
-            report.keep.push(Kept {
+            report.keep.push(KeptStored {
                 sha256: blob.sha256,
                 size: blob.size,
                 why: "an app still has it".to_string(),
@@ -408,6 +433,20 @@ pub struct RestorePlan {
     pub free: u64,
     /// Files that are neither on the internal disk nor on the archive disk.
     pub missing: Vec<BlobRow>,
+}
+
+impl RestorePlan {
+    /// The plan as the control API shows it.
+    pub fn answer(&self) -> dedupd_api::moves::RestorePlan {
+        dedupd_api::moves::RestorePlan {
+            repo: self.repo.clone(),
+            archive: self.archive.clone(),
+            files: self.copy.len() as u64,
+            bytes: self.bytes,
+            free: self.free,
+            missing: self.missing.len() as u64,
+        }
+    }
 }
 
 /// Work out what restoring `repo` would copy back. Changes nothing.
@@ -462,9 +501,14 @@ pub fn restore(
             n => Err(Missing { report, files: n }.into()),
         }
     });
-    activity::record_result(store.home(), Action::Restore, repo, None, &done, |r| {
-        (r.files > 0).then(|| activity::RESTORED.to_string())
-    });
+    activity::record_result(
+        store.home(),
+        ActivityAction::Restore,
+        repo,
+        None,
+        &done,
+        |r| (r.files > 0).then(|| activity::RESTORED.to_string()),
+    );
     done
 }
 

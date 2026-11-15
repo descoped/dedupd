@@ -144,7 +144,7 @@ private struct LibraryOverview: View {
         }
         InspectorSection(title: "Apps") {
             ForEach(ModelApp.allCases) { app in
-                AppRow(app: app, presence: model.apps.first { $0.app == app.rawValue }, variants: detail?.variants ?? [])
+                AppRow(app: app, presence: model.apps.first { $0.app == app }, variants: detail?.variants ?? [])
             }
         }
         if let variants = detail?.variants, !variants.isEmpty {
@@ -224,7 +224,7 @@ private struct LibraryOverview: View {
     }
 
     private static func words(for check: UpstreamCheck) -> String {
-        if check.upstream == "gone" {
+        if check.upstream == .gone {
             return "Hugging Face no longer has this model. Your copy is what is left of it."
         }
         if check.changed, let latest = check.latest {
@@ -248,7 +248,7 @@ private struct AppRow: View {
         guard let repo = library.selected?.repo else {
             return false
         }
-        return daemon.jobs.contains { $0.phase.isActive && $0.repo == repo && $0.apps.contains(app.rawValue) }
+        return daemon.jobs.contains { $0.state.isActive && $0.repo == repo && $0.apps.contains(app) }
     }
 
     /// The variants this app can use and does not have yet.
@@ -278,21 +278,21 @@ private struct AppRow: View {
                 }
                 .accessibilityElement(children: .ignore)
                 .accessibilityLabel("Activating in \(app.title)")
-                .accessibilityIdentifier("activating-\(app.rawValue)")
+                .accessibilityIdentifier("activating-\(app.name)")
             } else if presence != nil {
                 Button("Deactivate…") {
-                    Task { await library.planRemoval(from: app.rawValue) }
+                    Task { await library.planRemoval(from: app) }
                 }
                 .controlSize(.small)
                 .help("Take the model out of \(app.title). The stored copy stays.")
-                .accessibilityIdentifier("remove-\(app.rawValue)")
+                .accessibilityIdentifier("remove-\(app.name)")
             } else if placeable.count == 1, let variant = placeable.first {
                 Button("Activate") {
                     Task { await library.place(variant, into: app) }
                 }
                 .controlSize(.small)
                 .help(variant.placeHelp(for: app))
-                .accessibilityIdentifier("place-\(app.rawValue)")
+                .accessibilityIdentifier("place-\(app.name)")
             } else if !placeable.isEmpty {
                 Menu("Activate") {
                     ForEach(placeable) { variant in

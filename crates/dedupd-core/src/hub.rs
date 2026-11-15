@@ -3,6 +3,7 @@
 
 use crate::fetch::Expect;
 use crate::governor::{self, Class, Governor};
+use dedupd_api::library::ModelMeta;
 use serde::Deserialize;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -81,109 +82,81 @@ pub struct Snapshot {
 /// What the Hub's model info says about a model, in the terms the owner
 /// thinks in. Read from a search result, the live model info or an archived
 /// one alike; what an answer does not carry stays empty.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
-pub struct ModelMeta {
-    pub author: Option<String>,
-    pub pipeline_tag: Option<String>,
-    pub library_name: Option<String>,
-    pub license: Option<String>,
-    pub base_model: Option<String>,
-    /// Number of parameters.
-    pub parameters: Option<u64>,
-    pub architecture: Option<String>,
-    pub context_length: Option<u64>,
-    /// The owner must accept terms on the Hub before downloading.
-    pub gated: bool,
-    pub private: bool,
-    /// `gguf`, `mlx`, `safetensors`, `onnx`.
-    pub formats: Vec<String>,
-    pub languages: Vec<String>,
-    pub tags: Vec<String>,
-    pub downloads: Option<u64>,
-    pub likes: Option<u64>,
-    pub last_modified: Option<String>,
-    pub created_at: Option<String>,
-    /// Bytes the repository uses on the Hub, all revisions together.
-    pub used_storage: Option<u64>,
-}
-
-impl ModelMeta {
-    pub fn from_info(info: &serde_json::Value) -> Self {
-        let text = |v: &serde_json::Value| v.as_str().map(str::to_string);
-        let field = |name: &str| info.get(name).and_then(text);
-        let number = |name: &str| info.get(name).and_then(|v| v.as_u64());
-        // A card field that is one value or a list of them.
-        let card = |name: &str| -> Vec<String> {
-            match info.get("cardData").and_then(|c| c.get(name)) {
-                Some(serde_json::Value::String(s)) => vec![s.clone()],
-                Some(serde_json::Value::Array(a)) => a.iter().filter_map(text).collect(),
-                _ => Vec::new(),
-            }
-        };
-        let tags: Vec<String> = info
-            .get("tags")
-            .and_then(|t| t.as_array())
-            .map(|a| a.iter().filter_map(text).collect())
-            .unwrap_or_default();
-        let tagged = |prefix: &str| {
-            tags.iter()
-                .filter_map(|t| t.strip_prefix(prefix))
-                .find(|rest| !rest.contains(':'))
-                .map(str::to_string)
-        };
-        let library_name = field("library_name");
-        let mut formats = Vec::new();
-        for format in ["gguf", "mlx", "safetensors", "onnx"] {
-            if tags.iter().any(|t| t == format) || library_name.as_deref() == Some(format) {
-                formats.push(format.to_string());
-            }
+pub fn model_meta(info: &serde_json::Value) -> ModelMeta {
+    let text = |v: &serde_json::Value| v.as_str().map(str::to_string);
+    let field = |name: &str| info.get(name).and_then(text);
+    let number = |name: &str| info.get(name).and_then(|v| v.as_u64());
+    // A card field that is one value or a list of them.
+    let card = |name: &str| -> Vec<String> {
+        match info.get("cardData").and_then(|c| c.get(name)) {
+            Some(serde_json::Value::String(s)) => vec![s.clone()],
+            Some(serde_json::Value::Array(a)) => a.iter().filter_map(text).collect(),
+            _ => Vec::new(),
         }
-        let gguf = info.get("gguf");
-        Self {
-            author: field("author").or_else(|| {
-                let id = field("id").or_else(|| field("modelId"))?;
-                id.split_once('/').map(|(org, _)| org.to_string())
+    };
+    let tags: Vec<String> = info
+        .get("tags")
+        .and_then(|t| t.as_array())
+        .map(|a| a.iter().filter_map(text).collect())
+        .unwrap_or_default();
+    let tagged = |prefix: &str| {
+        tags.iter()
+            .filter_map(|t| t.strip_prefix(prefix))
+            .find(|rest| !rest.contains(':'))
+            .map(str::to_string)
+    };
+    let library_name = field("library_name");
+    let mut formats = Vec::new();
+    for format in ["gguf", "mlx", "safetensors", "onnx"] {
+        if tags.iter().any(|t| t == format) || library_name.as_deref() == Some(format) {
+            formats.push(format.to_string());
+        }
+    }
+    let gguf = info.get("gguf");
+    ModelMeta {
+        author: field("author").or_else(|| {
+            let id = field("id").or_else(|| field("modelId"))?;
+            id.split_once('/').map(|(org, _)| org.to_string())
+        }),
+        pipeline_tag: field("pipeline_tag"),
+        license: card("license")
+            .into_iter()
+            .next()
+            .or_else(|| tagged("license:")),
+        base_model: card("base_model")
+            .into_iter()
+            .next()
+            .or_else(|| tagged("base_model:")),
+        parameters: info
+            .get("safetensors")
+            .and_then(|s| s.get("total"))
+            .and_then(|v| v.as_u64())
+            .or_else(|| gguf.and_then(|g| g.get("total")).and_then(|v| v.as_u64())),
+        architecture: gguf
+            .and_then(|g| g.get("architecture"))
+            .and_then(text)
+            .or_else(|| {
+                info.get("config")
+                    .and_then(|c| c.get("model_type"))
+                    .and_then(text)
             }),
-            pipeline_tag: field("pipeline_tag"),
-            license: card("license")
-                .into_iter()
-                .next()
-                .or_else(|| tagged("license:")),
-            base_model: card("base_model")
-                .into_iter()
-                .next()
-                .or_else(|| tagged("base_model:")),
-            parameters: info
-                .get("safetensors")
-                .and_then(|s| s.get("total"))
-                .and_then(|v| v.as_u64())
-                .or_else(|| gguf.and_then(|g| g.get("total")).and_then(|v| v.as_u64())),
-            architecture: gguf
-                .and_then(|g| g.get("architecture"))
-                .and_then(text)
-                .or_else(|| {
-                    info.get("config")
-                        .and_then(|c| c.get("model_type"))
-                        .and_then(text)
-                }),
-            context_length: gguf
-                .and_then(|g| g.get("context_length"))
-                .and_then(|v| v.as_u64()),
-            // `false`, or the kind of approval: "auto" or "manual".
-            gated: info
-                .get("gated")
-                .is_some_and(|g| g.as_bool().unwrap_or(!g.is_null())),
-            private: info.get("private").and_then(|v| v.as_bool()) == Some(true),
-            formats,
-            languages: card("language"),
-            library_name,
-            tags,
-            downloads: number("downloads"),
-            likes: number("likes"),
-            last_modified: field("lastModified"),
-            created_at: field("createdAt"),
-            used_storage: number("usedStorage"),
-        }
+        context_length: gguf
+            .and_then(|g| g.get("context_length"))
+            .and_then(|v| v.as_u64()),
+        // `false`, or the kind of approval: "auto" or "manual".
+        gated: info
+            .get("gated")
+            .is_some_and(|g| g.as_bool().unwrap_or(!g.is_null())),
+        private: info.get("private").and_then(|v| v.as_bool()) == Some(true),
+        formats,
+        languages: card("language"),
+        library_name,
+        tags,
+        downloads: number("downloads"),
+        likes: number("likes"),
+        last_modified: field("lastModified"),
+        created_at: field("createdAt"),
+        used_storage: number("usedStorage"),
     }
 }
 
@@ -429,7 +402,7 @@ mod tests {
             "cardData": {"language": ["en"]},
             "downloads": 104143
         });
-        let m = ModelMeta::from_info(&info);
+        let m = model_meta(&info);
         assert_eq!(m.author.as_deref(), Some("bartowski"));
         assert_eq!(m.formats, ["gguf"]);
         assert_eq!(m.license.as_deref(), Some("apache-2.0"));
@@ -443,7 +416,7 @@ mod tests {
         );
         assert!(m.gated && !m.private);
         assert_eq!(m.languages, ["en"]);
-        assert!(!ModelMeta::from_info(&serde_json::json!({"gated": false})).gated);
+        assert!(!model_meta(&serde_json::json!({"gated": false})).gated);
     }
 
     #[test]

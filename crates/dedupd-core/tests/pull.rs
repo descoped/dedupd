@@ -4,10 +4,12 @@
 mod common;
 
 use common::{COMMIT, REPO, Ranged, engine, git_oid, sha256};
+use dedupd_api::app::App;
+use dedupd_api::library::{Cost, DecisionState, VersionState};
 use dedupd_core::fetch::{Expect, Fetcher, Progress, Unwatched};
 use dedupd_core::hub::TreeEntry;
-use dedupd_core::place::{App, AppDirs};
-use dedupd_core::profile::{self, Installed};
+use dedupd_core::place::AppDirs;
+use dedupd_core::profile::Installed;
 use dedupd_core::pull::{self, PullRequest};
 use dedupd_core::select::Selection;
 use dedupd_core::store::Store;
@@ -179,7 +181,7 @@ async fn pull_places_into_three_apps_and_survives_upstream_removal() {
     assert!(
         out.placed
             .iter()
-            .all(|(_, p)| p.cloned == 0 && p.conflicts.is_empty())
+            .all(|p| p.cloned == 0 && p.conflicts.is_empty())
     );
     let weight_fetches = up
         .server
@@ -248,18 +250,18 @@ async fn a_model_is_removed_from_an_app_and_placed_again() {
     assert_eq!(detail.model.meta.formats, ["gguf"]);
     let q4 = detail.variants.iter().find(|v| v.name == "Q4_K_M").unwrap();
     assert_eq!(q4.spec, format!("{REPO}:Q4_K_M"));
-    assert_eq!(q4.placed_in, ["bionic", "ollama", "hf"]);
-    assert_eq!(q4.usable_by, ["bionic", "ollama", "hf"]);
+    assert_eq!(q4.placed_in, App::ALL);
+    assert_eq!(q4.usable_by, App::ALL);
     // Every app answers with a method and what it costs; no app is
     // installed in the scratch folder, so no version is known.
     assert_eq!(q4.decisions.len(), 3);
     for d in &q4.decisions {
         assert_eq!(
-            (d.state.as_str(), d.method.as_deref()),
-            ("ready", Some("clone"))
+            (d.state, d.method.as_deref()),
+            (DecisionState::Ready, Some("clone"))
         );
-        assert_eq!(d.cost, Some(profile::Cost::None));
-        assert_eq!(d.version_state, "unknown");
+        assert_eq!(d.cost, Some(Cost::None));
+        assert_eq!(d.version_state, VersionState::Unknown);
     }
     assert_eq!(q4.stored_bytes, q4.bytes);
     let q8 = detail.variants.iter().find(|v| v.name == "Q8_0").unwrap();
@@ -280,7 +282,7 @@ async fn a_model_is_removed_from_an_app_and_placed_again() {
     for app in App::ALL {
         let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, REPO, app).unwrap();
         // Planning removes nothing.
-        assert!(plan.remove.iter().all(|(p, _)| fs::metadata(p).is_ok()));
+        assert!(plan.remove.iter().all(|f| fs::metadata(&f.path).is_ok()));
         maintain::unplace_apply(&e.db, &e.dirs, &plan).unwrap();
         match app {
             App::Bionic => {
@@ -290,7 +292,7 @@ async fn a_model_is_removed_from_an_app_and_placed_again() {
             }
             App::Ollama => {
                 assert_eq!((plan.remove.len(), plan.keep.len()), (0, 3));
-                assert_eq!(plan.keep[0].1, "another Ollama model uses it");
+                assert_eq!(plan.keep[0].why, "another Ollama model uses it");
                 assert_eq!(plan.links.len(), 1);
                 assert!(!e.dirs.ollama.join("manifests/hf.co").join(REPO).exists());
                 assert!(other.is_file());
@@ -515,7 +517,7 @@ fn an_mlx_model_tells_each_app_what_it_can_do() {
     };
     let ollama = |entries: &[TreeEntry]| {
         let mut found = variant(entries).decisions.into_iter();
-        found.find(|d| d.app == "ollama").unwrap()
+        found.find(|d| d.app == App::Ollama).unwrap()
     };
 
     // Before the download nothing is known about the widths, so the answer
@@ -526,11 +528,11 @@ fn an_mlx_model_tells_each_app_what_it_can_do() {
         entry("model.safetensors", b"weights", true),
     ];
     let before = ollama(&entries);
-    assert_eq!(before.state, "ready");
+    assert_eq!(before.state, DecisionState::Ready);
     assert_eq!(before.method.as_deref(), Some("clone-with-rewritten-index"));
-    assert_eq!(before.cost, Some(profile::Cost::Megabytes));
-    assert_eq!(before.version_state, "tested");
-    assert_eq!(variant(&entries).usable_by, ["bionic", "ollama", "hf"]);
+    assert_eq!(before.cost, Some(Cost::Megabytes));
+    assert_eq!(before.version_state, VersionState::Tested);
+    assert_eq!(variant(&entries).usable_by, App::ALL);
 
     // With the config in the store, a width Ollama cannot run is refused.
     let tmp = e.store.tmp_path("config");
@@ -540,8 +542,8 @@ fn an_mlx_model_tells_each_app_what_it_can_do() {
         .upsert_blob(&sha256(five), five.len() as u64, Some(&git_oid(five)))
         .unwrap();
     let after = ollama(&entries);
-    assert_eq!(variant(&entries).usable_by, ["bionic", "hf"]);
-    assert_eq!(after.state, "no");
+    assert_eq!(variant(&entries).usable_by, [App::Bionic, App::Hf]);
+    assert_eq!(after.state, DecisionState::No);
     assert_eq!(after.method, None);
     assert_eq!(
         after.reason,
@@ -566,7 +568,7 @@ async fn existing_app_files_are_never_overwritten() {
     let out = pull::pull(&e, &request(&[App::Bionic], false), &Arc::default())
         .await
         .unwrap();
-    let placed = &out.placed[0].1;
+    let placed = &out.placed[0];
     assert_eq!(
         (placed.cloned, placed.present, placed.conflicts.len()),
         (0, 1, 1)

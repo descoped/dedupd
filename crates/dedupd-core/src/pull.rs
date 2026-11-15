@@ -4,15 +4,18 @@
 use crate::db::{self, Db, PROVIDER_HF};
 use crate::fetch::{Expect, Fetcher, Progress, Unavailable, Unwatched, Wait, Watch};
 use crate::governor::Governor;
-use crate::hub::{HubClient, HubError, ModelMeta, Snapshot, TreeEntry};
+use crate::hub::{HubClient, HubError, Snapshot, TreeEntry, model_meta};
 use crate::ollama;
 use crate::ollama_mlx;
-use crate::place::{self, App, AppDirs, Dest, Item, Placed};
+use crate::place::{self, AppDirs, Dest, Item, Placed};
 use crate::profile::{self, Installed, Traits};
 use crate::refusals::{Refusal, Refusals};
 use crate::select::{self, Selection};
 use crate::store::Store;
 use anyhow::{Context, Result, anyhow, bail};
+use dedupd_api::app::App;
+use dedupd_api::jobs::{NotActivated, PlacedApp, PullResult};
+use dedupd_api::library::DecisionState;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -75,67 +78,11 @@ impl PullRequest {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
-pub struct PullOutcome {
-    pub repo: String,
-    pub commit: String,
-    /// The provider could not be asked or no longer has the repository, and
-    /// the archived copy was used.
-    pub from_archive: bool,
-    pub files: usize,
-    pub bytes: u64,
-    /// Files that had to be downloaded in this run.
-    pub downloaded: usize,
-    /// Each app the files were put into. One with conflicts did not take
-    /// the model as a whole, and is in `skipped` too.
-    pub placed: Vec<(App, Placed)>,
-    /// The apps asked for that did not take the model, each with why.
-    #[serde(default)]
-    pub skipped: Vec<Skipped>,
-    /// Things that did not stop the pull but the owner should know.
-    #[serde(default)]
-    pub notes: Vec<String>,
-}
-
-impl PullOutcome {
-    /// The apps that took the model: placed, with nothing left in the way.
-    pub fn activated(&self) -> impl Iterator<Item = App> + '_ {
-        self.placed
-            .iter()
-            .filter(|(app, placed)| {
-                placed.conflicts.is_empty() && !self.skipped.iter().any(|s| s.app == *app)
-            })
-            .map(|(app, _)| *app)
-    }
-}
-
-/// An app that did not take the model, and why.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct Skipped {
-    pub app: App,
-    /// Why, in a sentence that does not repeat the app's name in front.
-    pub reason: String,
-    /// Trying again may work (the provider out of reach, a full disk);
-    /// otherwise the same answer would come again.
-    #[serde(default)]
-    pub temporary: bool,
-}
-
-impl Skipped {
-    fn lasting(app: App, reason: impl Into<String>) -> Self {
-        Self {
-            app,
-            reason: reason.into(),
-            temporary: false,
-        }
-    }
-}
-
 /// What placing a pull's files did, app by app.
 #[derive(Debug, Default)]
 pub struct Placement {
-    pub placed: Vec<(App, Placed)>,
-    pub skipped: Vec<Skipped>,
+    pub placed: Vec<PlacedApp>,
+    pub skipped: Vec<NotActivated>,
     pub notes: Vec<String>,
 }
 
@@ -472,12 +419,12 @@ async fn place_into_ollama(
     snap: &Snapshot,
     entries: &[TreeEntry],
     items: &Arc<Vec<Item>>,
-) -> Result<Result<Placed, Skipped>> {
-    let skip = |reason: String| Skipped::lasting(App::Ollama, reason);
+) -> Result<Result<Placed, NotActivated>> {
+    let skip = |reason: String| NotActivated::lasting(App::Ollama, reason);
     // The app's profile says whether this selection can go in, and why not.
     let weights = select::weights(entries);
     let info: serde_json::Value = serde_json::from_str(&snap.info_json).unwrap_or_default();
-    let mut traits = Traits::of_files(weights.len(), &ModelMeta::from_info(&info).formats);
+    let mut traits = Traits::of_files(weights.len(), &model_meta(&info).formats);
     let config = items
         .iter()
         .find(|i| i.rel_path == "config.json")
@@ -490,10 +437,12 @@ async fn place_into_ollama(
         );
     }
     let installed = Installed::detect(&engine.dirs);
-    let decision = profile::profile(App::Ollama)
-        .decide(&traits, installed.version(App::Ollama))
-        .unless_refused(&Refusals::load(engine.store.home()), config.as_deref());
-    if decision.state != "ready" {
+    let decision = profile::unless_refused(
+        profile::profile(App::Ollama).decide(&traits, installed.version(App::Ollama)),
+        &Refusals::load(engine.store.home()),
+        config.as_deref(),
+    );
+    if decision.state != DecisionState::Ready {
         return Ok(Err(skip(decision.reason)));
     }
     if decision.method.as_deref() == Some(ollama_mlx::METHOD) {
@@ -517,7 +466,7 @@ async fn place_into_ollama(
             // Ollama's answer holds for this model and this version; keep it,
             // so the model is not offered to it again.
             let refusal = Refusal {
-                app: App::Ollama.as_str().to_string(),
+                app: App::Ollama,
                 version: version.to_string(),
                 method: ollama_mlx::METHOD.to_string(),
                 config,
@@ -533,7 +482,7 @@ async fn place_into_ollama(
             (ollama_mlx::NotPlaced::Ollama(said), Some(version)) => {
                 skip(crate::refusals::sentence("Ollama", version, said))
             }
-            (ollama_mlx::NotPlaced::Trouble(_), _) => Skipped {
+            (ollama_mlx::NotPlaced::Trouble(_), _) => NotActivated {
                 temporary: true,
                 ..skip(why.to_string())
             },
@@ -559,7 +508,7 @@ async fn place_into_ollama(
         Ok(m) => m,
         Err(e) => {
             // The sentence on top says it; the causes under it repeat it.
-            return Ok(Err(Skipped {
+            return Ok(Err(NotActivated {
                 temporary: crate::hub::is_temporary(&e),
                 ..skip(e.to_string())
             }));
@@ -663,7 +612,7 @@ pub async fn place(
             for c in &result.conflicts {
                 done.notes.push(format!("left alone: {c}"));
             }
-            done.skipped.push(Skipped::lasting(
+            done.skipped.push(NotActivated::lasting(
                 *app,
                 format!(
                     "files in its folder with other content were left alone ({})",
@@ -671,7 +620,12 @@ pub async fn place(
                 ),
             ));
         }
-        done.placed.push((*app, result));
+        done.placed.push(PlacedApp {
+            app: *app,
+            cloned: result.cloned as u64,
+            present: result.present as u64,
+            conflicts: result.conflicts,
+        });
     }
     // Every caller's activations are in the owner's history.
     let (repo, apps) = (req.repo.clone(), req.apps.clone());
@@ -689,7 +643,7 @@ pub async fn pull(
     engine: &Arc<Engine>,
     req: &PullRequest,
     progress: &Arc<Progress>,
-) -> Result<PullOutcome> {
+) -> Result<PullResult> {
     let plan = plan(engine, req, None).await?;
     progress.total.fetch_add(plan.bytes, Ordering::Relaxed);
     let (items, downloaded) = fetch(engine, req, &plan, progress.clone())
@@ -718,14 +672,14 @@ pub fn outcome(
     files: usize,
     downloaded: usize,
     placement: Placement,
-) -> PullOutcome {
-    PullOutcome {
+) -> PullResult {
+    PullResult {
         repo: req.repo.clone(),
         commit: plan.snap.commit,
         from_archive: plan.from_archive,
-        files,
+        files: files as u64,
         bytes: plan.bytes,
-        downloaded,
+        downloaded: downloaded as u64,
         placed: placement.placed,
         skipped: placement.skipped,
         notes: plan.note.into_iter().chain(placement.notes).collect(),

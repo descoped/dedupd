@@ -2,10 +2,12 @@
 
 use crate::paths::Home;
 use anyhow::{Context, Result};
+use dedupd_api::daemon::Setting;
 use serde::Deserialize;
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 
-pub const DEFAULT_LISTEN: &str = "127.0.0.1:8642";
+pub const DEFAULT_LISTEN: &str = dedupd_api::daemon::DEFAULT_ADDRESS;
 
 #[derive(Debug, Clone, Default, Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
@@ -56,13 +58,10 @@ impl Config {
     }
 
     /// Change settings in the config file and read it again. `changes` maps
-    /// a setting's name to its new value; `null` removes the setting. The
-    /// rest of the file, comments included, stays as the owner wrote it.
-    /// Nothing is written when the result would not be a valid config.
-    pub fn update(
-        home: &Home,
-        changes: &serde_json::Map<String, serde_json::Value>,
-    ) -> Result<Self> {
+    /// a setting to its new value; `null` removes the setting. The rest of
+    /// the file, comments included, stays as the owner wrote it. Nothing is
+    /// written when the result would not be a valid config.
+    pub fn update(home: &Home, changes: &BTreeMap<Setting, serde_json::Value>) -> Result<Self> {
         let path = Self::path(home);
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
@@ -72,7 +71,8 @@ impl Config {
         let mut doc: toml_edit::DocumentMut = text
             .parse()
             .with_context(|| format!("reading {}", path.display()))?;
-        for (key, value) in changes {
+        for (setting, value) in changes {
+            let key = setting.as_str();
             let item = match value {
                 serde_json::Value::Null => None,
                 serde_json::Value::Bool(b) => Some(toml_edit::value(*b)),
@@ -84,7 +84,7 @@ impl Config {
                 _ => anyhow::bail!("{key} cannot be a list or a table"),
             };
             match item {
-                Some(item) => doc[key.as_str()] = item,
+                Some(item) => doc[key] = item,
                 None => {
                     doc.remove(key);
                 }
@@ -131,8 +131,11 @@ mod tests {
             "# where the second copy goes\narchive = \"/Volumes/Archive/dedupd\"\nverify_days = 30\n",
         )
         .unwrap();
-        let changes = serde_json::json!({"max_connections": 4, "verify_days": null});
-        let config = Config::update(&home, changes.as_object().unwrap()).unwrap();
+        let changes = BTreeMap::from([
+            (Setting::MaxConnections, serde_json::json!(4)),
+            (Setting::VerifyDays, serde_json::Value::Null),
+        ]);
+        let config = Config::update(&home, &changes).unwrap();
         assert_eq!(
             (config.max_connections, config.verify_days),
             (Some(4), None)
@@ -142,14 +145,9 @@ mod tests {
             "# where the second copy goes\narchive = \"/Volumes/Archive/dedupd\"\nmax_connections = 4\n"
         );
 
-        // A setting that does not exist, or a value of the wrong kind,
-        // changes nothing.
-        for bad in [
-            serde_json::json!({"no_such_setting": 1}),
-            serde_json::json!({"max_connections": "many"}),
-        ] {
-            assert!(Config::update(&home, bad.as_object().unwrap()).is_err());
-        }
+        // A value of the wrong kind changes nothing.
+        let bad = BTreeMap::from([(Setting::MaxConnections, serde_json::json!("many"))]);
+        assert!(Config::update(&home, &bad).is_err());
         assert_eq!(Config::load(&home).unwrap().max_connections, Some(4));
     }
 
@@ -159,14 +157,14 @@ mod tests {
     fn update_turns_set_env_on_over_a_false_line_and_a_comment() {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::new(dir.path());
-        let changes = serde_json::json!({"set_env": true});
+        let changes = BTreeMap::from([(Setting::SetEnv, serde_json::json!(true))]);
         for text in [
             "# set_env = true\nset_env = false\n",
             "# set_env = true\n",
             "",
         ] {
             std::fs::write(Config::path(&home), text).unwrap();
-            let config = Config::update(&home, changes.as_object().unwrap()).unwrap();
+            let config = Config::update(&home, &changes).unwrap();
             assert_eq!(config.set_env, Some(true), "from {text:?}");
             let written = std::fs::read_to_string(Config::path(&home)).unwrap();
             assert_eq!(

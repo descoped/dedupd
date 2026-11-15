@@ -20,14 +20,15 @@
 //! runs inside that tool; the owner's Ollama server and models folder are
 //! not part of the asking.
 
-use crate::adopt::Verify;
 use crate::db::{NewPlacement, ORIGIN_PLACED, lock};
 use crate::hash::hash_file;
 use crate::ollama::{Manifest, digest_hex};
-use crate::place::{App, Dest, Item, Placed, Target, ollama_manifest_path, place_clone};
+use crate::place::{Dest, Item, Placed, Target, ollama_manifest_path, place_clone};
 use crate::safetensors::{self, Index, Notes, Tensor};
 use crate::store::Fingerprint;
 use anyhow::{Context, Result, bail};
+use dedupd_api::app::App;
+use dedupd_api::library::VerifyState;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -668,7 +669,7 @@ pub fn place(
                 size: fingerprint.size,
                 mtime_ns: fingerprint.mtime_ns,
                 origin: ORIGIN_PLACED,
-                verify_state: Verify::Unchecked.as_str(),
+                verify_state: VerifyState::Unchecked.as_str(),
                 verified_commit: None,
                 shared: true,
                 derived: Some((METHOD, &hashes.sha256)),

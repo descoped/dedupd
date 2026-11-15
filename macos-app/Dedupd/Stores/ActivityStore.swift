@@ -30,7 +30,7 @@ final class ActivityStore {
 
     /// Activations the daemon is working on, or that wait for the owner.
     var running: [Job] {
-        daemon.activationJobs.filter { !$0.phase.isFinished }
+        daemon.activationJobs.filter { !$0.state.isFinished }
     }
 
     /// The model a line is about.

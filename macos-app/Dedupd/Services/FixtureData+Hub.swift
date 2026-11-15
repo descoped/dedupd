@@ -73,15 +73,15 @@ extension FixtureData {
             variants = quants.map { quant, bytes in
                 let here = local != nil && quant == "Q4_K_M"
                 return Variant(
-                    kind: "gguf",
+                    kind: .gguf,
                     name: quant,
                     spec: "\(repo):\(quant)",
                     files: 4,
                     bytes: bytes,
                     storedBytes: here ? bytes : 0,
-                    usableBy: ["bionic", "ollama", "hf"],
+                    usableBy: ModelApp.allCases,
                     placedIn: here ? local?.appNames ?? [] : [],
-                    decisions: decisions(usableBy: ["bionic", "ollama", "hf"])
+                    decisions: decisions(usableBy: ModelApp.allCases)
                 )
             }
             files = quants.map { quant, bytes in
@@ -98,7 +98,7 @@ extension FixtureData {
             let bits = mlxBits(repo, formats: meta.formats)
             variants = [
                 Variant(
-                    kind: "files",
+                    kind: .files,
                     name: "all files",
                     spec: repo,
                     files: 8,
@@ -146,7 +146,7 @@ extension FixtureData {
         done: UInt64 = 0,
         speed: UInt64 = 0,
         detail: String? = nil,
-        notTakenBy: [String: String] = [:]
+        notTakenBy: [ModelApp: String] = [:]
     ) -> Job {
         let parts = request.model.split(separator: ":", maxSplits: 1).map(String.init)
         let finished = state == .done
@@ -159,7 +159,8 @@ extension FixtureData {
             include: request.include,
             apps: request.apps,
             offline: request.offline,
-            state: state.rawValue,
+            kind: request.kind,
+            state: state,
             detail: detail,
             waitUntil: nil,
             commit: "09816acd5d99c8a1c1b2f6d0d0a1b2c3d4e5f607",
@@ -168,12 +169,12 @@ extension FixtureData {
             speed: speed,
             filesTotal: 4,
             filesDone: finished ? 4 : (done > 0 ? 3 : 0),
-            kind: request.activation ? "activation" : "download",
             activated: finished ? request.apps.filter { notTakenBy[$0] == nil } : [],
             notActivated: finished
-                ? notTakenBy.sorted { $0.key < $1.key }.map { NotActivated(app: $0.key, reason: $0.value, temporary: false) }
+                ? notTakenBy.sorted { $0.key.name < $1.key.name }.map { NotActivated(app: $0.key, reason: $0.value, temporary: false) }
                 : [],
             notes: [],
+            actions: jobActions(state: state),
             createdAt: 1_794_003_000 + id,
             updatedAt: 1_794_003_600 + id,
             finishedAt: finished ? 1_794_003_600 + id : nil
@@ -184,7 +185,7 @@ extension FixtureData {
     static let jobs: [Job] = [
         job(
             id: 7,
-            request: PullRequest(model: "\(smolGGUF):Q8_0", apps: ["bionic", "ollama"]),
+            request: PullRequest(model: "\(smolGGUF):Q8_0", apps: [.bionic, .ollama]),
             state: .downloading,
             total: 106_070_000,
             done: 41_940_000,
@@ -192,20 +193,20 @@ extension FixtureData {
         ),
         job(
             id: 6,
-            request: PullRequest(model: "unsloth/Qwen3.8-9B-Instruct-GGUF:Q4_K_M", apps: ["ollama"]),
+            request: PullRequest(model: "unsloth/Qwen3.8-9B-Instruct-GGUF:Q4_K_M", apps: [.ollama]),
             state: .queued,
             total: 5_630_000_000
         ),
         job(
             id: 5,
-            request: PullRequest(model: "meta-llama/Llama-5-8B-Instruct", apps: ["hf"]),
+            request: PullRequest(model: "meta-llama/Llama-5-8B-Instruct", apps: [.huggingFace]),
             state: .needsAttention,
             total: 0,
             detail: "Hugging Face asks you to accept the model's terms first (gated repository)."
         ),
         job(
             id: 4,
-            request: PullRequest(model: "mlx-community/Qwen3.8-9B-Instruct-4bit", apps: ["bionic"]),
+            request: PullRequest(model: "mlx-community/Qwen3.8-9B-Instruct-4bit", apps: [.bionic]),
             state: .done,
             total: 5_420_000_000
         ),
@@ -213,10 +214,10 @@ extension FixtureData {
 
     static func jobDetail(_ job: Job) -> JobDetail {
         let weights = job.bytesTotal > 10_000 ? job.bytesTotal - 10_000 : job.bytesTotal
-        let stage: String = switch job.phase {
-        case .done: "stored"
-        case .downloading: "downloading"
-        default: "waiting"
+        let stage: FileStage = switch job.state {
+        case .done: .stored
+        case .downloading: .downloading
+        default: .waiting
         }
         let name = job.repo.split(separator: "/").last.map(String.init) ?? job.repo
         return JobDetail(
@@ -232,17 +233,17 @@ extension FixtureData {
                 ),
                 JobFile(
                     path: "README.md", size: 6120, done: job.bytesDone > 0 ? 6120 : 0,
-                    stage: job.bytesDone > 0 ? "stored" : "waiting", sha256: nil, gitOid: String(sha("README.md").prefix(40))
+                    stage: job.bytesDone > 0 ? .stored : .waiting, sha256: nil, gitOid: String(sha("README.md").prefix(40))
                 ),
                 JobFile(
                     path: "config.json", size: 720, done: job.bytesDone > 0 ? 720 : 0,
-                    stage: job.bytesDone > 0 ? "stored" : "waiting", sha256: nil, gitOid: String(sha("config.json").prefix(40))
+                    stage: job.bytesDone > 0 ? .stored : .waiting, sha256: nil, gitOid: String(sha("config.json").prefix(40))
                 ),
             ],
             events: [
                 JobEvent(at: job.createdAt, text: "Queued"),
                 JobEvent(at: job.createdAt + 2, text: "Found 4 files at revision 09816acd5d99"),
-                JobEvent(at: job.updatedAt, text: job.detail ?? job.phase.title),
+                JobEvent(at: job.updatedAt, text: job.detail ?? job.state.title),
             ]
         )
     }
@@ -251,9 +252,9 @@ extension FixtureData {
 extension FixtureData {
     /// One thing that happened, before it gets an id and a time.
     struct Happened {
-        var action: String
+        var action: ActivityAction
         var repo: String
-        var app: String?
+        var app: ModelApp?
         var ok: Bool
         var text: String
     }
@@ -262,13 +263,13 @@ extension FixtureData {
     /// one an app said no to, and an archive.
     static let activity: [ActivityEntry] = {
         let happened: [Happened] = [
-            Happened(action: "activate", repo: nemotron, app: "ollama", ok: false,
+            Happened(action: .activate, repo: nemotron, app: .ollama, ok: false,
                      text: "Ollama 0.40.16 can't run this model: it doesn't run 6-bit MLX layers."),
-            Happened(action: "activate", repo: nemotron, app: "bionic", ok: true, text: "Activated in Bionic"),
-            Happened(action: "archive", repo: smolMLX, app: nil, ok: true, text: "Moved to the archive disk"),
-            Happened(action: "deactivate", repo: smolGGUF, app: "hf", ok: true,
+            Happened(action: .activate, repo: nemotron, app: .bionic, ok: true, text: "Activated in Bionic"),
+            Happened(action: .archive, repo: smolMLX, app: nil, ok: true, text: "Moved to the archive disk"),
+            Happened(action: .deactivate, repo: smolGGUF, app: .huggingFace, ok: true,
                      text: "Deactivated in the Hugging Face cache"),
-            Happened(action: "activate", repo: qwen, app: "ollama", ok: true, text: "Activated in Ollama"),
+            Happened(action: .activate, repo: qwen, app: .ollama, ok: true, text: "Activated in Ollama"),
         ]
         return happened.enumerated().map { index, entry in
             ActivityEntry(

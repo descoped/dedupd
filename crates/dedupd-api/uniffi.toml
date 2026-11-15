@@ -1,0 +1,10 @@
+# The Swift bindings of this crate and of dedupd-client are compiled into one
+# Swift module, and their C headers into one C module
+# (macos-app/scripts/build-rust-client.sh): this crate names that module and
+# keeps a header of its own.
+[bindings.swift]
+ffi_module_name = "dedupd_clientFFI"
+ffi_module_filename = "dedupd_apiFFI"
+generate_module_map = false
+# The app lists every app, job state and so on.
+generate_case_iterable_conformance = true

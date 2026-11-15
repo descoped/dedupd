@@ -8,9 +8,9 @@
 use super::{LocalFile, LocalRepo, rel_components};
 use crate::db::{PROVIDER_HF, PROVIDER_OLLAMA};
 use crate::ollama::{HOST, Manifest};
-use crate::place::App;
 use crate::store::Fingerprint;
 use anyhow::Result;
+use dedupd_api::app::App;
 use std::path::Path;
 use walkdir::WalkDir;
 

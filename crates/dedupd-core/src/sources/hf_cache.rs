@@ -2,9 +2,9 @@
 //! links to `blobs/<etag>`. The cache records the commit each file belongs to.
 
 use super::{LocalFile, LocalRepo, rel_components};
-use crate::place::App;
 use crate::store::Fingerprint;
 use anyhow::Result;
+use dedupd_api::app::App;
 use std::collections::HashSet;
 use std::path::Path;
 use walkdir::WalkDir;

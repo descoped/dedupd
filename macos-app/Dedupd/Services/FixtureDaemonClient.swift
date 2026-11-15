@@ -71,7 +71,7 @@ actor FixtureDaemonClient: DaemonClient {
     }
 
     private func downloads() -> Downloads {
-        let running = jobs.filter { $0.phase == .downloading }
+        let running = jobs.filter { $0.state == .downloading }
         return Downloads(
             governor: Governor(
                 connections: running.isEmpty ? 0 : 3,
@@ -170,7 +170,7 @@ actor FixtureDaemonClient: DaemonClient {
 
     func hubModel(_ repo: String, at address: String) async throws -> HubModel {
         try answering(address)
-        return FixtureData.hubModel(repo, downloading: jobs.contains { $0.repo == repo && $0.phase.isActive })
+        return FixtureData.hubModel(repo, downloading: jobs.contains { $0.repo == repo && $0.state.isActive })
     }
 
     // MARK: - Models
@@ -179,32 +179,31 @@ actor FixtureDaemonClient: DaemonClient {
         try answering(address)
         let model = FixtureData.models.first { $0.repo == repo }
         return UpstreamCheck(
-            upstream: model?.upstream ?? "ok", commit: model?.commit, latest: model?.commit, changed: false
+            upstream: model?.upstream ?? .ok, commit: model?.commit, latest: model?.commit, changed: false
         )
     }
 
     func forget(_ repo: String, at address: String) async throws {
         try answering(address)
         if let model = FixtureData.models.first(where: { $0.repo == repo }), !model.apps.isEmpty {
-            throw ClientError.Failed(message: "\(repo) still has files in \(model.appNames.joined(separator: ", "))")
+            throw ClientError.Failed(message: "\(repo) still has files in \(model.appNames.map(\.name).joined(separator: ", "))")
         }
     }
 
-    func unplace(_ repo: String, app: String, apply: Bool, at address: String) async throws -> UnplacePlan {
+    func unplace(_ repo: String, app: ModelApp, apply: Bool, at address: String) async throws -> UnplacePlan {
         try answering(address)
         let files = FixtureData.detail(repo)?.placements.filter { $0.app == app } ?? []
         let plan = UnplacePlan(
             repo: repo,
             app: app,
             remove: files.map { PlannedFile(path: $0.path, size: $0.size) },
-            links: app == "ollama" ? ["\(FixtureData.folder(of: app))/manifests/hf.co/\(repo)/Q4_K_M"] : [],
+            links: app == .ollama ? ["\(FixtureData.folder(of: app))/manifests/hf.co/\(repo)/Q4_K_M"] : [],
             keep: [],
             bytes: files.map(\.size).reduce(0, +),
             removed: apply ? UInt64(files.count) : nil
         )
         if apply {
-            note(.init(action: "deactivate", repo: repo, app: app, ok: true,
-                       text: "Deactivated in \(ModelApp.title(for: app))"))
+            note(.init(action: .deactivate, repo: repo, app: app, ok: true, text: "Deactivated in \(app.title)"))
             library += 1
             changed()
         }
@@ -232,7 +231,7 @@ actor FixtureDaemonClient: DaemonClient {
         try answering(address)
         let plan = try await archivePlan(repo, at: address)
         archived.insert(repo)
-        moved(kind: "archive", repo: repo, files: plan.files, bytes: plan.bytes)
+        moved(kind: .archive, repo: repo, files: plan.files, bytes: plan.bytes)
     }
 
     func restore(_ repo: String, at address: String) async throws {
@@ -240,11 +239,11 @@ actor FixtureDaemonClient: DaemonClient {
         guard archived.remove(repo) != nil, let model = FixtureData.models.first(where: { $0.repo == repo }) else {
             throw ClientError.Failed(message: "\(repo) is not archived")
         }
-        moved(kind: "restore", repo: repo, files: model.storedFiles, bytes: model.storedBytes)
+        moved(kind: .restore, repo: repo, files: model.storedFiles, bytes: model.storedBytes)
     }
 
     /// The canned daemon moves a model at once and says so.
-    private func moved(kind: String, repo: String, files: UInt64, bytes: UInt64) {
+    private func moved(kind: MoveKind, repo: String, files: UInt64, bytes: UInt64) {
         moving = ModelMove(
             kind: kind, repo: repo, running: false, startedAt: 1_794_000_000, finishedAt: 1_794_000_000,
             bytesTotal: bytes, bytesDone: bytes, files: files, kept: 0, error: nil
@@ -288,15 +287,15 @@ actor FixtureDaemonClient: DaemonClient {
         try answering(address)
         for change in changes {
             switch (change.key, change.value) {
-            case let ("max_connections", .number(value)): settings.maxConnections = value
-            case let ("speed_limit", .number(value)): settings.speedLimit = value
-            case let ("verify_days", .number(value)): settings.verifyDays = value
-            case let ("scan_interval", .number(value)): settings.scanInterval = value
-            case let ("reclaim", .flag(value)): settings.reclaim = value
-            case let ("set_env", .flag(value)): settings.setEnv = value
-            case let ("archive", .text(value)): settings.archive = value
-            case ("archive", .unset): settings.archive = nil
-            case let ("listen", .text(value)):
+            case let (.maxConnections, .number(value)): settings.maxConnections = value
+            case let (.speedLimit, .number(value)): settings.speedLimit = value
+            case let (.verifyDays, .number(value)): settings.verifyDays = value
+            case let (.scanInterval, .number(value)): settings.scanInterval = value
+            case let (.reclaim, .flag(value)): settings.reclaim = value
+            case let (.setEnv, .flag(value)): settings.setEnv = value
+            case let (.archive, .text(value)): settings.archive = value
+            case (.archive, .unset): settings.archive = nil
+            case let (.listen, .text(value)):
                 settings.listen = value
                 settings.restartNeeded = true
             default: settings.restartNeeded = true
@@ -336,7 +335,7 @@ extension FixtureDaemonClient {
                 message: "\(request.model) is not a model name; use org/repo, org/repo:Q4_K_M or org/repo@revision"
             )
         }
-        if let existing = jobs.first(where: { $0.model == request.model && !$0.phase.isFinished }) {
+        if let existing = jobs.first(where: { $0.model == request.model && !$0.state.isFinished }) {
             return Enqueued(id: existing.id, existing: true)
         }
         let id = nextID
@@ -348,8 +347,7 @@ extension FixtureDaemonClient {
         if stored {
             let repo = request.model.split(separator: ":").first.map(String.init) ?? request.model
             for app in request.apps {
-                note(.init(action: "activate", repo: repo, app: app, ok: true,
-                           text: "Activated in \(ModelApp.title(for: app))"))
+                note(.init(action: .activate, repo: repo, app: app, ok: true, text: "Activated in \(app.title)"))
             }
         }
         changed()
@@ -361,20 +359,26 @@ extension FixtureDaemonClient {
         guard let index = jobs.firstIndex(where: { $0.id == id }) else {
             throw ClientError.Failed(message: "no download \(id)")
         }
+        guard jobs[index].actions.contains(action) else {
+            throw ClientError.Failed(message: "download \(id) cannot \(action.name) now")
+        }
         switch action {
         case .pause:
-            jobs[index].state = JobState.paused.rawValue
+            jobs[index].state = .paused
             jobs[index].speed = 0
         case .resume, .retry, .start:
-            jobs[index].state = JobState.downloading.rawValue
+            jobs[index].state = .downloading
             jobs[index].detail = nil
             jobs[index].speed = 11_800_000
         case .cancel:
-            jobs[index].state = JobState.cancelled.rawValue
+            jobs[index].state = .cancelled
             jobs[index].speed = 0
         case .remove:
             jobs.remove(at: index)
+            changed()
+            return
         }
+        jobs[index].actions = jobActions(state: jobs[index].state)
         changed()
     }
 
@@ -398,7 +402,7 @@ extension FixtureDaemonClient {
     func clearDownloads(at address: String) async throws -> UInt64 {
         try answering(address)
         let before = jobs.count
-        jobs.removeAll { $0.phase.isFinished }
+        jobs.removeAll { $0.state.isFinished }
         changed()
         return UInt64(before - jobs.count)
     }

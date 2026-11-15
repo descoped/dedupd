@@ -15,7 +15,7 @@ enum FixtureData {
     // MARK: - Status
 
     static func status(jobs: [Job] = []) -> DaemonStatus {
-        let active = jobs.filter { $0.phase.isActive }
+        let active = jobs.filter { $0.state.isActive }
         return DaemonStatus(
             version: "0.1.0",
             home: "/Users/example/.dedupd",
@@ -28,9 +28,9 @@ enum FixtureData {
             downloadingTotal: active.map(\.bytesTotal).reduce(0, +),
             downloadingDone: active.map(\.bytesDone).reduce(0, +),
             apps: [
-                AppUsage(app: "bionic", files: 61, bytes: 290_070_000_000),
-                AppUsage(app: "hf", files: 8, bytes: 79_220_000),
-                AppUsage(app: "ollama", files: 4, bytes: 105_460_000),
+                AppUsage(app: .bionic, files: 61, bytes: 290_070_000_000),
+                AppUsage(app: .huggingFace, files: 8, bytes: 79_220_000),
+                AppUsage(app: .ollama, files: 4, bytes: 105_460_000),
             ],
             repositories: [],
             daemon: DaemonInfo(
@@ -88,7 +88,7 @@ enum FixtureData {
         short + String(repeating: "0", count: 40 - short.count)
     }
 
-    private static func presence(_ app: String, files: UInt64, bytes: UInt64) -> AppPresence {
+    private static func presence(_ app: ModelApp, files: UInt64, bytes: UInt64) -> AppPresence {
         AppPresence(app: app, files: files, bytes: bytes, sharedBytes: bytes)
     }
 
@@ -105,12 +105,12 @@ enum FixtureData {
             fetchedAt: 1_793_980_000,
             storedFiles: 4,
             storedBytes: 105_460_000,
-            apps: [presence("bionic", files: 4, bytes: 105_460_000), presence("ollama", files: 4, bytes: 105_460_000)],
+            apps: [presence(.bionic, files: 4, bytes: 105_460_000), presence(.ollama, files: 4, bytes: 105_460_000)],
             verified: 8,
             mismatch: 0,
             notUpstream: 0,
             unchecked: 0,
-            upstream: "ok",
+            upstream: .ok,
             checkedAt: 1_793_980_000,
             ollamaTags: ["Q4_K_M"],
             archivedAt: nil
@@ -127,12 +127,12 @@ enum FixtureData {
             fetchedAt: 1_792_300_000,
             storedFiles: 4,
             storedBytes: 156_380_000_000,
-            apps: [presence("bionic", files: 4, bytes: 156_380_000_000)],
+            apps: [presence(.bionic, files: 4, bytes: 156_380_000_000)],
             verified: 4,
             mismatch: 0,
             notUpstream: 0,
             unchecked: 0,
-            upstream: "ok",
+            upstream: .ok,
             checkedAt: 1_793_900_000,
             ollamaTags: [],
             archivedAt: nil
@@ -146,12 +146,12 @@ enum FixtureData {
             fetchedAt: 1_791_100_000,
             storedFiles: 13,
             storedBytes: 16_080_000_000,
-            apps: [presence("bionic", files: 13, bytes: 16_080_000_000)],
+            apps: [presence(.bionic, files: 13, bytes: 16_080_000_000)],
             verified: 13,
             mismatch: 0,
             notUpstream: 0,
             unchecked: 0,
-            upstream: "ok",
+            upstream: .ok,
             checkedAt: 1_793_900_000,
             ollamaTags: [],
             archivedAt: nil
@@ -168,12 +168,12 @@ enum FixtureData {
             fetchedAt: 1_790_400_000,
             storedFiles: 30,
             storedBytes: 98_160_000_000,
-            apps: [presence("bionic", files: 30, bytes: 98_160_000_000)],
+            apps: [presence(.bionic, files: 30, bytes: 98_160_000_000)],
             verified: 28,
             mismatch: 0,
             notUpstream: 0,
             unchecked: 2,
-            upstream: "gone",
+            upstream: .gone,
             checkedAt: 1_793_900_000,
             ollamaTags: [],
             archivedAt: nil
@@ -192,7 +192,7 @@ enum FixtureData {
             mismatch: 0,
             notUpstream: 0,
             unchecked: 0,
-            upstream: "ok",
+            upstream: .ok,
             checkedAt: 1_793_900_000,
             ollamaTags: [],
             archivedAt: nil
@@ -266,8 +266,8 @@ extension FixtureData {
                     size: file.size,
                     sha256: file.sha256 ?? "",
                     shared: true,
-                    verifyState: "verified",
-                    origin: app.app == "bionic" ? "adopted" : "placed"
+                    verifyState: .verified,
+                    origin: app.app == .bionic ? .adopted : .placed
                 )
             }
         }
@@ -293,21 +293,21 @@ extension FixtureData {
         if model.meta.formats.contains("gguf") {
             return [
                 Variant(
-                    kind: "gguf",
+                    kind: .gguf,
                     name: "Q4_K_M",
                     spec: "\(model.repo):Q4_K_M",
                     files: 4,
                     bytes: model.storedBytes,
                     storedBytes: model.storedBytes,
-                    usableBy: ["bionic", "ollama", "hf"],
+                    usableBy: ModelApp.allCases,
                     placedIn: model.appNames,
-                    decisions: decisions(usableBy: ["bionic", "ollama", "hf"])
+                    decisions: decisions(usableBy: ModelApp.allCases)
                 ),
             ]
         }
         return [
             Variant(
-                kind: "files",
+                kind: .files,
                 name: "all files",
                 spec: model.repo,
                 files: model.storedFiles,
@@ -336,49 +336,48 @@ extension FixtureData {
     /// The apps a model that is not GGUF can be given to: the Hugging Face
     /// cache takes anything, Bionic takes MLX, and Ollama takes MLX with
     /// 4-bit or 8-bit weights.
-    static func usableBy(mlxBits: Int?) -> [String] {
+    static func usableBy(mlxBits: Int?) -> [ModelApp] {
         switch mlxBits {
-        case nil: ["hf"]
-        case 4, 8: ["bionic", "ollama", "hf"]
-        default: ["bionic", "hf"]
+        case nil: [.huggingFace]
+        case 4, 8: ModelApp.allCases
+        default: [.bionic, .huggingFace]
         }
     }
 
     /// What the daemon's app profiles answer for a variant these apps can
     /// be given, in short, in the profiles' own words.
-    static func decisions(usableBy: [String], mlxBits: Int? = nil) -> [Decision] {
-        ModelApp.allCases.map(\.rawValue).map { app in
+    static func decisions(usableBy: [ModelApp], mlxBits: Int? = nil) -> [Decision] {
+        ModelApp.allCases.map { app in
             var decision = Decision(
-                app: app, state: "ready", method: "clone", cost: "none", reason: "Shares the stored files",
-                version: nil, versionState: "unknown"
+                app: app, state: .ready, method: "clone", cost: .nothing, reason: "Shares the stored files",
+                version: nil, versionState: .unknown
             )
-            let isOllama = app == ModelApp.ollama.rawValue
             if usableBy.contains(app) {
-                if isOllama, mlxBits != nil {
+                if app == .ollama, mlxBits != nil {
                     decision.method = "clone-with-rewritten-index"
-                    decision.cost = "megabytes"
+                    decision.cost = .megabytes
                     decision.reason = "Shares the stored files; only the index of each weights file is new"
                 }
                 return decision
             }
-            decision.state = "no"
+            decision.state = .no
             decision.method = nil
             decision.cost = nil
-            if isOllama, let mlxBits {
+            if app == .ollama, let mlxBits {
                 decision.reason = "Ollama could not run \(mlxBits)-bit MLX models when dedupd tried it (0.40.16); "
                     + "it ran 4-bit and 8-bit ones"
             } else {
-                decision.reason = "\(ModelApp.title(for: app)) cannot run this format"
+                decision.reason = "\(app.title) cannot run this format"
             }
             return decision
         }
     }
 
-    static func folder(of app: String) -> String {
+    static func folder(of app: ModelApp) -> String {
         switch app {
-        case "bionic": "/Users/example/.lmstudio/models"
-        case "ollama": "/Users/example/.ollama/models"
-        default: "/Users/example/.cache/huggingface/hub"
+        case .bionic: "/Users/example/.lmstudio/models"
+        case .ollama: "/Users/example/.ollama/models"
+        case .huggingFace: "/Users/example/.cache/huggingface/hub"
         }
     }
 
@@ -394,24 +393,24 @@ extension FixtureData {
         volumeTotal: 994_660_000_000,
         volumeFree: 412_300_000_000,
         store: Location(
-            id: "store", path: "/Users/example/.dedupd/store", present: true, files: 61,
+            kind: .store, app: nil, path: "/Users/example/.dedupd/store", present: true, files: 61,
             bytes: 290_040_000_000, sharedBytes: 290_040_000_000, models: 5
         ),
         archive: Location(
-            id: "archive", path: archiveFolder, present: true, files: 61,
+            kind: .archive, app: nil, path: archiveFolder, present: true, files: 61,
             bytes: 290_040_000_000, sharedBytes: 0, models: 5
         ),
         apps: [
             Location(
-                id: "bionic", path: "/Users/example/.lmstudio/models", present: true, files: 51,
+                kind: .app, app: .bionic, path: "/Users/example/.lmstudio/models", present: true, files: 51,
                 bytes: 270_725_460_000, sharedBytes: 270_725_460_000, models: 4
             ),
             Location(
-                id: "ollama", path: "/Users/example/.ollama/models", present: true, files: 4,
+                kind: .app, app: .ollama, path: "/Users/example/.ollama/models", present: true, files: 4,
                 bytes: 105_460_000, sharedBytes: 105_460_000, models: 1
             ),
             Location(
-                id: "hf", path: "/Users/example/.cache/huggingface/hub", present: true, files: 0,
+                kind: .app, app: .huggingFace, path: "/Users/example/.cache/huggingface/hub", present: true, files: 0,
                 bytes: 0, sharedBytes: 0, models: 0
             ),
         ]

@@ -5,10 +5,11 @@
 mod common;
 
 use common::{COMMIT, PART_SIZE, REPO, Ranged, engine, git_oid, sha256};
+use dedupd_api::app::App;
+use dedupd_api::jobs::{FileStage, JobKind, JobState};
 use dedupd_core::Home;
-use dedupd_core::place::App;
 use dedupd_core::pull::Engine;
-use dedupd_core::queue::{FileStage, JobKind, JobRecord, Queue, State};
+use dedupd_core::queue::{JobRecord, Queue};
 use serde_json::json;
 use std::fs;
 use std::path::Path;
@@ -134,7 +135,7 @@ async fn under_way(queue: &Arc<Queue>, id: i64) -> JobRecord {
         if record.bytes_done > 0 {
             assert_ne!(
                 record.state,
-                State::Done,
+                JobState::Done,
                 "the download was too fast to stop"
             );
             return record;
@@ -174,7 +175,7 @@ async fn a_job_downloads_in_parts_verifies_and_places() {
     let id = add(&s.queue);
     let record = settled(&s.queue, id).await;
 
-    assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert_eq!(record.state, JobState::Done, "{}", history(&record));
     assert_eq!(record.commit.as_deref(), Some(COMMIT));
     assert_eq!(record.bytes_total, record.bytes_done);
     assert_eq!(record.files.len(), 2);
@@ -197,7 +198,7 @@ async fn a_job_downloads_in_parts_verifies_and_places() {
     assert!(leftovers(&s.home).is_empty(), "{:?}", leftovers(&s.home));
     // The queue is in the database: a second queue on it sees the job.
     let again = Queue::open(s.engine.clone()).unwrap();
-    assert_eq!(again.get(id).unwrap().state, State::Done);
+    assert_eq!(again.get(id).unwrap().state, JobState::Done);
 }
 
 #[tokio::test]
@@ -217,7 +218,7 @@ async fn parts_that_are_already_there_are_not_fetched_again() {
 
     let id = add(&s.queue);
     let record = settled(&s.queue, id).await;
-    assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert_eq!(record.state, JobState::Done, "{}", history(&record));
     assert_eq!(fs::read(placed(&s.engine)).unwrap(), up.weights);
     let mut ranges = up.weight_ranges().await;
     ranges.sort();
@@ -249,7 +250,7 @@ async fn a_busy_server_is_waited_out_and_the_window_is_cut() {
     let id = add(&s.queue);
     let record = settled(&s.queue, id).await;
 
-    assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert_eq!(record.state, JobState::Done, "{}", history(&record));
     assert!(
         history(&record).contains("waiting server: Hugging Face asked for a pause"),
         "{}",
@@ -276,7 +277,7 @@ async fn pause_keeps_what_is_there_and_resume_finishes() {
     s.queue.pause(id).await.unwrap();
 
     let paused = s.queue.get(id).unwrap();
-    assert_eq!(paused.state, State::Paused);
+    assert_eq!(paused.state, JobState::Paused);
     let sha = sha256(&up.weights);
     assert!(
         leftovers(&s.home).contains(&format!("{sha}.part")),
@@ -286,14 +287,14 @@ async fn pause_keeps_what_is_there_and_resume_finishes() {
     tokio::time::sleep(Duration::from_millis(300)).await;
     assert_eq!(
         s.queue.get(id).unwrap().state,
-        State::Paused,
+        JobState::Paused,
         "it stays paused"
     );
 
     s.engine.governor.configure(8, 0);
     s.queue.resume(id).unwrap();
     let record = settled(&s.queue, id).await;
-    assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert_eq!(record.state, JobState::Done, "{}", history(&record));
     assert_eq!(record.bytes_done, record.bytes_total);
     assert_eq!(fs::read(placed(&s.engine)).unwrap(), up.weights);
     assert!(leftovers(&s.home).is_empty());
@@ -309,7 +310,7 @@ async fn cancel_removes_what_was_downloaded() {
     s.queue.cancel(id).await.unwrap();
 
     let record = s.queue.get(id).unwrap();
-    assert_eq!(record.state, State::Cancelled);
+    assert_eq!(record.state, JobState::Cancelled);
     assert!(leftovers(&s.home).is_empty(), "{:?}", leftovers(&s.home));
     assert!(!placed(&s.engine).exists());
     assert!(
@@ -344,10 +345,10 @@ async fn a_job_that_was_working_continues_after_a_restart() {
     s.engine.governor.configure(8, 0);
 
     let restarted = Queue::open(s.engine.clone()).unwrap();
-    assert_eq!(restarted.get(id).unwrap().state, State::Queued);
+    assert_eq!(restarted.get(id).unwrap().state, JobState::Queued);
     restarted.start();
     let record = settled(&restarted, id).await;
-    assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert_eq!(record.state, JobState::Done, "{}", history(&record));
     assert!(history(&record).contains("continued after the daemon restarted"));
     assert_eq!(fs::read(placed(&s.engine)).unwrap(), up.weights);
 }
@@ -367,13 +368,13 @@ async fn a_model_the_hub_will_not_show_needs_the_owner() {
     let s = scene(&up);
     let id = add(&s.queue);
     let record = settled(&s.queue, id).await;
-    assert_eq!(record.state, State::NeedsAttention);
+    assert_eq!(record.state, JobState::NeedsAttention);
     let why = record.detail.unwrap();
     assert!(why.contains("gated") && why.contains("HTTP 401"), "{why}");
 
     // Asking again is allowed, and ends the same way.
     s.queue.resume(id).unwrap();
-    assert_eq!(settled(&s.queue, id).await.state, State::NeedsAttention);
+    assert_eq!(settled(&s.queue, id).await.state, JobState::NeedsAttention);
     assert!(
         s.queue
             .add("not a model", vec![], vec![], false, JobKind::Download)
@@ -396,7 +397,12 @@ async fn a_file_that_arrives_damaged_twice_needs_the_owner() {
     let s = scene(&up);
     let id = add(&s.queue);
     let record = settled(&s.queue, id).await;
-    assert_eq!(record.state, State::NeedsAttention, "{}", history(&record));
+    assert_eq!(
+        record.state,
+        JobState::NeedsAttention,
+        "{}",
+        history(&record)
+    );
     assert!(record.detail.unwrap().contains("damaged twice"));
     assert_eq!(
         up.weight_ranges().await.len(),
@@ -422,7 +428,7 @@ async fn a_job_says_which_apps_took_the_model_and_why_the_others_did_not() {
         .add(MODEL, vec![], vec![App::Ollama], false, JobKind::Activation)
         .unwrap();
     let record = settled(&s.queue, id).await;
-    assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert_eq!(record.state, JobState::Done, "{}", history(&record));
     assert_eq!(record.detail, None);
     assert!(record.activated().is_empty(), "{:?}", record.activated());
     let not = record.not_activated();
@@ -446,7 +452,7 @@ async fn a_job_says_which_apps_took_the_model_and_why_the_others_did_not() {
         )
         .unwrap();
     let record = settled(&s.queue, id).await;
-    assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert_eq!(record.state, JobState::Done, "{}", history(&record));
     assert_eq!(record.activated(), [App::Bionic]);
     assert!(
         history(&record).contains("not activated in Ollama: "),
@@ -461,14 +467,13 @@ async fn a_job_says_which_apps_took_the_model_and_why_the_others_did_not() {
 
     // Each app's answer is in the activity list, newest first.
     let entries = dedupd_core::activity::recent(&s.home, 10);
-    let seen: Vec<(Option<&str>, bool)> =
-        entries.iter().map(|e| (e.app.as_deref(), e.ok)).collect();
+    let seen: Vec<(Option<App>, bool)> = entries.iter().map(|e| (e.app, e.ok)).collect();
     assert_eq!(
         seen,
         [
-            (Some("ollama"), false),
-            (Some("bionic"), true),
-            (Some("ollama"), false)
+            (Some(App::Ollama), false),
+            (Some(App::Bionic), true),
+            (Some(App::Ollama), false)
         ]
     );
     assert_eq!(entries[1].text, "Activated in Bionic");
@@ -488,13 +493,13 @@ async fn an_activation_cut_off_while_placing_finishes_after_a_restart() {
         .add(MODEL, vec![], vec![App::Bionic], false, JobKind::Activation)
         .unwrap();
     let done = settled(&s.queue, id).await;
-    assert_eq!(done.state, State::Done, "{}", history(&done));
+    assert_eq!(done.state, JobState::Done, "{}", history(&done));
 
     // The daemon stopped while the job was placing, part of the way: the
     // record says "placing" and the app's copy is missing.
     fs::remove_file(placed(&s.engine)).unwrap();
     let mut cut = done.clone();
-    cut.state = State::Placing;
+    cut.state = JobState::Placing;
     cut.finished_at = None;
     s.engine
         .db()
@@ -504,7 +509,7 @@ async fn an_activation_cut_off_while_placing_finishes_after_a_restart() {
     let restarted = Queue::open(s.engine.clone()).unwrap();
     restarted.start();
     let record = settled(&restarted, id).await;
-    assert_eq!(record.state, State::Done, "{}", history(&record));
+    assert_eq!(record.state, JobState::Done, "{}", history(&record));
     assert_eq!(record.activated(), [App::Bionic]);
     assert_eq!(fs::read(placed(&s.engine)).unwrap(), up.weights);
 }
@@ -525,7 +530,12 @@ async fn an_app_that_could_not_be_asked_just_now_waits_for_the_owner() {
         .add(MODEL, vec![], vec![App::Ollama], false, JobKind::Activation)
         .unwrap();
     let record = settled(&s.queue, id).await;
-    assert_eq!(record.state, State::NeedsAttention, "{}", history(&record));
+    assert_eq!(
+        record.state,
+        JobState::NeedsAttention,
+        "{}",
+        history(&record)
+    );
     let detail = record.detail.clone().unwrap_or_default();
     assert!(detail.starts_with("not activated in Ollama: "), "{detail}");
     assert!(record.not_activated()[0].temporary);

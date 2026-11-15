@@ -2,9 +2,9 @@
 //! `<models dir>/<publisher>/<repo>/<file>`.
 
 use super::{LocalFile, LocalRepo, rel_components};
-use crate::place::App;
 use crate::store::Fingerprint;
 use anyhow::{Context, Result};
+use dedupd_api::app::App;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 

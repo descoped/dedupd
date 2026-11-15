@@ -1,10 +1,11 @@
 //! Reclaim, verify and gc against scratch folders.
 #![cfg(target_os = "macos")]
 
+use dedupd_api::app::App;
 use dedupd_core::adopt::{self, Options};
 use dedupd_core::db::Db;
 use dedupd_core::maintain;
-use dedupd_core::place::{App, AppDirs};
+use dedupd_core::place::AppDirs;
 use dedupd_core::store::Store;
 use dedupd_core::{Home, archive};
 use std::fs;

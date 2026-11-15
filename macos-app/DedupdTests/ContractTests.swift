@@ -53,7 +53,7 @@ struct ContractTests {
         #expect(status.storeBytes == 300_008)
         #expect(status.sharedBytes == 300_008)
         #expect(status.downloadingTotal == 0)
-        #expect(status.apps == [AppUsage(app: "bionic", files: 2, bytes: 300_008)])
+        #expect(status.apps == [AppUsage(app: .bionic, files: 2, bytes: 300_008)])
         let repo = try #require(status.repositories.first)
         #expect(repo.name == "org/Repo-GGUF")
         #expect(repo.provider == "hf")
@@ -70,12 +70,12 @@ struct ContractTests {
         let server = try await Self.daemon(["POST /dedupd/v1/pull": .init(body: Self.recorded("pull"))])
         defer { server.stop() }
 
-        let request = PullRequest(model: "org/Repo-GGUF", apps: ["bionic"], include: ["*.gguf"], offline: true)
+        let request = PullRequest(model: "org/Repo-GGUF", apps: [.bionic], include: ["*.gguf"], offline: true)
         let address = server.address
         let result = try await Self.blocking {
             try DedupdClient.pull(
                 address: address, model: request.model, apps: request.apps, include: request.include, offline: request.offline,
-                activation: true
+                kind: .activation
             )
         }
 
@@ -84,7 +84,7 @@ struct ContractTests {
         #expect(result.downloaded == 2)
         #expect(result.bytes == 300_008)
         #expect(!result.fromArchive)
-        #expect(result.placed == [PlacedApp(app: "bionic", cloned: 2, present: 0, conflicts: [])])
+        #expect(result.placed == [PlacedApp(app: .bionic, cloned: 2, present: 0, conflicts: [])])
         #expect(result.notes.isEmpty)
 
         let sent = try #require(server.requests.first)
@@ -103,8 +103,8 @@ struct ContractTests {
         let address = server.address
         let entries = try await Self.blocking { try DedupdClient.activity(address: address) }
 
-        #expect(entries.map(\.action) == ["archive", "activate", "activate"])
-        #expect(entries.map(\.app) == [nil, "hf", "bionic"])
+        #expect(entries.map(\.action) == [.archive, .activate, .activate])
+        #expect(entries.map(\.app) == [nil, .huggingFace, .bionic])
         #expect(entries.allSatisfy { $0.ok })
         #expect(entries[0].text == "Moved to the archive disk")
         #expect(entries[0].id > entries[1].id)
@@ -134,7 +134,7 @@ struct ContractTests {
 
         let plan = try await client.archivePlan("org/Repo-GGUF", at: server.address)
         #expect(plan.archive == "/Users/example/trunk/dedupd")
-        #expect(plan.deactivate.map(\.app) == ["bionic", "hf"])
+        #expect(plan.deactivate.map(\.app) == [.bionic, .huggingFace])
         #expect((plan.files, plan.bytes, plan.copyFiles) == (2, 300_008, 0))
         #expect(plan.keep.isEmpty)
         try await client.archive("org/Repo-GGUF", at: server.address)
@@ -148,7 +148,7 @@ struct ContractTests {
         ))
         let move = try await Self.blocking { try DedupdClient.modelMove(address: address) }
         #expect(move == ModelMove(
-            kind: "archive", repo: "org/Repo-GGUF", running: false, startedAt: 1_700_000_000,
+            kind: .archive, repo: "org/Repo-GGUF", running: false, startedAt: 1_700_000_000,
             finishedAt: 1_700_000_000, bytesTotal: 300_008, bytesDone: 300_008, files: 2, kept: 0, error: nil
         ))
     }

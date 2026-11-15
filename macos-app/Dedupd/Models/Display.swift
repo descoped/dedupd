@@ -65,7 +65,7 @@ extension LibraryModel: @retroactive Identifiable {
     }
 
     var health: ModelHealth {
-        if upstream == "gone" {
+        if upstream == .gone {
             return .goneUpstream
         }
         if mismatch > 0 {
@@ -89,7 +89,7 @@ extension LibraryModel: @retroactive Identifiable {
         max(storedBytes, apps.map(\.bytes).max() ?? 0)
     }
 
-    var appNames: [String] { apps.map(\.app) }
+    var appNames: [ModelApp] { apps.map(\.app) }
 
     /// The owner moved the model to the archive disk; it is in no app.
     var isArchived: Bool { archivedAt != nil }
@@ -121,7 +121,7 @@ extension SearchHit: @retroactive Identifiable {
             return "Downloading"
         }
         if !apps.isEmpty {
-            return "In " + ListFormatter.localizedString(byJoining: apps.map(ModelApp.shortTitle(for:)))
+            return "In " + ListFormatter.localizedString(byJoining: apps.map(\.shortTitle))
         }
         return archived ? "In the store" : nil
     }
@@ -132,8 +132,8 @@ extension Variant: @retroactive Identifiable {
 
     /// Which kind of model this is, for remembering where such models go.
     func kind(formats: [String]) -> ModelKind {
-        if kind == "gguf" {
-            return usableBy.contains(ModelApp.ollama.rawValue) ? .gguf : .splitGGUF
+        if kind == .gguf {
+            return usableBy.contains(.ollama) ? .gguf : .splitGGUF
         }
         return formats.contains("mlx") ? .mlx : .other
     }
@@ -142,28 +142,28 @@ extension Variant: @retroactive Identifiable {
     var isStored: Bool { bytes > 0 && storedBytes >= bytes }
 
     var usableApps: [ModelApp] {
-        ModelApp.allCases.filter { usableBy.contains($0.rawValue) }
+        ModelApp.allCases.filter(usableBy.contains)
     }
 
     func isPlaced(in app: ModelApp) -> Bool {
-        placedIn.contains(app.rawValue)
+        placedIn.contains(app)
     }
 
     /// What the daemon decided for an app, from the app's profile.
     func decision(for app: ModelApp) -> Decision? {
-        decisions.first { $0.app == app.rawValue }
+        decisions.first { $0.app == app }
     }
 
     /// What placing this into an app does and what it costs, as the daemon
     /// decided it.
     func placeHelp(for app: ModelApp) -> String {
         switch decision(for: app)?.cost {
-        case "megabytes":
+        case .megabytes:
             "Give \(app.title) the model as clones of the stored files with their index rewritten. "
                 + "It takes a few megabytes."
-        case "full":
+        case .full:
             "Give \(app.title) a copy of the model. It takes the model's size again."
-        default:
+        case .nothing, nil:
             "Give \(app.title) the model as a clone of the stored copy. It takes no extra space."
         }
     }
@@ -178,7 +178,7 @@ extension [Variant] {
         guard isEmpty || contains(where: { $0.usableApps.contains(app) }) else {
             return decisions.first?.reason ?? "Cannot use this model"
         }
-        let untried = decisions.first { $0.state == "ready" && $0.versionState == "untested" }
+        let untried = decisions.first { $0.state == .ready && $0.versionState == .untested }
         if let version = untried?.version {
             return "Does not have it · dedupd was not tested with version \(version)"
         }
@@ -189,19 +189,21 @@ extension [Variant] {
 extension Job: @retroactive Identifiable {}
 
 extension Location: @retroactive Identifiable {
+    public var id: String { app?.name ?? (kind == .store ? "store" : "archive") }
+
     var title: String {
-        switch id {
-        case "store": "Store"
-        case "archive": "Archive"
-        default: ModelApp.title(for: id)
+        switch kind {
+        case .store: "Store"
+        case .archive: "Archive"
+        case .app: app?.title ?? "App"
         }
     }
 
     var symbol: String {
-        switch id {
-        case "store": "square.stack.3d.up.fill"
-        case "archive": "externaldrive"
-        default: ModelApp.symbol(for: id)
+        switch kind {
+        case .store: "square.stack.3d.up.fill"
+        case .archive: "externaldrive"
+        case .app: app?.symbol ?? "app"
         }
     }
 }

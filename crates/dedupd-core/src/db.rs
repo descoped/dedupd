@@ -5,6 +5,8 @@ use crate::hub::{Snapshot, TreeEntry};
 use crate::now;
 use crate::store::Fingerprint;
 use anyhow::{Context, Result};
+use dedupd_api::app::App;
+use dedupd_api::library::Origin;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -16,15 +18,23 @@ pub const PROVIDER_HF: &str = "hf";
 pub const PROVIDER_OLLAMA: &str = "ollama";
 
 /// `placements.origin` for a file the app had before dedupd knew it.
-pub const ORIGIN_ADOPTED: &str = "adopted";
+pub const ORIGIN_ADOPTED: &str = Origin::Adopted.as_str();
 /// `placements.origin` for a file dedupd created as a clone.
-pub const ORIGIN_PLACED: &str = "placed";
+pub const ORIGIN_PLACED: &str = Origin::Placed.as_str();
 
 const BLOB_COLS: &str = "b.sha256, b.size, b.git_oid";
 /// No app file holds this content.
 const UNPLACED: &str = "NOT EXISTS (SELECT 1 FROM placements p WHERE p.sha256 = b.sha256)";
 
 /// Lock the shared database handle.
+/// An app's short name in a column, read as the app.
+pub(crate) fn app_column(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<App> {
+    let name: String = r.get(i)?;
+    name.parse().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(i, rusqlite::types::Type::Text, Box::new(e))
+    })
+}
+
 pub fn lock(db: &Mutex<Db>) -> MutexGuard<'_, Db> {
     db.lock().expect("database lock")
 }

@@ -118,7 +118,7 @@ private struct HubLocalState: View {
                 Label("Downloading", systemImage: "arrow.down.circle")
                     .foregroundStyle(Color.accentColor)
             } else if !model.apps.isEmpty {
-                let names = model.apps.map { ModelApp.shortTitle(for: $0.app) }
+                let names = model.apps.map(\.app.shortTitle)
                 Label("On this Mac, in \(ListFormatter.localizedString(byJoining: names))", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             } else if model.archived {
@@ -178,7 +178,7 @@ private struct TargetPicker: View {
                     Toggle(app.shortTitle, isOn: binding(app))
                         .toggleStyle(.checkbox)
                         .help(app.detail)
-                        .accessibilityIdentifier("target-\(kind.rawValue)-\(app.rawValue)")
+                        .accessibilityIdentifier("target-\(kind.rawValue)-\(app.name)")
                 }
             }
             .font(.callout)
@@ -229,7 +229,7 @@ private struct HubVariantRow: View {
 
     /// The download of this variant that is in the queue, if any.
     private var job: Job? {
-        daemon.jobs.first { $0.model == variant.spec && ($0.phase.isActive || $0.phase == .paused) }
+        daemon.jobs.first { $0.model == variant.spec && ($0.state.isActive || $0.state == .paused) }
     }
 
     var body: some View {
@@ -254,7 +254,7 @@ private struct HubVariantRow: View {
             parts.append(ByteFormat.files(variant.files))
         }
         if !variant.placedIn.isEmpty {
-            parts.append("in " + ListFormatter.localizedString(byJoining: variant.placedIn.map(ModelApp.shortTitle(for:))))
+            parts.append("in " + ListFormatter.localizedString(byJoining: variant.placedIn.map(\.shortTitle)))
         } else if variant.isStored {
             parts.append("in the store")
         }
@@ -265,11 +265,11 @@ private struct HubVariantRow: View {
         if let job {
             HStack(spacing: 6) {
                 // A bar only once there is something to show on it.
-                if job.phase != .queued, let fraction = job.fraction {
+                if job.state != .queued, let fraction = job.fraction {
                     ProgressView(value: fraction)
                         .frame(width: 60)
                 }
-                Text(job.phase == .downloading ? (job.fraction.map { "\(Int($0 * 100)) %" } ?? "…") : job.phase.title)
+                Text(job.state == .downloading ? (job.fraction.map { "\(Int($0 * 100)) %" } ?? "…") : job.state.title)
                     .font(.caption)
                     .monospacedDigit()
                     .foregroundStyle(.secondary)

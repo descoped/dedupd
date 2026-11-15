@@ -115,7 +115,7 @@ struct LibraryView: View {
             title: "App",
             selection: $library.filterApp,
             options: [FilterOption(value: "", title: "All apps")]
-                + ModelApp.allCases.map { FilterOption(value: $0.rawValue, title: $0.title) }
+                + ModelApp.allCases.map { FilterOption(value: $0.name, title: $0.title) }
         )
         .help("Show only the models one app has")
     }

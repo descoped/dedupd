@@ -81,7 +81,7 @@ func eventually(_ condition: @Sendable () async -> Bool) async -> Bool {
 func job(_ id: Int64, _ state: JobState, model: String = "org/Repo-GGUF:Q4_K_M", done: UInt64 = 0) -> Job {
     FixtureData.job(
         id: id,
-        request: PullRequest(model: model, apps: ["bionic", "ollama"]),
+        request: PullRequest(model: model, apps: [.bionic, .ollama]),
         state: state,
         total: 100_000_000,
         done: done,

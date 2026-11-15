@@ -13,12 +13,12 @@ struct Notice: Equatable, Sendable {
     /// go on without them. A download that was already in that state when
     /// the app first saw it is old news.
     static func notices(from before: [Job], to after: [Job]) -> [Notice] {
-        let known = Dictionary(before.map { ($0.id, $0.phase) }, uniquingKeysWith: { first, _ in first })
+        let known = Dictionary(before.map { ($0.id, $0.state) }, uniquingKeysWith: { first, _ in first })
         return after.compactMap { job in
-            guard let earlier = known[job.id], earlier != job.phase else {
+            guard let earlier = known[job.id], earlier != job.state else {
                 return nil
             }
-            switch job.phase {
+            switch job.state {
             case .done where job.isActivation:
                 // An activation is seen where it was asked for; the owner
                 // hears only when an app did not take the model.

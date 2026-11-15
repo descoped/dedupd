@@ -10,6 +10,8 @@ use crate::hub::{HubClient, HubError, Snapshot, TreeEntry};
 use crate::sources::{LocalFile, LocalRepo};
 use crate::store::{Added, Fingerprint, Store};
 use anyhow::Result;
+use dedupd_api::app::App;
+use dedupd_api::library::VerifyState;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
@@ -22,39 +24,6 @@ const MANIFEST_FROM_APP: &str = "adopted";
 /// Without a file listing from the provider, files up to this size also get a
 /// git blob id, so that small files can be verified later without rehashing.
 const GIT_OID_WITHOUT_TREE_MAX: u64 = 64 * 1024 * 1024;
-
-/// How a local file compares with the provider's listing for the repository.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Verify {
-    /// Same bytes as the provider lists at the recorded commit.
-    Verified,
-    /// The provider lists this path with different content. The local file
-    /// may come from an older revision, or may be damaged.
-    Mismatch,
-    /// The provider's listing has no file at this path.
-    NotUpstream,
-    /// The provider could not be asked.
-    Unchecked,
-}
-
-impl Verify {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Verify::Verified => "verified",
-            Verify::Mismatch => "mismatch",
-            Verify::NotUpstream => "not_upstream",
-            Verify::Unchecked => "unchecked",
-        }
-    }
-
-    /// The inverse of `as_str`. Anything unknown reads as unchecked.
-    pub fn parse(s: &str) -> Self {
-        [Verify::Verified, Verify::Mismatch, Verify::NotUpstream]
-            .into_iter()
-            .find(|v| v.as_str() == s)
-            .unwrap_or(Verify::Unchecked)
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Upstream {
@@ -86,7 +55,7 @@ pub struct FileOutcome {
     pub rel_path: String,
     pub size: u64,
     pub sha256: String,
-    pub verify: Verify,
+    pub verify: VerifyState,
     pub action: Action,
 }
 
@@ -137,21 +106,21 @@ fn verify(
     have_tree: bool,
     sha256: &str,
     git_oid: Option<&str>,
-) -> Verify {
+) -> VerifyState {
     if !have_tree {
-        return Verify::Unchecked;
+        return VerifyState::Unchecked;
     }
     match entry {
-        None => Verify::NotUpstream,
+        None => VerifyState::NotUpstream,
         Some(e) => {
             let same = match &e.lfs_sha256 {
                 Some(lfs) => lfs == sha256,
                 None => git_oid == Some(e.git_oid.as_str()),
             };
             if same {
-                Verify::Verified
+                VerifyState::Verified
             } else {
-                Verify::Mismatch
+                VerifyState::Mismatch
             }
         }
     }
@@ -174,7 +143,7 @@ fn check(
     rel_path: &str,
     sha256: &str,
     git_oid: Option<&str>,
-) -> Verify {
+) -> VerifyState {
     let entry = tree
         .and_then(|t| t.get(rel_path))
         .or_else(|| by_content(tree, sha256));
@@ -202,7 +171,7 @@ struct Adopted<'a> {
     rel_path: &'a str,
     sha256: &'a str,
     fingerprint: Fingerprint,
-    verify: Verify,
+    verify: VerifyState,
     shared: bool,
 }
 
@@ -219,7 +188,7 @@ impl RepoState {
             mtime_ns: file.fingerprint.mtime_ns,
             origin: ORIGIN_ADOPTED,
             verify_state: file.verify.as_str(),
-            verified_commit: (file.verify == Verify::Verified)
+            verified_commit: (file.verify == VerifyState::Verified)
                 .then_some(self.commit.as_deref())
                 .flatten(),
             shared: file.shared,
@@ -318,7 +287,7 @@ async fn plan_repo(
             );
             // An answer from the provider replaces an older one; no
             // answer leaves the earlier result in place.
-            if v != Verify::Unchecked && v.as_str() != known.verify_state {
+            if v != VerifyState::Unchecked && v.as_str() != known.verify_state {
                 lock(db).upsert_placement(&state.placement(
                     repo_id,
                     &Adopted {
@@ -331,8 +300,8 @@ async fn plan_repo(
                     },
                 ))?;
             }
-            let recorded = if v == Verify::Unchecked {
-                Verify::parse(&known.verify_state)
+            let recorded = if v == VerifyState::Unchecked {
+                VerifyState::parse(&known.verify_state)
             } else {
                 v
             };
@@ -485,9 +454,8 @@ pub async fn adopt(
 pub fn scan_apps(
     db: &Mutex<Db>,
     dirs: &crate::place::AppDirs,
-    apps: &[crate::place::App],
+    apps: &[App],
 ) -> Result<Vec<LocalRepo>> {
-    use crate::place::App;
     use crate::sources::{bionic, hf_cache, ollama};
     let mut repos = Vec::new();
     for app in apps {

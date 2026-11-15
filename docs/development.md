@@ -55,7 +55,8 @@ A Cargo workspace and a SwiftUI app.
 |---|---|
 | `crates/dedupd-core` | The library: the store, the database, the Hugging Face client, downloads and the queue, the three placers, app profiles, the archive disk, maintenance. No HTTP server. |
 | `crates/dedupd-server` | The daemon's HTTP side: the Hugging Face Hub API, the Ollama registry API, the control API under `/dedupd/v1`, and the background pass. |
-| `crates/dedupd-client` | A small blocking client for the control API, exported to Swift through UniFFI. |
+| `crates/dedupd-api` | The control API's types: what each request sends and each answer holds, shared by the daemon, the command and the client. |
+| `crates/dedupd-client` | A small blocking client for the control API, exported to Swift through UniFFI with the types of `dedupd-api`. |
 | `crates/dedupd` | The `dedupd` command. |
 | `macos-app` | The menu bar app. `project.yml` (XcodeGen) is the source of truth; the Xcode project is generated. |
 | `spikes` | Standalone Python scripts that proved the protocol behaviour before the Rust code existed. Evidence, not product code. |

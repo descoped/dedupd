@@ -3,6 +3,7 @@
 
 use crate::{Opened, human};
 use anyhow::{Context, Result};
+use dedupd_api::library::{DecisionState, VersionState};
 use dedupd_core::library;
 use dedupd_core::profile::{self, Installed, Method};
 use serde_json::json;
@@ -17,12 +18,12 @@ fn takes(method: &Method) -> String {
     }
 }
 
-fn tried(state: &str) -> &'static str {
+fn tried(state: VersionState) -> &'static str {
     match state {
-        "tested" => "dedupd was tested with this version",
-        "untested" => "dedupd was not tested with this version",
-        "broken" => "known not to work with this version",
-        _ => "not found on this Mac",
+        VersionState::Tested => "dedupd was tested with this version",
+        VersionState::Untested => "dedupd was not tested with this version",
+        VersionState::Broken => "known not to work with this version",
+        VersionState::Unknown => "not found on this Mac",
     }
 }
 
@@ -40,11 +41,11 @@ pub fn cmd_apps(o: &Opened, repo: Option<String>, as_json: bool) -> Result<()> {
     for v in &detail.variants {
         println!("{} ({})", v.spec, human(v.bytes));
         for d in &v.decisions {
-            let answer = match d.state.as_str() {
-                "ready" if v.placed_in.contains(&d.app) => "in it",
-                "ready" => "yes",
-                "planned" => "not yet",
-                _ => "no",
+            let answer = match d.state {
+                DecisionState::Ready if v.placed_in.contains(&d.app) => "in it",
+                DecisionState::Ready => "yes",
+                DecisionState::Planned => "not yet",
+                DecisionState::No => "no",
             };
             println!("  {:<8} {:<8} {}", d.app, answer, d.reason);
         }
@@ -85,7 +86,7 @@ fn overview(o: &Opened, installed: &Installed, as_json: bool) -> Result<()> {
                 "  {:<22} {}, {}{}",
                 takes(m),
                 m.id,
-                m.cost.label(),
+                profile::cost_label(m.cost),
                 if m.built { "" } else { "; not built yet" }
             );
         }

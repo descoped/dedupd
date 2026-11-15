@@ -8,8 +8,10 @@
 mod common;
 
 use common::{COMMIT, Ranged, engine, git_oid, sha256};
+use dedupd_api::app::App;
+use dedupd_api::jobs::NotActivated;
+use dedupd_api::library::DecisionState;
 use dedupd_core::db::PROVIDER_HF;
-use dedupd_core::place::App;
 use dedupd_core::profile::Installed;
 use dedupd_core::pull::{self, PullRequest};
 use dedupd_core::refusals::Refusals;
@@ -204,8 +206,8 @@ async fn an_mlx_model_is_placed_into_ollama_as_clones_with_a_rewritten_index() {
         .await
         .unwrap();
     assert_eq!(done.notes, Vec::<String>::new());
-    let (app, placed) = &done.placed[0];
-    assert_eq!(*app, App::Ollama);
+    let placed = &done.placed[0];
+    assert_eq!(placed.app, App::Ollama);
     assert!(placed.conflicts.is_empty());
 
     // The manifest names three clones: one for the first weights file and,
@@ -230,7 +232,7 @@ async fn an_mlx_model_is_placed_into_ollama_as_clones_with_a_rewritten_index() {
     );
     assert_eq!(
         placed.cloned,
-        manifest["layers"].as_array().unwrap().len() + 1
+        manifest["layers"].as_array().unwrap().len() as u64 + 1
     );
     // Ollama's settings for the model came with its answer.
     let settings = e.dirs.ollama.join("blobs").join(
@@ -283,12 +285,12 @@ async fn an_mlx_model_is_placed_into_ollama_as_clones_with_a_rewritten_index() {
         .unwrap()
         .unwrap();
     let variant = &detail.variants[0];
-    assert_eq!(variant.placed_in, ["ollama"]);
-    assert_eq!(variant.usable_by, ["bionic", "ollama", "hf"]);
+    assert_eq!(variant.placed_in, [App::Ollama]);
+    assert_eq!(variant.usable_by, App::ALL);
     let ollama = variant
         .decisions
         .iter()
-        .find(|d| d.app == "ollama")
+        .find(|d| d.app == App::Ollama)
         .unwrap();
     assert_eq!(ollama.method.as_deref(), Some(ollama_mlx::METHOD));
     let derived = e.db().derived_files().unwrap();
@@ -310,8 +312,8 @@ async fn an_mlx_model_is_placed_into_ollama_as_clones_with_a_rewritten_index() {
     let again = pull::pull(&e, &request(false), &Arc::default())
         .await
         .unwrap();
-    assert_eq!(again.placed[0].1.cloned, 0);
-    assert_eq!(again.placed[0].1.present, placed.cloned);
+    assert_eq!(again.placed[0].cloned, 0);
+    assert_eq!(again.placed[0].present, placed.cloned);
 
     // Cut off before the manifest was written (a crash, the Mac asleep): the
     // clones are there and Ollama does not list the model. The next try,
@@ -322,7 +324,7 @@ async fn an_mlx_model_is_placed_into_ollama_as_clones_with_a_rewritten_index() {
         .await
         .unwrap();
     assert_eq!(resumed.notes, Vec::<String>::new());
-    assert!(resumed.placed[0].1.conflicts.is_empty());
+    assert!(resumed.placed[0].conflicts.is_empty());
     assert_eq!(fs::read_to_string(&manifest_path).unwrap(), body);
     assert_eq!(e.db().derived_files().unwrap().len(), 3);
 
@@ -345,8 +347,8 @@ async fn an_mlx_model_is_placed_into_ollama_as_clones_with_a_rewritten_index() {
     // Removing the model from Ollama takes the clones and the manifest;
     // the stored files stay.
     let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, REPO, App::Ollama).unwrap();
-    assert_eq!(plan.keep, Vec::<(String, String)>::new());
-    assert_eq!(plan.remove.len(), placed.cloned);
+    assert!(plan.keep.is_empty(), "{:?}", plan.keep);
+    assert_eq!(plan.remove.len() as u64, placed.cloned);
     maintain::unplace_apply(&e.db, &e.dirs, &plan).unwrap();
     assert!(!manifest_path.exists());
     assert!(layers.iter().all(|(_, blob)| !blob.exists()));
@@ -448,7 +450,7 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
     );
     assert_eq!(
         first.skipped,
-        [pull::Skipped {
+        [NotActivated {
             app: App::Ollama,
             reason: plain.clone(),
             temporary: false
@@ -460,7 +462,7 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
     // Its answer is kept for this model's config.json and this version.
     let known = Refusals::load(&home);
     let kept = known
-        .find("ollama", &version, ollama_mlx::METHOD, &up.config)
+        .find(App::Ollama, &version, ollama_mlx::METHOD, &up.config)
         .expect("the refusal is kept");
     assert!(
         kept.reason.starts_with("unsupported MLX architecture"),
@@ -475,15 +477,11 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
     let ollama = library.variants[0]
         .decisions
         .iter()
-        .find(|d| d.app == "ollama")
+        .find(|d| d.app == App::Ollama)
         .unwrap();
-    assert_eq!(ollama.state, "no");
+    assert_eq!(ollama.state, DecisionState::No);
     assert_eq!(ollama.reason, plain);
-    assert!(
-        !library.variants[0]
-            .usable_by
-            .contains(&"ollama".to_string())
-    );
+    assert!(!library.variants[0].usable_by.contains(&App::Ollama));
 
     // A second try is answered from what is kept, without asking Ollama.
     let second = pull::pull(&e, &request(false), &Arc::default())

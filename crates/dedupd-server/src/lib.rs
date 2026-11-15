@@ -41,13 +41,13 @@ pub struct Server {
     /// What the background pass remembers between rounds.
     pub(crate) passes: daemon::PassState,
     /// The store check the owner asked for, or the scheduled one.
-    pub(crate) check: Mutex<daemon::CheckState>,
+    pub(crate) check: Mutex<dedupd_api::daemon::StoreCheck>,
     /// The archive or restore of one model that is running, or the last one.
-    pub(crate) moving: watch::Sender<Option<moves::MoveState>>,
+    pub(crate) moving: watch::Sender<Option<dedupd_api::moves::ModelMove>>,
     /// Counts up whenever what the store or the apps hold has changed.
     library: watch::Sender<u64>,
     /// Answers from the provider's search, kept for a few minutes.
-    pub(crate) searches: Mutex<HashMap<String, (Instant, serde_json::Value)>>,
+    pub(crate) searches: Mutex<HashMap<String, (Instant, discover::Found)>>,
     /// Seconds since the epoch when this daemon started.
     pub started_at: i64,
     /// Cancelled when the daemon is stopping; ends the long-lived answers.
@@ -78,7 +78,7 @@ impl Server {
             assemblies: Mutex::new(HashMap::new()),
             queue,
             passes: daemon::PassState::default(),
-            check: Mutex::new(daemon::CheckState::default()),
+            check: Mutex::new(dedupd_api::daemon::StoreCheck::default()),
             moving: watch::Sender::new(None),
             library: watch::Sender::new(0),
             searches: Mutex::new(HashMap::new()),

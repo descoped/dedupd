@@ -1,30 +1,18 @@
+import DedupdClient
 import Foundation
 
 /// What the daemon is asked to download and where to place it.
 struct PullRequest: Equatable, Sendable {
     /// `org/repo`, `org/repo:Q4_K_M` or `org/repo@revision`.
     var model: String
-    /// The apps to place it into, by the names the daemon uses.
-    var apps: [String]
+    /// The apps to activate it in.
+    var apps: [ModelApp]
     var include: [String] = []
     /// Use only what is archived; the provider is not asked.
     var offline = false
-    /// The model is stored and goes into apps: the job is shown with the
-    /// activations, not the downloads.
-    var activation = false
-}
-
-/// What can be done to a download in the queue. The raw value is the word
-/// the daemon's control API uses.
-enum JobAction: String, Sendable {
-    case pause
-    case resume
-    case retry
-    /// Start now, ahead of the queue.
-    case start
-    case cancel
-    /// Take a finished download off the list.
-    case remove
+    /// An activation of a stored model is shown with the activations, not
+    /// the downloads.
+    var kind = JobKind.download
 }
 
 /// What a piece of typed or pasted text says a model is.

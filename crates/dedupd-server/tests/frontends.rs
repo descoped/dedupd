@@ -6,6 +6,12 @@
 mod common;
 
 use common::{COMMIT, REPO, Ranged, git_oid, sha256};
+use dedupd_api::app::App;
+use dedupd_api::daemon::{DaemonEvent, Setting, SettingChange, SettingValue};
+use dedupd_api::hub::SearchQuery;
+use dedupd_api::jobs::{FileStage, JobAction, JobKind, JobState};
+use dedupd_api::library::{Cost, DecisionState, UpstreamState};
+use dedupd_api::moves::{ModelMove, MoveKind};
 use dedupd_core::Home;
 use dedupd_core::config::Config;
 use dedupd_server::Server;
@@ -471,7 +477,7 @@ async fn control_api_is_closed_to_web_pages() {
         .json()
         .await
         .unwrap();
-    assert_eq!(ok["status"]["store_files"], 0);
+    assert_eq!(ok["store_files"], 0);
     // The client the command line and the app use speaks the same API.
     let address = fx.base.trim_start_matches("http://").to_string();
     let (a, b) = (address.clone(), address.clone());
@@ -482,13 +488,20 @@ async fn control_api_is_closed_to_web_pages() {
     assert_eq!(seen.store_files, 0);
     assert_eq!(seen.version, env!("CARGO_PKG_VERSION"));
     let pulled = tokio::task::spawn_blocking(move || {
-        dedupd_client::pull(b, REPO.into(), vec!["bionic".into()], vec![], false, false)
+        dedupd_client::pull(
+            b,
+            REPO.into(),
+            vec![App::Bionic],
+            vec![],
+            false,
+            JobKind::Download,
+        )
     })
     .await
     .unwrap()
     .unwrap();
     assert_eq!((pulled.files, pulled.downloaded), (2, 2));
-    assert_eq!(pulled.placed[0].app, "bionic");
+    assert_eq!(pulled.placed[0].app, App::Bionic);
     assert_eq!(pulled.placed[0].cloned, 2);
     let nobody = tokio::task::spawn_blocking(|| dedupd_client::status("127.0.0.1:1".into()))
         .await
@@ -612,7 +625,10 @@ async fn download(fx: &Fixture, body: Value) -> Value {
     let id = queued["id"].as_i64().unwrap();
     for _ in 0..500 {
         let (_, job) = control(fx, "GET", &format!("downloads/{id}"), None).await;
-        if matches!(job["state"].as_str(), Some("done" | "needs_attention")) {
+        if matches!(
+            job["job"]["state"].as_str(),
+            Some("done" | "needs_attention")
+        ) {
             return job;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
@@ -665,9 +681,9 @@ async fn mount_search(fx: &Fixture) {
 async fn the_app_downloads_looks_removes_and_cleans_up() {
     let fx = fixture().await;
     let job = download(&fx, json!({"model": REPO, "apps": ["bionic", "hf"]})).await;
-    assert_eq!(job["state"], "done", "{job}");
+    assert_eq!(job["job"]["state"], "done", "{job}");
     assert_eq!(job["files"].as_array().unwrap().len(), 2);
-    assert_eq!(job["bytes_done"], job["bytes_total"]);
+    assert_eq!(job["job"]["bytes_done"], job["job"]["bytes_total"]);
     // Asking for the same thing again starts nothing new once it is done,
     // and names the running download while it is not.
     let (_, list) = control(&fx, "GET", "downloads", None).await;
@@ -716,7 +732,7 @@ async fn the_app_downloads_looks_removes_and_cleans_up() {
 
     let (_, places) = control(&fx, "GET", "locations", None).await;
     assert_eq!(places["store"]["files"], 2);
-    assert_eq!(places["apps"][0]["id"], "bionic");
+    assert_eq!(places["apps"][0]["app"], "bionic");
     assert_eq!(places["apps"][0]["models"], 1);
     assert_eq!(places["apps"][1]["models"], 0);
 
@@ -1044,11 +1060,11 @@ async fn the_client_reads_everything_the_daemon_sends() {
 
     #[derive(Default)]
     struct Seen {
-        events: Mutex<Vec<client::DaemonEvent>>,
+        events: Mutex<Vec<DaemonEvent>>,
         connections: Mutex<Vec<bool>>,
     }
     impl client::EventListener for Seen {
-        fn on_event(&self, event: client::DaemonEvent) {
+        fn on_event(&self, event: DaemonEvent) {
             self.events.lock().unwrap().push(event);
         }
         fn on_connection(&self, connected: bool) {
@@ -1064,7 +1080,7 @@ async fn the_client_reads_everything_the_daemon_sends() {
 
     let a = address.clone();
     let done = tokio::task::spawn_blocking(move || -> Result<(), client::ClientError> {
-        let query = client::SearchQuery {
+        let query = SearchQuery {
             text: "repo".into(),
             format: "gguf".into(),
             sort: "likes".into(),
@@ -1074,32 +1090,40 @@ async fn the_client_reads_everything_the_daemon_sends() {
         assert_eq!(page.next.as_deref(), Some("abc="));
         assert_eq!(page.models[1].meta.formats, ["mlx", "safetensors"]);
         let hub = client::hub_model(a.clone(), REPO.into())?;
-        assert_eq!(hub.variants[0].usable_by, ["bionic", "ollama", "hf"]);
+        assert_eq!(hub.variants[0].usable_by, App::ALL);
         let ollama = &hub.variants[0].decisions[1];
         assert_eq!(
-            (ollama.app.as_str(), ollama.state.as_str()),
-            ("ollama", "ready")
+            (ollama.app, ollama.state),
+            (App::Ollama, DecisionState::Ready)
         );
-        assert_eq!(ollama.cost.as_deref(), Some("none"));
+        assert_eq!(ollama.cost, Some(Cost::None));
         assert_eq!(hub.related.len(), 1);
 
         let spec = hub.variants[0].spec.clone();
-        let queued = client::enqueue(a.clone(), spec, vec!["bionic".into()], vec![], false, false)?;
+        let queued = client::enqueue(
+            a.clone(),
+            spec,
+            vec![App::Bionic],
+            vec![],
+            false,
+            JobKind::Download,
+        )?;
         assert!(!queued.existing);
         let job = loop {
             let job = client::download(a.clone(), queued.id)?;
-            if job.job.state == "done" {
+            if job.job.state == JobState::Done {
                 break job;
             }
             std::thread::sleep(Duration::from_millis(10));
         };
         assert_eq!((job.job.files_total, job.job.files_done), (2, 2));
-        assert_eq!(job.files[0].stage, "stored");
+        assert_eq!(job.files[0].stage, FileStage::Stored);
+        assert_eq!(job.job.actions, [JobAction::Remove]);
         assert!(job.events.iter().any(|e| e.text == "done"));
         assert_eq!(client::downloads(a.clone())?.jobs.len(), 1);
 
         let library = client::models(a.clone())?;
-        assert_eq!(library[0].apps[0].app, "bionic");
+        assert_eq!(library[0].apps[0].app, App::Bionic);
         let detail = client::model(a.clone(), REPO.into())?;
         assert_eq!(detail.placements.len(), 2);
         assert_eq!(detail.revisions[0].files.len(), 2);
@@ -1108,15 +1132,15 @@ async fn the_client_reads_everything_the_daemon_sends() {
         assert!(places.volume_free > 0);
         assert_eq!(
             client::check_upstream(a.clone(), REPO.into())?.upstream,
-            "ok"
+            UpstreamState::Ok
         );
         let status = client::status(a.clone())?;
         assert_eq!(status.daemon.pid, std::process::id());
         assert!(!status.daemon.token);
 
-        let plan = client::unplace(a.clone(), REPO.into(), "bionic".into(), false, None)?;
+        let plan = client::unplace(a.clone(), REPO.into(), App::Bionic, false, None)?;
         assert_eq!((plan.remove.len(), plan.removed), (2, None));
-        let gone = client::unplace(a.clone(), REPO.into(), "bionic".into(), true, None)?;
+        let gone = client::unplace(a.clone(), REPO.into(), App::Bionic, true, None)?;
         assert_eq!(gone.removed, Some(2));
         client::forget(a.clone(), REPO.into())?;
         let plan = client::gc_plan(a.clone(), false)?;
@@ -1125,9 +1149,9 @@ async fn the_client_reads_everything_the_daemon_sends() {
         let freed = client::gc_apply(a.clone(), shas, vec![])?;
         assert_eq!(freed.freed, Some(300_008));
 
-        let change = client::SettingChange {
-            key: "speed_limit".into(),
-            value: client::SettingValue::Number { value: 5_000_000 },
+        let change = SettingChange {
+            key: Setting::SpeedLimit,
+            value: SettingValue::Number { value: 5_000_000 },
         };
         let settings = client::update_settings(a.clone(), vec![change])?;
         assert_eq!(settings.speed_limit, 5_000_000);
@@ -1137,7 +1161,7 @@ async fn the_client_reads_everything_the_daemon_sends() {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(client::log_tail(a.clone(), 10)?.lines.is_empty());
-        let refused = client::download_action(a, 99, "pause".into());
+        let refused = client::download_action(a, 99, JobAction::Pause);
         assert!(matches!(refused, Err(client::ClientError::Failed { .. })));
         Ok(())
     })
@@ -1147,8 +1171,12 @@ async fn the_client_reads_everything_the_daemon_sends() {
 
     // The subscription was told how the download ended and that what the
     // library holds has changed. Quick changes arrive as one event.
-    let finished = |e: &client::DaemonEvent| {
-        e.library > 0 && e.downloads.jobs.first().is_some_and(|j| j.state == "done")
+    let finished = |e: &DaemonEvent| {
+        e.library > 0
+            && e.downloads
+                .jobs
+                .first()
+                .is_some_and(|j| j.state == JobState::Done)
     };
     for _ in 0..300 {
         if seen.events.lock().unwrap().last().is_some_and(finished) {
@@ -1168,7 +1196,7 @@ async fn the_client_reads_everything_the_daemon_sends() {
         .unwrap();
     assert_eq!(cleared.unwrap(), 1);
     for _ in 0..300 {
-        let emptied = |e: &client::DaemonEvent| e.downloads.jobs.is_empty() && e.seq > 1;
+        let emptied = |e: &DaemonEvent| e.downloads.jobs.is_empty() && e.seq > 1;
         if seen.events.lock().unwrap().last().is_some_and(emptied) {
             break;
         }
@@ -1214,9 +1242,9 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
     use std::sync::Mutex;
 
     #[derive(Default)]
-    struct Seen(Mutex<Vec<client::DaemonEvent>>);
+    struct Seen(Mutex<Vec<DaemonEvent>>);
     impl client::EventListener for Seen {
-        fn on_event(&self, event: client::DaemonEvent) {
+        fn on_event(&self, event: DaemonEvent) {
             self.0.lock().unwrap().push(event);
         }
         fn on_connection(&self, _connected: bool) {}
@@ -1245,7 +1273,7 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
 
     let a = address.clone();
     let done = tokio::task::spawn_blocking(move || -> Result<(), client::ClientError> {
-        let wait = |kind: &str| -> Result<client::ModelMove, client::ClientError> {
+        let wait = |kind: MoveKind| -> Result<ModelMove, client::ClientError> {
             loop {
                 let state = client::model_move(a.clone())?.expect("a move was started");
                 if !state.running {
@@ -1261,14 +1289,14 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
         assert_eq!(client::model_move(a.clone())?, None);
 
         let plan = client::archive_plan(a.clone(), REPO.into())?;
-        let apps: Vec<&str> = plan.deactivate.iter().map(|d| d.app.as_str()).collect();
-        assert_eq!(apps, ["bionic", "hf"]);
+        let apps: Vec<App> = plan.deactivate.iter().map(|d| d.app).collect();
+        assert_eq!(apps, [App::Bionic, App::Hf]);
         assert_eq!((plan.files, plan.bytes), (2, 300_008));
         assert!(plan.archive.ends_with("trunk/dedupd"));
         assert!(plan.keep.is_empty());
 
         client::archive_model(a.clone(), REPO.into())?;
-        let state = wait("archive")?;
+        let state = wait(MoveKind::Archive)?;
         assert_eq!(state.error, None);
         assert_eq!((state.files, state.bytes_done, state.kept), (2, 300_008, 0));
         let library = client::models(a.clone())?;
@@ -1279,7 +1307,7 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
         assert_eq!((plan.files, plan.bytes, plan.missing), (2, 300_008, 0));
         assert!(plan.free > plan.bytes);
         client::restore_model(a.clone(), REPO.into())?;
-        let state = wait("restore")?;
+        let state = wait(MoveKind::Restore)?;
         assert_eq!((state.error, state.files), (None, 2));
         let library = client::models(a.clone())?;
         assert_eq!(library[0].archived_at, None);
@@ -1294,7 +1322,7 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
     assert!(fx.server.engine.store.contains(&sha));
     assert!(!bionic.exists());
     // The event stream told about both moves.
-    let told = |kind: &str| {
+    let told = |kind: MoveKind| {
         let events = seen.0.lock().unwrap();
         events
             .iter()
@@ -1302,12 +1330,12 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
             .any(|m| m.kind == kind && m.repo == REPO && !m.running)
     };
     for _ in 0..300 {
-        if told("restore") {
+        if told(MoveKind::Restore) {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    assert!(told("restore"));
+    assert!(told(MoveKind::Restore));
     subscription.cancel();
 }
 

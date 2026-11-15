@@ -38,14 +38,6 @@ struct DisplayTests {
         #expect(TimeFormat.relative(now.addingTimeInterval(-20), to: now) == "just now")
     }
 
-    @Test("A state the app does not know is shown as unknown, not dropped")
-    func unknownState() {
-        #expect(JobState("queued") == .queued)
-        #expect(JobState("waiting_server") == .waitingServer)
-        #expect(JobState("something new") == .unknown)
-        #expect(!JobState.unknown.isActive)
-    }
-
     @Test("A running download reads its progress, speed and time left")
     func running() {
         let running = job(1, .downloading, done: 40_000_000)
@@ -88,7 +80,7 @@ struct DisplayTests {
         model.archivedAt = 1_794_000_000
         #expect(model.health == .archived)
         #expect(model.storedText == "4 files, 105.46 MB, on the archive disk only")
-        model.upstream = "gone"
+        model.upstream = .gone
         #expect(model.health == .goneUpstream, "that the provider lost the model matters more")
     }
 
@@ -97,8 +89,8 @@ struct DisplayTests {
         var plan = ArchivePlan(
             repo: "org/Repo", archive: "/Volumes/Archive/dedupd",
             deactivate: [
-                DeactivateStep(app: "bionic", files: 13, bytes: 16_080_000_000, keep: []),
-                DeactivateStep(app: "ollama", files: 5, bytes: 16_100_000_000, keep: []),
+                DeactivateStep(app: .bionic, files: 13, bytes: 16_080_000_000, keep: []),
+                DeactivateStep(app: .ollama, files: 5, bytes: 16_100_000_000, keep: []),
             ],
             files: 13, bytes: 16_080_000_000, copyFiles: 0, copyBytes: 0, keep: []
         )
@@ -121,12 +113,12 @@ struct DisplayTests {
     @Test("A model on its way to the archive disk or back says how far it is")
     func modelMove() {
         var move = ModelMove(
-            kind: "archive", repo: "org/Repo", running: true, startedAt: 1, finishedAt: nil,
+            kind: .archive, repo: "org/Repo", running: true, startedAt: 1, finishedAt: nil,
             bytesTotal: 16_000_000_000, bytesDone: 4_000_000_000, files: 0, kept: 0, error: nil
         )
         #expect(move.fraction == 0.25)
         #expect(move.statusText == "Archiving: 4.00 GB of 16.00 GB checked on the archive disk")
-        move.kind = "restore"
+        move.kind = .restore
         #expect(move.statusText == "Restoring: 4.00 GB of 16.00 GB copied back")
         move.running = false
         move.files = 13
@@ -176,14 +168,14 @@ struct DisplayTests {
     @Test("Each kind of model has its own apps")
     func kinds() {
         let single = Variant(
-            kind: "gguf", name: "Q4_K_M", spec: "a/b:Q4_K_M", files: 1, bytes: 10, storedBytes: 10,
-            usableBy: ["bionic", "ollama", "hf"], placedIn: ["ollama"],
-            decisions: FixtureData.decisions(usableBy: ["bionic", "ollama", "hf"])
+            kind: .gguf, name: "Q4_K_M", spec: "a/b:Q4_K_M", files: 1, bytes: 10, storedBytes: 10,
+            usableBy: [.bionic, .ollama, .huggingFace], placedIn: [.ollama],
+            decisions: FixtureData.decisions(usableBy: [.bionic, .ollama, .huggingFace])
         )
         var split = single
-        split.usableBy = ["bionic", "hf"]
+        split.usableBy = [.bionic, .huggingFace]
         var files = single
-        files.kind = "files"
+        files.kind = .files
         #expect(single.kind(formats: ["gguf"]) == .gguf)
         #expect(split.kind(formats: ["gguf"]) == .splitGGUF)
         #expect(files.kind(formats: ["mlx", "safetensors"]) == .mlx)
@@ -199,30 +191,30 @@ struct DisplayTests {
     @Test("An app without the model says why, in the daemon's words")
     func notes() {
         var mlx = Variant(
-            kind: "files", name: "all files", spec: "a/b", files: 8, bytes: 10, storedBytes: 10,
-            usableBy: ["bionic", "hf"], placedIn: [],
-            decisions: FixtureData.decisions(usableBy: ["bionic", "hf"], mlxBits: 6)
+            kind: .files, name: "all files", spec: "a/b", files: 8, bytes: 10, storedBytes: 10,
+            usableBy: [.bionic, .huggingFace], placedIn: [],
+            decisions: FixtureData.decisions(usableBy: [.bionic, .huggingFace], mlxBits: 6)
         )
         #expect([mlx].note(for: .bionic) == "Does not have it")
         #expect(
             [mlx].note(for: .ollama)
                 == "Ollama could not run 6-bit MLX models when dedupd tried it (0.40.16); it ran 4-bit and 8-bit ones"
         )
-        mlx.usableBy = ["bionic", "ollama", "hf"]
+        mlx.usableBy = [.bionic, .ollama, .huggingFace]
         mlx.decisions = FixtureData.decisions(usableBy: mlx.usableBy, mlxBits: 4)
         #expect([mlx].note(for: .ollama) == "Does not have it")
-        #expect(mlx.decision(for: .ollama)?.cost == "megabytes")
+        #expect(mlx.decision(for: .ollama)?.cost == .megabytes)
         #expect(mlx.placeHelp(for: .ollama).hasSuffix("It takes a few megabytes."))
         #expect(mlx.placeHelp(for: .bionic).hasSuffix("It takes no extra space."))
         #expect([Variant]().note(for: .ollama) == "Does not have it")
 
         // A version of the app the daemon was not tested with is named.
         mlx.decisions[0].version = "9.9"
-        mlx.decisions[0].versionState = "untested"
+        mlx.decisions[0].versionState = .untested
         #expect([mlx].note(for: .bionic) == "Does not have it · dedupd was not tested with version 9.9")
 
         // A daemon from before the profiles sends no decisions.
-        mlx.usableBy = ["bionic", "hf"]
+        mlx.usableBy = [.bionic, .huggingFace]
         mlx.decisions = []
         #expect([mlx].note(for: .ollama) == "Cannot use this model")
     }
@@ -267,11 +259,11 @@ struct DisplayTests {
         draft.reclaim = false
         draft.listen = " 127.0.0.1:9000 "
         #expect(draft.changes(from: original) == [
-            SettingChange(key: "listen", value: .text(value: "127.0.0.1:9000")),
-            SettingChange(key: "archive", value: .unset),
-            SettingChange(key: "reclaim", value: .flag(value: false)),
-            SettingChange(key: "max_connections", value: .number(value: 4)),
-            SettingChange(key: "speed_limit", value: .number(value: 2_500_000)),
+            SettingChange(key: .listen, value: .text(value: "127.0.0.1:9000")),
+            SettingChange(key: .archive, value: .unset),
+            SettingChange(key: .reclaim, value: .flag(value: false)),
+            SettingChange(key: .maxConnections, value: .number(value: 4)),
+            SettingChange(key: .speedLimit, value: .number(value: 2_500_000)),
         ])
     }
 

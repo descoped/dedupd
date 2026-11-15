@@ -53,7 +53,7 @@ final class AppSettings {
     private(set) var targets: [ModelKind: Set<ModelApp>] {
         didSet {
             let stored = Dictionary(uniqueKeysWithValues: targets.map { kind, apps in
-                (kind.rawValue, apps.map(\.rawValue).sorted())
+                (kind.rawValue, apps.map(\.name).sorted())
             })
             defaults.set(stored, forKey: Key.targets)
         }
@@ -77,7 +77,7 @@ final class AppSettings {
         activitySeen = Int64(defaults.integer(forKey: Key.activitySeen))
         let stored = defaults.dictionary(forKey: Key.targets) as? [String: [String]] ?? [:]
         targets = Dictionary(uniqueKeysWithValues: stored.compactMap { kind, apps in
-            ModelKind(rawValue: kind).map { ($0, Set(apps.compactMap(ModelApp.init(rawValue:)))) }
+            ModelKind(rawValue: kind).map { ($0, Set(apps.compactMap(ModelApp.init(name:)))) }
         })
         isFirstLaunch = !defaults.bool(forKey: Key.launched)
         defaults.set(true, forKey: Key.launched)

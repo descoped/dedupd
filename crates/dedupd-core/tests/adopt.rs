@@ -4,8 +4,9 @@
 mod common;
 
 use common::COMMIT;
+use dedupd_api::library::VerifyState;
 use dedupd_core::Home;
-use dedupd_core::adopt::{self, Action, Options, Upstream, Verify};
+use dedupd_core::adopt::{self, Action, Options, Upstream};
 use dedupd_core::db::Db;
 use dedupd_core::hash::hash_file;
 use dedupd_core::hub::HubClient;
@@ -91,7 +92,7 @@ fn snapshot_of(dir: &Path) -> Vec<(PathBuf, u64, i64, u64, Vec<u8>)> {
     out
 }
 
-fn verify_of<'a>(o: &'a adopt::RepoOutcome, rel: &str) -> (Verify, Action, &'a str) {
+fn verify_of<'a>(o: &'a adopt::RepoOutcome, rel: &str) -> (VerifyState, Action, &'a str) {
     let f = o.files.iter().find(|f| f.rel_path == rel).unwrap();
     (f.verify, f.action, &f.sha256)
 }
@@ -121,10 +122,10 @@ async fn adopts_verifies_and_leaves_app_files_alone() {
     let repo = &out[0];
     assert_eq!(repo.upstream, Upstream::Commit(COMMIT.into()));
     assert!(repo.errors.is_empty());
-    assert_eq!(verify_of(repo, "model.gguf").0, Verify::Verified);
-    assert_eq!(verify_of(repo, "config.json").0, Verify::Verified);
-    assert_eq!(verify_of(repo, "tokenizer.json").0, Verify::Mismatch);
-    assert_eq!(verify_of(repo, "notes.txt").0, Verify::NotUpstream);
+    assert_eq!(verify_of(repo, "model.gguf").0, VerifyState::Verified);
+    assert_eq!(verify_of(repo, "config.json").0, VerifyState::Verified);
+    assert_eq!(verify_of(repo, "tokenizer.json").0, VerifyState::Mismatch);
+    assert_eq!(verify_of(repo, "notes.txt").0, VerifyState::NotUpstream);
     assert!(repo.files.iter().all(|f| f.action == Action::Cloned));
 
     // Every file is in the store under its own sha256, read-only, same bytes.
@@ -184,7 +185,7 @@ async fn second_run_does_not_rehash_and_offline_keeps_earlier_verification() {
         .unwrap();
     assert_eq!(out[0].upstream, Upstream::NotAsked);
     assert!(out[0].files.iter().all(|f| f.action == Action::Unchanged));
-    assert_eq!(verify_of(&out[0], "model.gguf").0, Verify::Verified);
+    assert_eq!(verify_of(&out[0], "model.gguf").0, VerifyState::Verified);
     assert_eq!(status(&db.lock().unwrap()).unwrap().repos[0].verified, 2);
 
     // A file the app replaced is hashed again and gets a new store entry;
@@ -196,7 +197,7 @@ async fn second_run_does_not_rehash_and_offline_keeps_earlier_verification() {
         .await
         .unwrap();
     let (v, action, new_sha) = verify_of(&out[0], "config.json");
-    assert_eq!((v, action), (Verify::Mismatch, Action::Cloned));
+    assert_eq!((v, action), (VerifyState::Mismatch, Action::Cloned));
     assert_ne!(new_sha, old_sha);
     assert!(store.contains(&old_sha) && store.contains(new_sha));
     assert_eq!(status(&db.lock().unwrap()).unwrap().store_files, 5);
@@ -217,7 +218,7 @@ async fn offline_first_run_is_unchecked_then_verified_without_rehash() {
         out[0]
             .files
             .iter()
-            .all(|f| f.verify == Verify::Unchecked && f.action == Action::Cloned)
+            .all(|f| f.verify == VerifyState::Unchecked && f.action == Action::Cloned)
     );
 
     let server = fake_hub(&fx.models).await;
@@ -226,9 +227,12 @@ async fn offline_first_run_is_unchecked_then_verified_without_rehash() {
         .await
         .unwrap();
     assert!(out[0].files.iter().all(|f| f.action == Action::Unchanged));
-    assert_eq!(verify_of(&out[0], "model.gguf").0, Verify::Verified);
-    assert_eq!(verify_of(&out[0], "config.json").0, Verify::Verified);
-    assert_eq!(verify_of(&out[0], "tokenizer.json").0, Verify::Mismatch);
+    assert_eq!(verify_of(&out[0], "model.gguf").0, VerifyState::Verified);
+    assert_eq!(verify_of(&out[0], "config.json").0, VerifyState::Verified);
+    assert_eq!(
+        verify_of(&out[0], "tokenizer.json").0,
+        VerifyState::Mismatch
+    );
 }
 
 #[tokio::test]
@@ -254,7 +258,7 @@ async fn dry_run_writes_nothing() {
     .await
     .unwrap();
     assert!(out[0].files.iter().all(|f| f.action == Action::DryRun));
-    assert_eq!(verify_of(&out[0], "model.gguf").0, Verify::Verified);
+    assert_eq!(verify_of(&out[0], "model.gguf").0, VerifyState::Verified);
     let s = status(&db.lock().unwrap()).unwrap();
     assert_eq!((s.store_files, s.repos.len()), (0, 0));
     assert!(!store.contains(verify_of(&out[0], "model.gguf").2));
@@ -287,7 +291,7 @@ async fn repo_missing_upstream_is_still_adopted() {
         out[0]
             .files
             .iter()
-            .all(|f| f.verify == Verify::Unchecked && f.action == Action::Cloned)
+            .all(|f| f.verify == VerifyState::Unchecked && f.action == Action::Cloned)
     );
     assert_eq!(status(&db.lock().unwrap()).unwrap().store_files, 4);
 }

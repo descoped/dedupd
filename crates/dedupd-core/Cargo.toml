@@ -8,6 +8,7 @@ description = "The dedupd library: a content-addressed store of AI model files, 
 
 [dependencies]
 anyhow = "1.0.104"
+dedupd-api = { version = "0.1.0", path = "../dedupd-api" }
 futures-util = "0.3.34"
 hex = "0.4.3"
 libc = "0.2.191"

@@ -1,5 +1,13 @@
 {
-  "archive": null,
+  "apps": [
+    {
+      "app": "bionic",
+      "bytes": 300008,
+      "files": 2
+    }
+  ],
+  "archive_attached": false,
+  "archive_path": null,
   "daemon": {
     "checking": false,
     "executable": "/Users/example/bin/dedupd",
@@ -13,39 +21,28 @@
     "token": false,
     "token_source": null
   },
-  "downloading": {
-    "done": 0,
-    "total": 0
-  },
+  "downloading_done": 0,
+  "downloading_total": 0,
   "endpoint": "https://huggingface.co",
   "home": "/Users/example/home",
-  "status": {
-    "apps": [
-      {
-        "app": "bionic",
-        "bytes": 300008,
-        "files": 2
-      }
-    ],
-    "repos": [
-      {
-        "archived": false,
-        "bytes": 300008,
-        "commit": "0123456789abcdef0123456789abcdef01234567",
-        "files": 2,
-        "mismatch": 0,
-        "name": "org/Repo-GGUF",
-        "not_upstream": 0,
-        "provider": "hf",
-        "stored_bytes": 300008,
-        "stored_files": 2,
-        "unchecked": 0,
-        "verified": 2
-      }
-    ],
-    "shared_bytes": 300008,
-    "store_bytes": 300008,
-    "store_files": 2
-  },
+  "repositories": [
+    {
+      "archived": false,
+      "bytes": 300008,
+      "commit": "0123456789abcdef0123456789abcdef01234567",
+      "files": 2,
+      "mismatch": 0,
+      "name": "org/Repo-GGUF",
+      "not_upstream": 0,
+      "provider": "hf",
+      "stored_bytes": 300008,
+      "stored_files": 2,
+      "unchecked": 0,
+      "verified": 2
+    }
+  ],
+  "shared_bytes": 300008,
+  "store_bytes": 300008,
+  "store_files": 2,
   "version": "0.0.0"
 }

@@ -1,26 +1,9 @@
 import DedupdClient
 import SwiftUI
 
-/// Where a download is, as the daemon names it.
-enum JobState: String, Sendable {
-    case queued
-    case resolving
-    case downloading
-    case verifying
-    case placing
-    case done
-    case paused
-    case waitingServer = "waiting_server"
-    case waitingNetwork = "waiting_network"
-    case needsAttention = "needs_attention"
-    case cancelled
-    /// A state this version of the app does not know.
-    case unknown
-
-    init(_ name: String) {
-        self = JobState(rawValue: name) ?? .unknown
-    }
-
+/// How a job's state is shown. The daemon names the states and decides
+/// what can be done in each (`Job.actions`).
+extension JobState {
     var title: String {
         switch self {
         case .queued: "Queued"
@@ -34,7 +17,6 @@ enum JobState: String, Sendable {
         case .waitingNetwork: "Waiting for the network"
         case .needsAttention: "Needs attention"
         case .cancelled: "Cancelled"
-        case .unknown: "Unknown"
         }
     }
 
@@ -51,7 +33,6 @@ enum JobState: String, Sendable {
         case .waitingNetwork: "wifi.exclamationmark"
         case .needsAttention: "exclamationmark.triangle.fill"
         case .cancelled: "xmark.circle"
-        case .unknown: "questionmark.circle"
         }
     }
 
@@ -61,7 +42,7 @@ enum JobState: String, Sendable {
         case .needsAttention: .orange
         case .waitingServer, .waitingNetwork: .yellow
         case .downloading, .verifying, .placing, .resolving: .accentColor
-        case .queued, .paused, .cancelled, .unknown: .secondary
+        case .queued, .paused, .cancelled: .secondary
         }
     }
 
@@ -69,7 +50,7 @@ enum JobState: String, Sendable {
     var isActive: Bool {
         switch self {
         case .queued, .resolving, .downloading, .verifying, .placing, .waitingServer, .waitingNetwork: true
-        case .done, .paused, .needsAttention, .cancelled, .unknown: false
+        case .done, .paused, .needsAttention, .cancelled: false
         }
     }
 
@@ -77,27 +58,71 @@ enum JobState: String, Sendable {
     var isFinished: Bool {
         self == .done || self == .cancelled
     }
+}
 
-    var canPause: Bool { isActive }
+/// How an action on a job is offered.
+extension JobAction {
+    /// The word the daemon's control API uses, also for naming controls.
+    var name: String {
+        switch self {
+        case .pause: "pause"
+        case .resume: "resume"
+        case .retry: "retry"
+        case .start: "start"
+        case .cancel: "cancel"
+        case .remove: "remove"
+        }
+    }
 
-    var canResume: Bool { self == .paused || self == .needsAttention }
+    var title: String {
+        switch self {
+        case .pause: "Pause"
+        case .resume: "Resume"
+        case .retry: "Try Again"
+        case .start: "Start Now"
+        case .cancel: "Cancel"
+        case .remove: "Remove"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .pause: "pause.fill"
+        case .resume: "play.fill"
+        case .retry: "arrow.clockwise"
+        case .start: "forward.end.fill"
+        case .cancel: "xmark"
+        case .remove: "minus.circle"
+        }
+    }
+
+    /// What the action does, for a job of this kind.
+    func help(activation: Bool) -> String {
+        let job = activation ? "activation" : "download"
+        return switch self {
+        case .pause: "Stop for now. What is downloaded is kept."
+        case .resume: "Continue where it stopped"
+        case .retry: "Try the \(job) again"
+        case .start: "Start this download ahead of the queue"
+        case .cancel: activation ? "Give up this activation. The stored copy stays." : "Stop and give up this download"
+        case .remove: "Take it off the list. Downloaded files stay."
+        }
+    }
 }
 
 extension Job {
-    var phase: JobState { JobState(state) }
-
     /// How far the download has come, from 0 to 1; nil before its size is
     /// known.
     var fraction: Double? {
         guard bytesTotal > 0 else {
-            return phase == .done ? 1 : nil
+            return state == .done ? 1 : nil
         }
         return min(1, Double(bytesDone) / Double(bytesTotal))
     }
 
     /// Seconds left at the current speed; nil when that cannot be told.
     var secondsLeft: UInt64? {
-        guard phase == .downloading, speed > 0, bytesTotal > bytesDone else {
+        guard state == .downloading, speed > 0, bytesTotal > bytesDone else {
             return nil
         }
         return (bytesTotal - bytesDone) / speed
@@ -107,9 +132,9 @@ extension Job {
     /// known.
     var progressText: String {
         guard bytesTotal > 0 else {
-            return phase.title
+            return state.title
         }
-        if phase == .done {
+        if state == .done {
             return ByteFormat.string(bytesTotal)
         }
         return "\(ByteFormat.string(bytesDone)) of \(ByteFormat.string(bytesTotal))"
@@ -118,10 +143,10 @@ extension Job {
     /// The second line of a download: speed and time left while it runs, the
     /// reason while it waits.
     var statusText: String {
-        if let detail, !detail.isEmpty, phase != .downloading {
+        if let detail, !detail.isEmpty, state != .downloading {
             return detail
         }
-        switch phase {
+        switch state {
         case .downloading:
             guard speed > 0 else {
                 return "Starting…"
@@ -131,21 +156,17 @@ extension Job {
         case .done:
             return outcomeText
         default:
-            return phase.title
+            return state.title
         }
     }
 
     /// The job puts a stored model into apps, rather than fetching one.
-    var isActivation: Bool { kind == "activation" }
-
-    /// The daemon says what a finished job did. One older than the app sends
-    /// no kind and no answer per app; its jobs are not judged.
-    private var saysOutcome: Bool { !kind.isEmpty }
+    var isActivation: Bool { kind == .activation }
 
     /// The apps asked for that did not take the model, each with why, once
     /// the job is done.
     var missed: [NotActivated] {
-        phase == .done && saysOutcome ? notActivated : []
+        state == .done ? notActivated : []
     }
 
     /// What a finished job did: "Activated in Bionic", "Not activated in
@@ -153,9 +174,6 @@ extension Job {
     var outcomeText: String {
         if apps.isEmpty {
             return "In the store only"
-        }
-        guard saysOutcome else {
-            return phase.title
         }
         var parts: [String] = []
         if !activated.isEmpty {
@@ -165,20 +183,20 @@ extension Job {
         if !missed.isEmpty {
             let not = activated.isEmpty ? "Not activated in" : "not in"
             // Each app with its own reason, so two reasons are not mixed up.
-            let why = missed.map { missed.count == 1 ? $0.reason : "\(ModelApp.shortTitle(for: $0.app)): \($0.reason)" }
+            let why = missed.map { missed.count == 1 ? $0.reason : "\($0.app.shortTitle): \($0.reason)" }
             parts.append("\(not) \(Self.list(missed.map(\.app))): \(why.joined(separator: "; "))")
         }
-        return parts.joined(separator: " · ")
+        return parts.isEmpty ? state.title : parts.joined(separator: " · ")
     }
 
     /// The row's symbol: a finished job that an app did not take is marked,
     /// so it does not pass for a success.
     var symbol: String {
-        missed.isEmpty ? phase.symbol : "exclamationmark.circle.fill"
+        missed.isEmpty ? state.symbol : "exclamationmark.circle.fill"
     }
 
     var tint: Color {
-        missed.isEmpty ? phase.tint : .orange
+        missed.isEmpty ? state.tint : .orange
     }
 
     /// "Bionic and Ollama", or "the store only".
@@ -186,7 +204,7 @@ extension Job {
         apps.isEmpty ? "the store only" : Self.list(apps)
     }
 
-    private static func list(_ apps: [String]) -> String {
-        ListFormatter.localizedString(byJoining: apps.map(ModelApp.shortTitle(for:)))
+    private static func list(_ apps: [ModelApp]) -> String {
+        ListFormatter.localizedString(byJoining: apps.map(\.shortTitle))
     }
 }

@@ -14,7 +14,7 @@ struct DownloadInspector: View {
     /// download, another state, another file done, or two per cent more.
     private struct Key: Equatable {
         var id: Int64?
-        var state: String?
+        var state: JobState?
         var files: UInt64
         var step: UInt64
 
@@ -33,7 +33,7 @@ struct DownloadInspector: View {
                     header(job)
                     InspectorSection(title: "Download") {
                         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 5) {
-                            FactRow("State", job.phase.title)
+                            FactRow("State", job.state.title)
                             if let detail = job.detail, !detail.isEmpty { FactRow("Why", detail) }
                             FactRow("Size", job.bytesTotal == 0 ? "Not known yet" : job.progressText)
                             FactRow("Files", "\(job.filesDone) of \(job.filesTotal)")
@@ -76,8 +76,8 @@ struct DownloadInspector: View {
                 .font(.title3.weight(.semibold))
                 .textSelection(.enabled)
             HStack {
-                Label(job.phase.title, systemImage: job.phase.symbol)
-                    .foregroundStyle(job.phase.tint)
+                Label(job.state.title, systemImage: job.state.symbol)
+                    .foregroundStyle(job.state.tint)
                 Spacer()
                 Button("Show in Discover") {
                     navigation.pane = .discover
@@ -97,10 +97,10 @@ struct DownloadInspector: View {
                         path: file.path,
                         size: file.size,
                         note: Self.stage(file),
-                        symbol: file.stage == "stored" ? "checkmark.circle" : "doc",
+                        symbol: file.stage == .stored ? "checkmark.circle" : "doc",
                         digest: file.sha256
                     )
-                    if file.stage == "downloading", file.size > 0 {
+                    if file.stage == .downloading, file.size > 0 {
                         ProgressView(value: min(1, Double(file.done) / Double(file.size)))
                             .controlSize(.mini)
                             .padding(.leading, 24)
@@ -128,10 +128,10 @@ struct DownloadInspector: View {
 
     private static func stage(_ file: JobFile) -> String {
         switch file.stage {
-        case "stored": "in the store"
-        case "verifying": "being verified"
-        case "downloading": "\(ByteFormat.string(file.done)) of \(ByteFormat.string(file.size))"
-        default: file.done > 0 ? "\(ByteFormat.string(file.done)) downloaded, waiting" : "waiting"
+        case .stored: "in the store"
+        case .verifying: "being verified"
+        case .downloading: "\(ByteFormat.string(file.done)) of \(ByteFormat.string(file.size))"
+        case .waiting: file.done > 0 ? "\(ByteFormat.string(file.done)) downloaded, waiting" : "waiting"
         }
     }
 }

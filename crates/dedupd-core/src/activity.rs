@@ -19,46 +19,20 @@ use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
 
 use crate::paths::Home;
-use crate::place::{App, Placed};
-use crate::pull::Skipped;
+use dedupd_api::activity::{ActivityAction, ActivityEntry};
+use dedupd_api::app::App;
+use dedupd_api::jobs::{NotActivated, PlacedApp};
 
 /// Entries kept when the file is cut back, and the length that starts it.
 const KEEP: usize = 500;
 const CUT_AT: usize = 1000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Action {
-    Activate,
-    Deactivate,
-    Archive,
-    Restore,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Entry {
-    /// Grows with every entry: milliseconds since 1970, one more than the
-    /// last entry when two come in the same millisecond.
-    pub id: i64,
-    /// Seconds since 1970.
-    pub at: i64,
-    pub action: Action,
-    /// `org/repo`.
-    pub repo: String,
-    /// The app, for an activation or a deactivation.
-    pub app: Option<String>,
-    pub ok: bool,
-    /// What happened, in a sentence; for a failure, why.
-    pub text: String,
-}
-
 /// An entry before it has an id and a time.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Happened {
-    pub action: Action,
+    pub action: ActivityAction,
     pub repo: String,
     pub app: Option<App>,
     /// What happened, or why it did not.
@@ -92,14 +66,14 @@ fn lock_path(home: &Home) -> PathBuf {
     home.root().join("activity.lock")
 }
 
-fn parse(text: &str) -> Vec<Entry> {
+fn parse(text: &str) -> Vec<ActivityEntry> {
     text.lines()
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect()
 }
 
 /// The newest entries first, at most `limit` of them.
-pub fn recent(home: &Home, limit: usize) -> Vec<Entry> {
+pub fn recent(home: &Home, limit: usize) -> Vec<ActivityEntry> {
     let mut entries = parse(&std::fs::read_to_string(path(home)).unwrap_or_default());
     entries.reverse();
     entries.truncate(limit);
@@ -126,7 +100,7 @@ pub fn record_all(home: &Home, happened: Vec<Happened>) {
 /// own reason.
 pub fn record_result<T>(
     home: &Home,
-    action: Action,
+    action: ActivityAction,
     repo: &str,
     app: Option<App>,
     result: &Result<T>,
@@ -187,12 +161,12 @@ fn append(home: &Home, happened: Vec<Happened>) -> Result<()> {
             Ok(text) => (true, text),
             Err(text) => (false, text),
         };
-        let entry = Entry {
+        let entry = ActivityEntry {
             id,
             at: now.as_secs() as i64,
             action: h.action,
             repo: h.repo,
-            app: h.app.map(|a| a.as_str().to_string()),
+            app: h.app,
             ok,
             text,
         };
@@ -236,19 +210,19 @@ pub fn record_activations(
     home: &Home,
     repo: &str,
     apps: &[App],
-    placed: &[(App, Placed)],
-    skipped: &[Skipped],
+    placed: &[PlacedApp],
+    skipped: &[NotActivated],
 ) {
     let happened = apps
         .iter()
         .map(|app| {
             let result = match skipped.iter().find(|s| s.app == *app) {
                 Some(s) => Err(s.reason.clone()),
-                None if placed.iter().any(|(a, _)| a == app) => Ok(activated(*app)),
+                None if placed.iter().any(|p| p.app == *app) => Ok(activated(*app)),
                 None => Err("no reason was given".to_string()),
             };
             Happened {
-                action: Action::Activate,
+                action: ActivityAction::Activate,
                 repo: repo.to_string(),
                 app: Some(*app),
                 result,
@@ -264,7 +238,7 @@ pub fn record_stopped_activation(home: &Home, repo: &str, apps: &[App], why: &st
     let happened = apps
         .iter()
         .map(|app| Happened {
-            action: Action::Activate,
+            action: ActivityAction::Activate,
             repo: repo.to_string(),
             app: Some(*app),
             result: Err(why.to_string()),
@@ -278,7 +252,7 @@ mod tests {
     use super::*;
 
     fn happened(
-        action: Action,
+        action: ActivityAction,
         app: Option<App>,
         result: std::result::Result<&str, &str>,
     ) -> Happened {
@@ -299,7 +273,7 @@ mod tests {
         record(
             &home,
             happened(
-                Action::Activate,
+                ActivityAction::Activate,
                 Some(App::Bionic),
                 Ok("Activated in Bionic"),
             ),
@@ -307,18 +281,18 @@ mod tests {
         record(
             &home,
             happened(
-                Action::Activate,
+                ActivityAction::Activate,
                 Some(App::Ollama),
                 Err("Ollama can't run it"),
             ),
         );
-        record(&home, happened(Action::Archive, None, Ok(ARCHIVED)));
+        record(&home, happened(ActivityAction::Archive, None, Ok(ARCHIVED)));
 
         let entries = recent(&home, 10);
         assert_eq!(entries.len(), 3);
-        assert_eq!(entries[0].action, Action::Archive);
+        assert_eq!(entries[0].action, ActivityAction::Archive);
         assert_eq!(entries[0].app, None);
-        assert_eq!(entries[1].app.as_deref(), Some("ollama"));
+        assert_eq!(entries[1].app, Some(App::Ollama));
         assert!(!entries[1].ok);
         assert_eq!(entries[1].text, "Ollama can't run it");
         assert!(entries[0].id > entries[1].id && entries[1].id > entries[2].id);
@@ -335,7 +309,7 @@ mod tests {
                     for _ in 0..25 {
                         record(
                             &home,
-                            happened(Action::Deactivate, Some(App::Hf), Ok("Deactivated")),
+                            happened(ActivityAction::Deactivate, Some(App::Hf), Ok("Deactivated")),
                         );
                     }
                 });
@@ -354,7 +328,7 @@ mod tests {
         let home = Home::new(dir.path());
         // A write cut short: no end of line.
         std::fs::write(path(&home), "not json\n{\"id\":17,\"at\"").unwrap();
-        record(&home, happened(Action::Restore, None, Ok(RESTORED)));
+        record(&home, happened(ActivityAction::Restore, None, Ok(RESTORED)));
         let entries = recent(&home, 10);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].text, RESTORED);
@@ -367,7 +341,7 @@ mod tests {
         for _ in 0..CUT_AT {
             record(
                 &home,
-                happened(Action::Deactivate, Some(App::Hf), Ok("Deactivated")),
+                happened(ActivityAction::Deactivate, Some(App::Hf), Ok("Deactivated")),
             );
         }
         let entries = recent(&home, usize::MAX);
@@ -385,28 +359,26 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::new(dir.path());
         let placed = vec![
-            (
-                App::Bionic,
-                Placed {
-                    cloned: 2,
-                    ..Placed::default()
-                },
-            ),
-            (
-                App::Hf,
-                Placed {
-                    conflicts: vec!["x".into()],
-                    ..Placed::default()
-                },
-            ),
+            PlacedApp {
+                app: App::Bionic,
+                cloned: 2,
+                present: 0,
+                conflicts: vec![],
+            },
+            PlacedApp {
+                app: App::Hf,
+                cloned: 0,
+                present: 0,
+                conflicts: vec!["x".into()],
+            },
         ];
         let skipped = vec![
-            Skipped {
+            NotActivated {
                 app: App::Ollama,
                 reason: "Ollama 0.40.16 can't run this model: no.".into(),
                 temporary: false,
             },
-            Skipped {
+            NotActivated {
                 app: App::Hf,
                 reason: "files in its folder with other content were left alone (1)".into(),
                 temporary: false,
@@ -446,7 +418,7 @@ mod tests {
         let nothing: Result<usize> = Ok(0);
         record_result(
             &home,
-            Action::Deactivate,
+            ActivityAction::Deactivate,
             "org/a",
             Some(App::Bionic),
             &nothing,
@@ -455,7 +427,7 @@ mod tests {
         let failed: Result<usize> = Err(anyhow::anyhow!("removing x: permission denied"));
         record_result(
             &home,
-            Action::Deactivate,
+            ActivityAction::Deactivate,
             "org/a",
             Some(App::Bionic),
             &failed,

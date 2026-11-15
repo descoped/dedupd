@@ -3,8 +3,9 @@
 //! archive disk current.
 
 use crate::Server;
+use dedupd_api::app::App;
+use dedupd_api::daemon::{ScanResult, StoreCheck};
 use dedupd_core::adopt::{self, Action, Options};
-use dedupd_core::place::App;
 use dedupd_core::sources::LocalRepo;
 use dedupd_core::store::Fingerprint;
 use dedupd_core::{archive, maintain};
@@ -17,21 +18,6 @@ use std::time::{Duration, SystemTime};
 /// download in progress is not picked up half-written.
 const SETTLE: Duration = Duration::from_secs(20);
 
-#[derive(Debug, Default, serde::Serialize)]
-pub struct PassReport {
-    /// App files that no longer exist and were dropped from the records.
-    pub forgotten: usize,
-    /// App files brought into the store in this pass.
-    pub adopted: usize,
-    pub adopted_bytes: u64,
-    /// Duplicate app files swapped for clones.
-    pub reclaimed: usize,
-    pub reclaimed_bytes: u64,
-    /// Files copied to the archive disk.
-    pub archived: usize,
-    pub errors: Vec<String>,
-}
-
 /// What the background pass keeps between rounds.
 #[derive(Default)]
 pub(crate) struct PassState {
@@ -40,24 +26,6 @@ pub(crate) struct PassState {
     failed_adoptions: Mutex<Seen>,
     /// Serialises the background pass and requests to run one now.
     lock: tokio::sync::Mutex<()>,
-}
-
-/// The check of the whole store: whether one is running, and what the last
-/// one found.
-#[derive(Debug, Default, Clone, serde::Serialize)]
-pub struct CheckState {
-    pub running: bool,
-    /// Seconds since the epoch.
-    pub started_at: Option<i64>,
-    pub finished_at: Option<i64>,
-    pub checked: u64,
-    pub bytes: u64,
-    /// sha256 of the files whose content no longer matches their name.
-    pub damaged: Vec<String>,
-    /// sha256 of the files that are in neither the store nor the archive.
-    pub missing: Vec<String>,
-    pub only_in_archive: u64,
-    pub error: Option<String>,
 }
 
 /// App files by path, as they looked when they were scanned.
@@ -74,7 +42,7 @@ fn settled(path: &Path, settle: Duration) -> bool {
 }
 
 /// One round of background work.
-pub async fn pass(server: &Arc<Server>) -> anyhow::Result<PassReport> {
+pub async fn pass(server: &Arc<Server>) -> anyhow::Result<ScanResult> {
     pass_with(server, SETTLE, maintain::RECLAIM_MIN_AGE).await
 }
 
@@ -83,14 +51,14 @@ pub async fn pass_with(
     server: &Arc<Server>,
     settle: Duration,
     reclaim_age: Duration,
-) -> anyhow::Result<PassReport> {
+) -> anyhow::Result<ScanResult> {
     let _guard = server.passes.lock.lock().await;
-    let mut report = PassReport::default();
+    let mut report = ScanResult::default();
     let (repos, scanned) = {
         let server = server.clone();
         tokio::task::spawn_blocking(move || new_files(&server, settle)).await??
     };
-    report.forgotten = scanned.forgotten;
+    report.forgotten = scanned.forgotten as u64;
     adopt_new(server, repos, &scanned.files, &mut report).await?;
     if server.config.reclaim != Some(false) {
         reclaim_duplicates(server, reclaim_age, &mut report).await?;
@@ -153,7 +121,7 @@ async fn adopt_new(
     server: &Server,
     repos: Vec<LocalRepo>,
     scanned: &Seen,
-    report: &mut PassReport,
+    report: &mut ScanResult,
 ) -> anyhow::Result<()> {
     if repos.is_empty() {
         return Ok(());
@@ -194,20 +162,20 @@ async fn adopt_new(
 async fn reclaim_duplicates(
     server: &Server,
     reclaim_age: Duration,
-    report: &mut PassReport,
+    report: &mut ScanResult,
 ) -> anyhow::Result<()> {
     let engine = server.engine.clone();
     let done = tokio::task::spawn_blocking(move || {
         maintain::reclaim(&engine.db, &engine.store, reclaim_age, false)
     })
     .await??;
-    report.reclaimed = done.swapped;
+    report.reclaimed = done.swapped as u64;
     report.reclaimed_bytes = done.bytes;
     Ok(())
 }
 
 /// Copy what the archive disk lacks, when it is attached.
-async fn update_archive(server: &Server, report: &mut PassReport) -> anyhow::Result<()> {
+async fn update_archive(server: &Server, report: &mut ScanResult) -> anyhow::Result<()> {
     let engine = server.engine.clone();
     let synced = tokio::task::spawn_blocking(move || {
         archive::sync_if_attached(&engine.db, &engine.store, &mut |_, _| {})
@@ -215,7 +183,7 @@ async fn update_archive(server: &Server, report: &mut PassReport) -> anyhow::Res
     .await?;
     match synced {
         Some(Ok(r)) => {
-            report.archived = r.copied;
+            report.archived = r.copied as u64;
             for (sha, reason) in r.failed {
                 report.errors.push(format!("archive {sha}: {reason}"));
             }
@@ -268,10 +236,10 @@ pub async fn check_store(server: Arc<Server>) {
         if check.running {
             return;
         }
-        *check = CheckState {
+        *check = StoreCheck {
             running: true,
             started_at: Some(epoch()),
-            ..CheckState::default()
+            ..StoreCheck::default()
         };
     }
     server.touch();

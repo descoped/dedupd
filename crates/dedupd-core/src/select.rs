@@ -2,6 +2,7 @@
 
 use crate::hub::TreeEntry;
 use anyhow::{Result, bail};
+use dedupd_api::library::VariantKind;
 use std::collections::BTreeMap;
 
 /// The quantization Hugging Face serves to Ollama when no tag is given.
@@ -89,8 +90,7 @@ pub fn quant_label(group: &str) -> String {
 /// repository, or all the files of any other.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Variant {
-    /// `gguf`, or `files` for a repository that is taken whole.
-    pub kind: String,
+    pub kind: VariantKind,
     /// The quantization, or `all files`.
     pub name: String,
     /// What to write after `org/repo:` to get this variant. `None` for a
@@ -106,7 +106,7 @@ pub struct Variant {
 impl Variant {
     /// A GGUF in several parts, which Ollama cannot use.
     pub fn is_split(&self) -> bool {
-        self.kind == "gguf" && self.weights.len() > 1
+        self.kind == VariantKind::Gguf && self.weights.len() > 1
     }
 }
 
@@ -115,7 +115,7 @@ pub fn variants(entries: &[TreeEntry]) -> Vec<Variant> {
     let ggufs = weights(entries);
     if ggufs.is_empty() {
         return vec![Variant {
-            kind: "files".into(),
+            kind: VariantKind::Files,
             name: "all files".into(),
             quant: None,
             weights: entries
@@ -146,7 +146,7 @@ pub fn variants(entries: &[TreeEntry]) -> Vec<Variant> {
             files.sort_by(|a, b| a.path.cmp(&b.path));
             let label = quant_label(group);
             Variant {
-                kind: "gguf".into(),
+                kind: VariantKind::Gguf,
                 name: label.clone(),
                 quant: Some(label),
                 weights: parts.iter().map(|e| e.path.clone()).collect(),
@@ -375,7 +375,7 @@ mod tests {
         }
 
         let whole = variants(&[entry("config.json"), entry("model.safetensors")]);
-        assert_eq!((whole.len(), whole[0].kind.as_str()), (1, "files"));
+        assert_eq!((whole.len(), whole[0].kind), (1, VariantKind::Files));
         assert_eq!(whole[0].quant, None);
     }
 

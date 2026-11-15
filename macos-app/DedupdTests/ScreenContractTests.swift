@@ -50,7 +50,7 @@ struct ScreenContractTests {
         #expect(model.repo == "org/Repo-GGUF")
         #expect(model.meta.formats == ["gguf"])
         #expect(model.meta.parameters == 134_515_008)
-        #expect(model.appNames == ["bionic", "hf"])
+        #expect(model.appNames == [.bionic, .huggingFace])
         #expect(model.health == .verified)
 
         let detail = try await client.model("org/Repo-GGUF", at: server.address)
@@ -61,7 +61,7 @@ struct ScreenContractTests {
         let variant = try #require(detail.variants.first)
         #expect(variant.kind(formats: model.meta.formats) == .gguf)
         #expect(variant.isStored)
-        #expect(variant.placedIn == ["bionic", "hf"])
+        #expect(variant.placedIn == [.bionic, .huggingFace])
         #expect(detail.infoJson?.contains("\"siblings\"") == true)
     }
 
@@ -107,7 +107,7 @@ struct ScreenContractTests {
         ])
         defer { server.stop() }
 
-        let request = PullRequest(model: "org/Repo-GGUF:model", apps: ["hf"], include: [], offline: true)
+        let request = PullRequest(model: "org/Repo-GGUF:model", apps: [.huggingFace], include: [], offline: true)
         let queued = try await client.enqueue(request, at: server.address)
         #expect(queued == Enqueued(id: 2, existing: false))
         let sent = try #require(server.requests.first)
@@ -117,9 +117,9 @@ struct ScreenContractTests {
         #expect(body["offline"] as? Bool == true)
 
         let detail = try await client.download(2, at: server.address)
-        #expect(detail.job.phase == .done)
-        #expect(detail.job.apps == ["hf"])
-        #expect(detail.files.map(\.stage) == ["stored", "stored"])
+        #expect(detail.job.state == .done)
+        #expect(detail.job.apps == [.huggingFace])
+        #expect(detail.files.map(\.stage) == [.stored, .stored])
         #expect(detail.events.first?.text == "queued")
         #expect(detail.events.last?.text == "done")
 
@@ -187,7 +187,7 @@ struct ScreenContractTests {
         #expect(!check.running)
         #expect(check.finishedAt == nil)
 
-        let removal = try await client.unplace("org/Repo-GGUF", app: "bionic", apply: false, at: server.address)
+        let removal = try await client.unplace("org/Repo-GGUF", app: .bionic, apply: false, at: server.address)
         #expect(removal.remove.count == 2)
         #expect(removal.bytes == 300_008)
         #expect(removal.removed == nil)
@@ -197,7 +197,7 @@ struct ScreenContractTests {
         #expect(body["app"] as? String == "bionic")
 
         let upstream = try await client.checkUpstream("org/Repo-GGUF", at: server.address)
-        #expect(upstream.upstream == "ok")
+        #expect(upstream.upstream == .ok)
         #expect(!upstream.changed)
     }
 
@@ -219,10 +219,10 @@ struct ScreenContractTests {
 
         _ = try await client.updateSettings(
             [
-                SettingChange(key: "max_connections", value: .number(value: 4)),
-                SettingChange(key: "archive", value: .unset),
-                SettingChange(key: "reclaim", value: .flag(value: false)),
-                SettingChange(key: "listen", value: .text(value: "127.0.0.1:9000")),
+                SettingChange(key: .maxConnections, value: .number(value: 4)),
+                SettingChange(key: .archive, value: .unset),
+                SettingChange(key: .reclaim, value: .flag(value: false)),
+                SettingChange(key: .listen, value: .text(value: "127.0.0.1:9000")),
             ],
             at: server.address
         )

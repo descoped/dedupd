@@ -2,12 +2,18 @@
 # Build the Rust control API client for the app and refresh its Swift bindings.
 #
 # The app links crates/dedupd-client as a static library and calls it through
-# the Swift file UniFFI generates from it. Xcode runs this before it compiles
-# the DedupdClient target; `just app-bindings` runs it by hand.
+# the Swift files UniFFI generates from it and from crates/dedupd-api, whose
+# records and enums the client's functions take and return. Both Swift files
+# go into the DedupdClient module, and both C headers into one C module
+# (`dedupd_clientFFI`, which crates/dedupd-api/uniffi.toml names too), so the
+# two files share UniFFI's low-level types. Xcode runs this before it
+# compiles the DedupdClient target; `just app-bindings` runs it by hand.
 #
 # Writes:
 #   macos-app/build/rust/libdedupd_client.a                 (not committed)
+#   macos-app/DedupdClient/Generated/dedupd_api.swift       (committed)
 #   macos-app/DedupdClient/Generated/dedupd_client.swift    (committed)
+#   macos-app/DedupdClient/Generated/FFI/dedupd_apiFFI.h    (committed)
 #   macos-app/DedupdClient/Generated/FFI/dedupd_clientFFI.h (committed)
 #   macos-app/DedupdClient/Generated/FFI/module.modulemap   (committed)
 #
@@ -56,8 +62,13 @@ install_if_changed "$target/release/libdedupd_client.a" "$out/libdedupd_client.a
 cargo run --quiet --release -p dedupd-client --features bindgen --bin uniffi-bindgen -- \
   generate --library "$target/release/libdedupd_client.dylib" --language swift --out-dir "$tmp"
 
-install_if_changed "$tmp/dedupd_client.swift" "$generated/dedupd_client.swift"
-install_if_changed "$tmp/dedupd_clientFFI.h" "$generated/FFI/dedupd_clientFFI.h"
-# clang finds a module map only under this name.
-install_if_changed "$tmp/dedupd_clientFFI.modulemap" "$generated/FFI/module.modulemap"
+for crate in dedupd_api dedupd_client; do
+  install_if_changed "$tmp/$crate.swift" "$generated/$crate.swift"
+  install_if_changed "$tmp/${crate}FFI.h" "$generated/FFI/${crate}FFI.h"
+done
+# One C module with both headers: the client's module map, with the API
+# crate's header listed first. clang finds a module map only under this name.
+sed 's|^\( *\)header "dedupd_clientFFI.h"|\1header "dedupd_apiFFI.h"\
+\1header "dedupd_clientFFI.h"|' "$tmp/dedupd_clientFFI.modulemap" >"$tmp/module.modulemap"
+install_if_changed "$tmp/module.modulemap" "$generated/FFI/module.modulemap"
 rm -rf "$tmp"
