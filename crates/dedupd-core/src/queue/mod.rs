@@ -88,10 +88,21 @@ impl Queue {
         for (id, text) in saved {
             // A job saved by another build of dedupd, in a form this one
             // cannot read: it can be neither shown nor removed, and its
-            // state would hold its model for ever, so it goes.
-            let Ok(mut record) = serde_json::from_str::<JobRecord>(&text) else {
-                engine.db().delete_download(id)?;
-                continue;
+            // state would hold its model for ever, so it goes. The log
+            // says so, with the model when that much can be read.
+            let mut record = match serde_json::from_str::<JobRecord>(&text) {
+                Ok(record) => record,
+                Err(e) => {
+                    let model = serde_json::from_str::<serde_json::Value>(&text)
+                        .ok()
+                        .and_then(|v| v["model"].as_str().map(str::to_string))
+                        .map_or_else(String::new, |m| format!(" ({m:?})"));
+                    eprintln!(
+                        "dedupd: removed download {id}{model}, saved by another build of dedupd: {e}"
+                    );
+                    engine.db().delete_download(id)?;
+                    continue;
+                }
             };
             if record.state.is_working() {
                 record.state = JobState::Queued;

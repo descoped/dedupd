@@ -3772,7 +3772,7 @@ public struct PullResult: Equatable, Hashable {
     public var files: UInt64
     public var bytes: UInt64
     /**
-     * Files that had to be downloaded in this run.
+     * Files that had to be downloaded, over every run of the job.
      */
     public var downloaded: UInt64
     /**
@@ -3797,7 +3797,7 @@ public struct PullResult: Equatable, Hashable {
          * the copy dedupd kept was used.
          */fromArchive: Bool, files: UInt64, bytes: UInt64, 
         /**
-         * Files that had to be downloaded in this run.
+         * Files that had to be downloaded, over every run of the job.
          */downloaded: UInt64, 
         /**
          * Each app the files were put into. One with conflicts did not take

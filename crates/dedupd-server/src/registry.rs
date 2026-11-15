@@ -84,7 +84,7 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
                 matches!(db.archived(PROVIDER_HF, name, "main"), Ok(None))
             };
             if first {
-                keep_model_info(server, name);
+                keep_model_info(server, name, call.header(header::AUTHORIZATION));
             }
         }
         return manifest_response(call, &media_type, body);
@@ -92,7 +92,10 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
 
     // The Hub said no to this client, or the repository is gated or
     // private: its answer stands, as for the Hub API. Otherwise (gone,
-    // down, out of reach) the archived manifest answers.
+    // down, out of reach) the archived manifest answers. Whether the model
+    // is gated or private is read from the Hub's info kept for it; a model
+    // with no info kept counts as restricted, since nothing says this
+    // client may have it.
     let refused = answer
         .as_ref()
         .is_ok_and(|r| matches!(r.status().as_u16(), 401 | 403));
@@ -102,7 +105,7 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
             .archived(PROVIDER_HF, name, "main")
             .ok()
             .flatten()
-            .is_some_and(|(_, snap)| crate::hubapi::restricted(&snap.info_json));
+            .is_none_or(|(_, snap)| crate::hubapi::restricted(&snap.info_json));
         db.repo_id(PROVIDER_HF, name)
             .ok()
             .flatten()
@@ -118,14 +121,19 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
 /// Keep the Hub's model info for a model that came in through the
 /// registry only, in the background. Whether it is gated or private is
 /// read from it, so its kept manifest is not served while the Hub cannot
-/// be asked whether the client may have it.
-fn keep_model_info(server: &Arc<Server>, name: &str) {
+/// be asked whether the client may have it. It is asked with the client's
+/// own `Authorization` when it sent one (the Hub client sends it to the
+/// Hub endpoint only), so a gated model the client may have and the
+/// daemon's token may not is still read; with none, the daemon's token.
+fn keep_model_info(server: &Arc<Server>, name: &str, auth: Option<&str>) {
     if !dedupd_core::names::is_repo_name(name) {
         return;
     }
     let (server, name) = (server.clone(), name.to_string());
+    let auth = auth.map(str::to_string);
     tokio::spawn(async move {
-        if let Ok(snap) = server.engine.hub.snapshot(&name, "main").await {
+        let hub = &server.engine.hub;
+        if let Ok(snap) = hub.snapshot_as(&name, "main", auth.as_deref()).await {
             let _ = server
                 .engine
                 .db()

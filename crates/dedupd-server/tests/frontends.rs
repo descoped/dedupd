@@ -272,21 +272,89 @@ async fn a_gated_model_pulled_only_by_ollama_is_not_served_without_asking() {
     assert_eq!(manifest().await.unwrap().status(), 200);
     // The registry keeps the model's Hub info beside the manifest, which
     // says the model is gated.
+    wait_for_info(&fx).await;
+    upstream_down(&fx).await;
+    assert_ne!(manifest().await.unwrap().status(), 200);
+}
+
+/// Wait until the registry has kept the model's Hub info.
+async fn wait_for_info(fx: &Fixture) {
     for _ in 0..300 {
         if matches!(
             fx.server.engine.db().archived("hf", REPO, "main"),
             Ok(Some(_))
         ) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("the model's Hub info was not kept");
+}
+
+#[tokio::test]
+async fn a_model_whose_hub_info_could_not_be_kept_is_not_served_without_asking() {
+    let fx = fixture().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/models/{REPO}/revision/main")))
+        .respond_with(ResponseTemplate::new(503))
+        .with_priority(1)
+        .mount(&fx.upstream)
+        .await;
+    let manifest = || {
+        fx.http
+            .get(format!("{}/v2/{REPO}/manifests/latest", fx.base))
+            .send()
+    };
+    assert_eq!(manifest().await.unwrap().status(), 200);
+    // The registry has asked the Hub for the info. Every answer it can get
+    // from now on is a failure, so nothing is ever kept, however long the
+    // background read takes.
+    for _ in 0..300 {
+        if upstream_hits(&fx, "/revision/main").await > 0 {
             break;
         }
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    assert!(matches!(
-        fx.server.engine.db().archived("hf", REPO, "main"),
-        Ok(Some(_))
-    ));
+    assert!(upstream_hits(&fx, "/revision/main").await > 0);
+    // Nothing says whether the model is gated: it waits for the Hub.
     upstream_down(&fx).await;
     assert_ne!(manifest().await.unwrap().status(), 200);
+}
+
+#[tokio::test]
+async fn the_hub_info_is_read_with_the_clients_own_token() {
+    let fx = fixture().await;
+    // Only the client's token may read this gated model's info.
+    Mock::given(method("GET"))
+        .and(path(format!("/api/models/{REPO}/revision/main")))
+        .and(wiremock::matchers::header(
+            "authorization",
+            "Bearer client-token",
+        ))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"sha": COMMIT, "id": REPO, "gated": "manual"})),
+        )
+        .with_priority(1)
+        .mount(&fx.upstream)
+        .await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/models/{REPO}/revision/main")))
+        .respond_with(ResponseTemplate::new(401))
+        .with_priority(2)
+        .mount(&fx.upstream)
+        .await;
+    let got = fx
+        .http
+        .get(format!("{}/v2/{REPO}/manifests/latest", fx.base))
+        .header("authorization", "Bearer client-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(got.status(), 200);
+    wait_for_info(&fx).await;
+    let kept = fx.server.engine.db().archived("hf", REPO, "main").unwrap();
+    assert!(kept.unwrap().1.info_json.contains("manual"));
 }
 
 #[tokio::test]
@@ -516,6 +584,9 @@ async fn ollama_pull_sequence_then_offline() {
     assert_eq!(a.bytes().await.unwrap(), fx.template[2000..]);
     assert_eq!(b.bytes().await.unwrap(), fx.template[..2000]);
     wait_for_store(&fx, &template_sha).await;
+    // The model's Hub info is kept beside the manifest: it says the model
+    // is open, so the manifest can be served without asking.
+    wait_for_info(&fx).await;
 
     // Hugging Face goes away: the manifest and the layer are still served.
     remove_upstream(&fx).await;

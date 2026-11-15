@@ -1,0 +1,65 @@
+name: CodeQL
+
+# Security scan of the code, on a release and once a week. Not on pull
+# requests or pushes: it would hold up every change, and the Swift scan alone
+# takes about half an hour. It replaces GitHub's default setup, which is off.
+on:
+  release:
+    types: [published]
+  schedule:
+    - cron: '41 4 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 60
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: rust
+            build-mode: none
+            runs-on: ubuntu-latest
+          - language: swift
+            build-mode: autobuild
+            runs-on: macos-26
+          - language: actions
+            build-mode: none
+            runs-on: ubuntu-latest
+          # The documentation site's code (site/).
+          - language: javascript-typescript
+            build-mode: none
+            runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      # The app's build compiles the Rust client and the daemon as well
+      # (macos-app/scripts/build-rust-client.sh and bundle-daemon.sh, with
+      # these same commands). Built here, before CodeQL starts watching, the
+      # build it watches finds them done.
+      - if: matrix.language == 'swift'
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0  # v2.9.3
+      - if: matrix.language == 'swift'
+        run: |
+          cargo build --release -p dedupd-client
+          cargo build --release -p dedupd-client --features bindgen --bin uniffi-bindgen
+          cargo build --release -p dedupd
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+      - if: matrix.build-mode == 'autobuild'
+        uses: github/codeql-action/autobuild@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066  # v4.39.3
+        with:
+          # The category the default setup used, so its alerts carry on.
+          category: /language:${{ matrix.language }}

@@ -376,7 +376,7 @@ pub struct PullResult {
     pub from_archive: bool,
     pub files: u64,
     pub bytes: u64,
-    /// Files that had to be downloaded in this run.
+    /// Files that had to be downloaded, over every run of the job.
     pub downloaded: u64,
     /// Each app the files were put into. One with conflicts did not take
     /// the model as a whole, and is in `skipped` too.

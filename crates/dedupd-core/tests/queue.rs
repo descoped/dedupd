@@ -602,6 +602,10 @@ async fn trying_again_asks_only_the_apps_that_did_not_take_the_model() {
     assert_eq!(again.state, JobState::NeedsAttention, "{}", history(&again));
     assert_eq!(again.activated(), [App::Bionic]);
     assert_eq!(again.not_activated()[0].app, App::Ollama);
+    // What the first run downloaded is still part of the job.
+    let downloaded = |r: &JobRecord| r.outcome.as_ref().unwrap().downloaded;
+    assert!(downloaded(&first) > 0, "{}", history(&first));
+    assert_eq!(downloaded(&again), downloaded(&first));
     let told = dedupd_core::activity::recent(&s.home, 10)
         .iter()
         .filter(|e| e.app == Some(App::Bionic))

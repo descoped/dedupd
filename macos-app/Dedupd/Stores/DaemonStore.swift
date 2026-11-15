@@ -57,6 +57,8 @@ final class DaemonStore {
     @ObservationIgnored private var follower: Task<Void, Never>?
     @ObservationIgnored private var following = ""
     @ObservationIgnored private var library: UInt64?
+    /// The daemon has answered which apps there are, since following began.
+    @ObservationIgnored private var appsRead = false
 
     init(client: any DaemonClient, settings: AppSettings) {
         self.client = client
@@ -173,6 +175,7 @@ final class DaemonStore {
         connection = .connecting
         status = nil
         apps = []
+        appsRead = false
         downloads = nil
         library = nil
         follower = Task { [weak self, client] in
@@ -228,8 +231,9 @@ final class DaemonStore {
             let changed = library != event.library
             library = event.library
             // The apps could not be read when the daemon came; ask again,
-            // since a download needs them to know where it goes.
-            if apps.isEmpty {
+            // since a download needs them to know where it goes. Once they
+            // have been read, an event does not ask for them.
+            if !appsRead {
                 await refreshApps()
             }
             if !first, changed || finished {
@@ -266,6 +270,7 @@ final class DaemonStore {
             return
         }
         apps = answer
+        appsRead = true
     }
 
     // MARK: - Asking the daemon

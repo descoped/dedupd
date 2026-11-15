@@ -53,11 +53,15 @@ fn without_test_modules(text: &str) -> String {
         out.push_str(&rest[..at]);
         let after = &rest[at + "#[cfg(test)]".len()..];
         let item = after.trim_start();
-        if item.starts_with("mod ")
-            && let Some(open) = item.find('{')
-            && let Some(len) = block_len(&item[open..])
-        {
-            rest = &item[open + len..];
+        // A test module's body, or `mod tests;` for one in a file of its
+        // own: whichever of `{` and `;` comes first says which.
+        let skip = match item.find(['{', ';']) {
+            Some(at) if item.starts_with("mod ") && item[at..].starts_with(';') => Some(at + 1),
+            Some(at) if item.starts_with("mod ") => block_len(&item[at..]).map(|len| at + len),
+            _ => None,
+        };
+        if let Some(skip) = skip {
+            rest = &item[skip..];
         } else {
             // Another test-only item: kept, so its uses count too.
             out.push_str("#[cfg(test)]");
@@ -133,6 +137,13 @@ fn imports_are_read_whole_and_only_test_modules_are_left_out() {
         "{kept}"
     );
     assert!(!kept.contains("crate::y"), "{kept}");
+    // A test module in a file of its own leaves the code after it alone.
+    let code = "#[cfg(test)]\nmod tests;\nuse crate::x;\nfn f() { crate::z::g() }\n";
+    let kept = without_test_modules(code);
+    assert!(
+        kept.contains("crate::x") && kept.contains("crate::z"),
+        "{kept}"
+    );
 }
 
 /// A path from `from` back to itself, when there is one.
