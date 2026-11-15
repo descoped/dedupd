@@ -146,6 +146,16 @@ async fn verify_finds_damage_and_gc_removes_only_what_is_unreferenced() {
         (clean.checked, clean.damaged.len(), clean.missing.len()),
         (2, 0, 0)
     );
+    // Nothing is backed up yet: that is not a file gone missing.
+    let archive = maintain::verify(&fx.db, &fx.store, true, 2).unwrap();
+    assert_eq!(
+        (
+            archive.checked,
+            archive.missing.len(),
+            archive.not_backed_up
+        ),
+        (0, 0, 2)
+    );
 
     // While an app holds the files, nothing is a candidate for removal.
     let plan = maintain::gc_plan(&fx.db, &fx.store, true).unwrap();

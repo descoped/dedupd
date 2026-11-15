@@ -130,6 +130,9 @@ pub struct VerifyReport {
     pub missing: Vec<String>,
     /// Files that are only on the archive disk.
     pub only_in_archive: usize,
+    /// When the archive disk is checked: files that are only on the
+    /// internal disk, because the backup has not copied them yet.
+    pub not_backed_up: usize,
 }
 
 /// Hash every stored file and compare with its name. With `archive`, check
@@ -145,7 +148,6 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
         (true, None) => bail!("no archive folder is configured"),
         (false, _) => store.home().clone(),
     };
-    let other = if archive { None } else { store.archive() };
 
     let next = AtomicUsize::new(0);
     let report = Mutex::new(VerifyReport::default());
@@ -158,7 +160,13 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
                     let path = root.blob_path(&blob.sha256);
                     if !path.is_file() {
                         let mut r = report.lock().expect("lock");
-                        if other.is_some_and(|a| a.blob_path(&blob.sha256).is_file()) {
+                        if archive && store.contains(&blob.sha256) {
+                            r.not_backed_up += 1;
+                        } else if !archive
+                            && store
+                                .archive()
+                                .is_some_and(|a| a.blob_path(&blob.sha256).is_file())
+                        {
                             r.only_in_archive += 1;
                         } else {
                             r.missing.push(blob.sha256.clone());

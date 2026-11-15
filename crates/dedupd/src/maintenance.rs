@@ -43,6 +43,12 @@ pub fn cmd_verify(o: &Opened, archive: bool, jobs: usize) -> Result<()> {
             report.only_in_archive
         );
     }
+    if report.not_backed_up > 0 {
+        println!(
+            "{} files are not on the archive disk yet; `dedupd backup` copies them.",
+            report.not_backed_up
+        );
+    }
     for sha in &report.damaged {
         println!("  DAMAGED {sha}");
     }
