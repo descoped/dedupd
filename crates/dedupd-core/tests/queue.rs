@@ -8,7 +8,7 @@ use common::{COMMIT, PART_SIZE, REPO, Ranged, engine, git_oid, sha256};
 use dedupd_api::app::App;
 use dedupd_api::jobs::{FileStage, JobKind, JobState};
 use dedupd_core::Home;
-use dedupd_core::pull::Engine;
+use dedupd_core::engine::Engine;
 use dedupd_core::queue::Queue;
 use dedupd_core::queue::record::JobRecord;
 use serde_json::json;

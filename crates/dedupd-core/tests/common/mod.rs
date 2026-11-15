@@ -4,11 +4,11 @@
 
 use dedupd_core::Home;
 use dedupd_core::db::Db;
+use dedupd_core::engine::Engine;
 use dedupd_core::fetch::Fetcher;
 use dedupd_core::governor::Governor;
 use dedupd_core::hub::HubClient;
 use dedupd_core::place::AppDirs;
-use dedupd_core::pull::Engine;
 use dedupd_core::store::Store;
 use serde_json::json;
 use sha2::{Digest, Sha256};

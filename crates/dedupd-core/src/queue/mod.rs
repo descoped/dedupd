@@ -6,10 +6,11 @@
 //! jobs that were working are queued again and continue from there.
 
 use crate::db::PROVIDER_HF;
+use crate::engine::Engine;
 use crate::fetch::{Expect, NoSpace, Unavailable, Wait, WrongContent};
 use crate::hub::{HubError, TreeEntry};
 use crate::now;
-use crate::pull::{self, Engine, PullRequest, PullWatch};
+use crate::pull::{self, PullRequest, PullWatch};
 use anyhow::{Result, bail};
 use dedupd_api::app::App;
 use dedupd_api::jobs::{

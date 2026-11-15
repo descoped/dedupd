@@ -18,7 +18,7 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::Response;
 use dedupd_core::Home;
 use dedupd_core::config::Config;
-use dedupd_core::pull::Engine;
+use dedupd_core::engine::Engine;
 use dedupd_core::queue::Queue;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};

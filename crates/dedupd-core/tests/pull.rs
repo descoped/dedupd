@@ -335,7 +335,7 @@ async fn a_model_is_archived_and_restored() {
         .await
         .unwrap();
     let installed = Installed::detect(&e.dirs);
-    let archived_at = |e: &pull::Engine| {
+    let archived_at = |e: &dedupd_core::engine::Engine| {
         library::model(&e.db(), &e.store, REPO, &installed)
             .unwrap()
             .unwrap()

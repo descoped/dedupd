@@ -363,7 +363,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
             // database, so it is a repository's name or nothing: no part of
             // it can climb to another path on the provider.
             let repo = decode_path(&format!("{org}/{name}"));
-            if !dedupd_core::pull::is_repo_name(&repo) {
+            if !dedupd_core::names::is_repo_name(&repo) {
                 return plain(StatusCode::BAD_REQUEST, "that is not a model's name");
             }
             model(server, &repo).await
