@@ -5,7 +5,7 @@ use crate::{Call, Server, files, plain};
 use axum::body::Body;
 use axum::http::{StatusCode, header};
 use axum::response::Response;
-use dedupd_core::adopt::PROVIDER_HF;
+use dedupd_core::db::PROVIDER_HF;
 use dedupd_core::ollama::{MANIFEST_TYPE, Manifest};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;

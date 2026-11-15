@@ -3,8 +3,7 @@
 //! Each file is hashed, checked against what the provider says the repository
 //! contains, and cloned into the store. The app's own files are only read.
 
-use crate::db::{Db, NewPlacement, ORIGIN_ADOPTED, lock};
-pub use crate::db::{PROVIDER_HF, PROVIDER_OLLAMA};
+use crate::db::{Db, NewPlacement, ORIGIN_ADOPTED, PROVIDER_HF, lock};
 use crate::hash::{FileHashes, hash_file};
 use crate::hub::{HubClient, HubError, Snapshot, TreeEntry};
 use crate::sources::{LocalFile, LocalRepo};

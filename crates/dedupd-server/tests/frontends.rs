@@ -519,6 +519,16 @@ async fn control_api_is_closed_to_web_pages() {
         .await
         .unwrap();
     assert_eq!(blocked.status(), 403);
+    // Discover is behind the same guard.
+    let search = format!("{}/dedupd/v1/hub/search?q=repo", fx.base);
+    let blocked = fx
+        .http
+        .get(&search)
+        .header("origin", "https://evil.example")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(blocked.status(), 403);
 }
 
 #[tokio::test]
@@ -1063,7 +1073,7 @@ async fn the_client_reads_everything_the_daemon_sends() {
         events: Mutex<Vec<DaemonEvent>>,
         connections: Mutex<Vec<bool>>,
     }
-    impl client::EventListener for Seen {
+    impl client::events::EventListener for Seen {
         fn on_event(&self, event: DaemonEvent) {
             self.events.lock().unwrap().push(event);
         }
@@ -1076,7 +1086,7 @@ async fn the_client_reads_everything_the_daemon_sends() {
     mount_search(&fx).await;
     let address = fx.base.trim_start_matches("http://").to_string();
     let seen = Arc::new(Seen::default());
-    let subscription = client::subscribe(address.clone(), seen.clone());
+    let subscription = client::events::subscribe(address.clone(), seen.clone());
 
     let a = address.clone();
     let done = tokio::task::spawn_blocking(move || -> Result<(), client::ClientError> {
@@ -1243,7 +1253,7 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
 
     #[derive(Default)]
     struct Seen(Mutex<Vec<DaemonEvent>>);
-    impl client::EventListener for Seen {
+    impl client::events::EventListener for Seen {
         fn on_event(&self, event: DaemonEvent) {
             self.0.lock().unwrap().push(event);
         }
@@ -1266,7 +1276,7 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
     download(&fx, json!({"model": REPO, "apps": ["bionic", "hf"]})).await;
     let address = fx.base.trim_start_matches("http://").to_string();
     let seen = Arc::new(Seen::default());
-    let subscription = client::subscribe(address.clone(), seen.clone());
+    let subscription = client::events::subscribe(address.clone(), seen.clone());
     let sha = sha256(&fx.weights);
     let bionic = fx.server.engine.dirs.bionic.join(REPO).join("model.gguf");
     assert!(bionic.is_file());

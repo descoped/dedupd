@@ -19,7 +19,7 @@ pub async fn cmd_serve(o: &Opened, listen: Option<String>) -> Result<()> {
         o.home.store_dir().display(),
         o.engine.fetcher.endpoint()
     );
-    if o.config.set_env == Some(true) {
+    if o.config.set_env() {
         // Apps started from the Dock or Finder take their environment
         // from the login session, not from a shell profile.
         match launchctl(&["setenv", "HF_ENDPOINT", &format!("http://{addr}")]) {

@@ -2,12 +2,13 @@
 //! registry API on one port, answered from the store and the archive, with
 //! everything else passed through to Hugging Face.
 
+mod answer;
 mod control;
 pub mod daemon;
 mod discover;
 mod files;
 mod hubapi;
-pub mod moves;
+mod moves;
 mod proxy;
 mod registry;
 
@@ -18,7 +19,7 @@ use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::Response;
 use dedupd_core::Home;
 use dedupd_core::config::Config;
-use dedupd_core::pull::Engine;
+use dedupd_core::engine::Engine;
 use dedupd_core::queue::Queue;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -191,7 +192,9 @@ impl Call {
 
     /// The first value given for `name` in the query string, decoded.
     pub fn param(&self, name: &str) -> Option<String> {
-        self.query_params(name).next().map(percent_decode)
+        self.query_params(name)
+            .next()
+            .map(dedupd_api::url::decode_query)
     }
 
     /// The values given for `name` in the query string, undecoded.
@@ -208,40 +211,6 @@ impl Call {
             body.into()
         }
     }
-}
-
-/// Undo the percent-encoding of a query value; `+` is a space.
-pub(crate) fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let hex = |i: usize| bytes.get(i).and_then(|b| (*b as char).to_digit(16));
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match (bytes[i], hex(i + 1), hex(i + 2)) {
-            (b'%', Some(high), Some(low)) => {
-                out.push((high * 16 + low) as u8);
-                i += 2;
-            }
-            (b'+', _, _) => out.push(b' '),
-            (b, _, _) => out.push(b),
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-/// Percent-encode a value for a query string.
-pub(crate) fn percent_encode(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for b in text.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
 }
 
 pub(crate) fn plain(status: StatusCode, text: impl Into<String>) -> Response {
@@ -282,6 +251,12 @@ async fn handle(State(server): State<Arc<Server>>, req: Request) -> Response {
 
     let segments: Vec<&str> = call.path.split('/').filter(|s| !s.is_empty()).collect();
     match segments.as_slice() {
+        // A web page must not be able to drive the daemon: browsers send
+        // Origin on cross-site requests, and no real client of this API does.
+        ["dedupd", "v1", ..] if call.header(header::ORIGIN).is_some() => plain(
+            StatusCode::FORBIDDEN,
+            "the control API is not for web pages",
+        ),
         ["dedupd", "v1", "hub", rest @ ..] => discover::handle(&server, &call, rest).await,
         ["dedupd", "v1", rest @ ..] => control::handle(&server, &call, rest).await,
         ["dedupd", "blob", digest] => registry::blob_direct(&server, &call, digest).await,

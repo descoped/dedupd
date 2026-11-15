@@ -20,12 +20,53 @@ impl Home {
         &self.root
     }
 
+    /// For a home on another disk, such as the archive: the disk is
+    /// attached (the folder, or the folder it goes in, is there).
+    pub fn attached(&self) -> bool {
+        self.root.is_dir() || self.root.parent().is_some_and(Path::is_dir)
+    }
+
     pub fn db_path(&self) -> PathBuf {
         self.root.join("dedupd.sqlite")
     }
 
     pub fn store_dir(&self) -> PathBuf {
         self.root.join("store")
+    }
+
+    /// The settings the owner wrote.
+    pub fn config_path(&self) -> PathBuf {
+        self.root.join("config.toml")
+    }
+
+    /// The daemon's log, which launchd writes.
+    pub fn log_path(&self) -> PathBuf {
+        self.root.join("daemon.log")
+    }
+
+    /// The copy of the command the launch agent starts.
+    pub fn program_path(&self) -> PathBuf {
+        self.root.join("bin").join("dedupd")
+    }
+
+    /// When the whole store was last checked, and what was found.
+    pub fn last_verify_path(&self) -> PathBuf {
+        self.root.join("last-verify.txt")
+    }
+
+    /// What happened to the models, one line each.
+    pub fn activity_path(&self) -> PathBuf {
+        self.root.join("activity.jsonl")
+    }
+
+    /// Held while an entry is added to the activity file.
+    pub fn activity_lock_path(&self) -> PathBuf {
+        self.root.join("activity.lock")
+    }
+
+    /// What an app said when it was asked about a model and said no.
+    pub fn refusals_path(&self) -> PathBuf {
+        self.root.join("refusals.json")
     }
 
     pub fn tmp_dir(&self) -> PathBuf {

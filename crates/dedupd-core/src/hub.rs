@@ -312,7 +312,7 @@ impl HubClient {
         let commit = info
             .get("sha")
             .and_then(|v| v.as_str())
-            .filter(|s| crate::db::is_commit(s))
+            .filter(|s| is_commit(s))
             .ok_or_else(|| HubError::Malformed("model info has no commit sha".into()))?
             .to_string();
 
@@ -378,6 +378,17 @@ pub fn next_link(header: &str) -> Option<String> {
         let url = target.trim().strip_prefix('<')?.strip_suffix('>')?;
         is_next.then(|| url.to_string())
     })
+}
+
+/// True for a full 40-character git commit id.
+pub fn is_commit(s: &str) -> bool {
+    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// The branch or tag name in `revision`; `None` when it is a commit id,
+/// which is not a ref.
+pub fn ref_name(revision: &str) -> Option<&str> {
+    (!is_commit(revision)).then_some(revision)
 }
 
 #[cfg(test)]

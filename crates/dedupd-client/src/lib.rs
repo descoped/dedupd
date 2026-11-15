@@ -4,9 +4,7 @@
 //! line uses when the daemon is running. It holds no state and never touches
 //! the store: the daemon owns everything.
 
-mod events;
-
-pub use events::{EventListener, EventSubscription, subscribe};
+pub mod events;
 
 use dedupd_api::activity::{ActivityEntry, ActivityList};
 use dedupd_api::app::{App, AppInfo, AppList};
@@ -24,6 +22,7 @@ use dedupd_api::library::{
 use dedupd_api::moves::{
     ArchivePlan, GcBody, GcPlan, ModelMove, MoveBody, RestorePlan, UnplaceBody, UnplacePlan,
 };
+use dedupd_api::url::{encode_component, encode_path};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::collections::BTreeMap;
@@ -100,25 +99,6 @@ fn parse<T: DeserializeOwned>(text: &str) -> Result<T, ClientError> {
 
 pub(crate) fn url(address: &str, path: &str) -> String {
     format!("http://{address}/dedupd/v1/{path}")
-}
-
-/// Percent-encode a value for a query string.
-fn encode(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for b in text.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
-                out.push(b as char)
-            }
-            _ => out.push_str(&format!("%{b:02X}")),
-        }
-    }
-    out
-}
-
-/// A repository name as part of a path: encoded, with its `/` kept.
-fn encode_repo(repo: &str) -> String {
-    repo.split('/').map(encode).collect::<Vec<_>>().join("/")
 }
 
 fn get<T: DeserializeOwned>(
@@ -208,7 +188,7 @@ pub fn apps(address: String) -> Result<Vec<AppInfo>, ClientError> {
 /// where each app has them, and how it can be used.
 #[uniffi::export]
 pub fn model(address: String, repo: String) -> Result<ModelDetail, ClientError> {
-    get(&address, &format!("models/{}", encode_repo(&repo)), QUICK)
+    get(&address, &format!("models/{}", encode_path(&repo)), QUICK)
 }
 
 /// The store, the archive and each app's folder, with what is in them.
@@ -232,7 +212,7 @@ pub fn search(address: String, query: SearchQuery) -> Result<SearchPage, ClientE
         ("cursor", query.cursor.as_deref().unwrap_or("")),
     ] {
         if !value.is_empty() {
-            parts.push(format!("{name}={}", encode(value)));
+            parts.push(format!("{name}={}", encode_component(value)));
         }
     }
     get(
@@ -248,7 +228,7 @@ pub fn search(address: String, query: SearchQuery) -> Result<SearchPage, ClientE
 pub fn hub_model(address: String, repo: String) -> Result<HubModel, ClientError> {
     get(
         &address,
-        &format!("hub/models/{}", encode_repo(&repo)),
+        &format!("hub/models/{}", encode_path(&repo)),
         PATIENT,
     )
 }

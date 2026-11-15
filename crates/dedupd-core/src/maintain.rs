@@ -137,7 +137,7 @@ pub struct VerifyReport {
 pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Result<VerifyReport> {
     let blobs = lock(db).all_blobs()?;
     let root = match (archive, store.archive()) {
-        (true, Some(a)) if !crate::archive::attached(a) => bail!(
+        (true, Some(a)) if !a.attached() => bail!(
             "the archive disk is not attached ({} not found)",
             a.root().display()
         ),
@@ -265,9 +265,7 @@ pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
 pub fn forget(db: &Mutex<Db>, repo: &str) -> Result<()> {
     prune_placements(db)?;
     let mut db = lock(db);
-    let Some(id) = db.repo_id(PROVIDER_HF, repo)? else {
-        bail!("{repo} is not in the library");
-    };
+    let id = db.known_repo(repo)?;
     let in_use: Vec<String> = db
         .placements()?
         .into_iter()
@@ -344,7 +342,7 @@ pub fn unplace_plan(
         .into_iter()
         .filter(|p| p.repo == repo && p.app == app.as_str())
         .collect();
-    let archive = store.archive().filter(|a| crate::archive::attached(a));
+    let archive = store.archive().filter(|a| a.attached());
     // Ollama keeps one file per layer, and models share layers.
     let (manifests, used_elsewhere) = match app {
         App::Ollama => ollama_use(dirs, repo),
@@ -559,4 +557,27 @@ fn is_empty_tree(dir: &Path) -> bool {
         .into_iter()
         .flatten()
         .any(|e| !e.file_type().is_dir())
+}
+
+/// Deactivate as the owner asked: the plan for `repo` in `app`, cut to the
+/// files the owner agreed to when `agreed` names them, and carried out when
+/// `apply`. Without `apply` only the plan is answered.
+pub fn unplace(
+    db: &Mutex<Db>,
+    store: &Store,
+    dirs: &AppDirs,
+    repo: &str,
+    app: App,
+    agreed: Option<&[String]>,
+    apply: bool,
+) -> Result<dedupd_api::moves::UnplacePlan> {
+    let mut plan = unplace_plan(db, store, dirs, repo, app)?;
+    if let Some(agreed) = agreed {
+        plan = plan.only(agreed);
+    }
+    let removed = match apply {
+        true => Some(deactivate(db, store, dirs, &plan)?),
+        false => None,
+    };
+    Ok(plan.answer(removed))
 }

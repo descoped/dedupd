@@ -4,7 +4,6 @@
 //! stream says how far it is.
 
 use crate::Server;
-use dedupd_api::jobs::JobState;
 use dedupd_api::moves::{ModelMove, MoveKind};
 use dedupd_core::archive;
 use std::sync::Arc;
@@ -33,22 +32,15 @@ pub(crate) async fn start(
     kind: MoveKind,
     repo: String,
 ) -> Result<(), String> {
-    let busy = |s: JobState| {
-        !matches!(
-            s,
-            JobState::Done | JobState::Cancelled | JobState::NeedsAttention | JobState::Paused
-        )
-    };
+    // The same rule archive_apply and restore keep, asked first so the
+    // owner hears it at once rather than as a failed move.
     if server
-        .queue
-        .snapshot()
-        .jobs
-        .iter()
-        .any(|job| job.repo == repo && busy(job.state))
+        .engine
+        .db()
+        .has_unfinished_job(&repo)
+        .map_err(|e| format!("{e:#}"))?
     {
-        return Err(format!(
-            "{repo} is being downloaded; wait for that to finish or cancel it first"
-        ));
+        return Err(archive::busy(&repo));
     }
     let total = {
         let (server, repo) = (server.clone(), repo.clone());

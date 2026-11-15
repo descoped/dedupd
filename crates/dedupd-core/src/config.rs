@@ -40,9 +40,15 @@ pub struct Config {
     pub speed_limit: Option<u64>,
 }
 
+/// Days between full checks of the store unless `verify_days` says otherwise.
+pub const DEFAULT_VERIFY_DAYS: u64 = 7;
+/// Seconds between scans of the app folders unless `scan_interval` says
+/// otherwise.
+pub const DEFAULT_SCAN_INTERVAL: u64 = 300;
+
 impl Config {
     pub fn path(home: &Home) -> PathBuf {
-        home.root().join("config.toml")
+        home.config_path()
     }
 
     /// Read the config file. A missing file is an empty config.
@@ -101,6 +107,33 @@ impl Config {
 
     pub fn listen(&self) -> &str {
         self.listen.as_deref().unwrap_or(DEFAULT_LISTEN)
+    }
+
+    pub fn hf_endpoint(&self) -> &str {
+        self.hf_endpoint
+            .as_deref()
+            .unwrap_or(crate::hub::DEFAULT_ENDPOINT)
+    }
+
+    /// Duplicate app files are replaced with clones unless turned off.
+    pub fn reclaim(&self) -> bool {
+        self.reclaim != Some(false)
+    }
+
+    /// `HF_ENDPOINT` is set for the login session only when asked for.
+    pub fn set_env(&self) -> bool {
+        self.set_env == Some(true)
+    }
+
+    /// Days between full checks of the store; 0 turns them off.
+    pub fn verify_days(&self) -> u64 {
+        self.verify_days.unwrap_or(DEFAULT_VERIFY_DAYS)
+    }
+
+    /// Seconds between scans of the app folders when nothing was seen to
+    /// change.
+    pub fn scan_interval(&self) -> u64 {
+        self.scan_interval.unwrap_or(DEFAULT_SCAN_INTERVAL)
     }
 
     pub fn max_connections(&self) -> usize {

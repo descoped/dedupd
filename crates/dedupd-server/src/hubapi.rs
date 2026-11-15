@@ -9,9 +9,10 @@ use crate::{Call, Server, files, json, plain};
 use axum::body::Body;
 use axum::http::{StatusCode, header};
 use axum::response::Response;
-use dedupd_core::adopt::PROVIDER_HF;
-use dedupd_core::db::is_commit;
+use dedupd_api::url::{decode_path, decode_query};
+use dedupd_core::db::PROVIDER_HF;
 use dedupd_core::fetch::Unwatched;
+use dedupd_core::hub::is_commit;
 use dedupd_core::hub::{HubError, Snapshot, TreeEntry};
 use serde_json::Value;
 use std::sync::Arc;
@@ -241,36 +242,8 @@ fn requested_paths(call: &Call) -> Vec<String> {
     }
     body.split('&')
         .filter_map(|pair| pair.strip_prefix("paths="))
-        .map(form_decode)
+        .map(decode_query)
         .collect()
-}
-
-/// Decode a form value, where `+` is a space and `%2B` a plus sign.
-fn form_decode(value: &str) -> String {
-    percent_decode(&value.replace('+', " "))
-}
-
-/// Decode `%XX`. A `+` stays a plus sign, as in a URL path.
-fn percent_decode(s: &str) -> String {
-    let bytes = s.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        match bytes[i] {
-            b'%' if s.is_char_boundary(i + 1) && s.get(i + 1..i + 3).is_some() => {
-                match u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                    Ok(b) => {
-                        out.push(b);
-                        i += 2;
-                    }
-                    Err(_) => out.push(b'%'),
-                }
-            }
-            b => out.push(b),
-        }
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// `tree` (with `tree_path`) and `paths-info` (without). The Xet hashes are
@@ -432,7 +405,7 @@ pub(crate) async fn resolve(
     rev: &str,
     path: &str,
 ) -> Response {
-    let path = percent_decode(path);
+    let path = decode_path(path);
     let auth = call.header(header::AUTHORIZATION);
     let Some(found) = server.revision(repo, rev, auth).await else {
         // Not something dedupd knows: relay upstream's own answer, error
@@ -506,9 +479,9 @@ mod tests {
 
     #[test]
     fn decodes_form_values() {
-        assert_eq!(form_decode("a%2Fb+c.gguf"), "a/b c.gguf");
-        assert_eq!(form_decode("100%"), "100%");
+        assert_eq!(decode_query("a%2Fb+c.gguf"), "a/b c.gguf");
+        assert_eq!(decode_query("100%"), "100%");
         // In a URL path a plus sign is part of the file name.
-        assert_eq!(percent_decode("a%20b+c.gguf"), "a b+c.gguf");
+        assert_eq!(decode_path("a%20b+c.gguf"), "a b+c.gguf");
     }
 }

@@ -8,7 +8,7 @@
 //! (`archive_plan`, `archive_apply`); `restore` brings them back.
 
 use crate::activity;
-use crate::db::{BlobRow, Db, PROVIDER_HF, lock};
+use crate::db::{BlobRow, Db, lock};
 use crate::hash::{copy_hashing, hash_file};
 use crate::maintain::{self, UnplacePlan};
 use crate::paths::Home;
@@ -35,11 +35,6 @@ pub struct SyncReport {
     pub failed: Vec<(String, String)>,
 }
 
-/// True when the disk the archive lives on is attached.
-pub fn attached(archive: &Home) -> bool {
-    archive.root().is_dir() || archive.root().parent().is_some_and(|p| p.is_dir())
-}
-
 /// `sync` to the store's own archive folder, when one is configured and its
 /// disk is attached; `None` otherwise.
 pub fn sync_if_attached(
@@ -47,7 +42,7 @@ pub fn sync_if_attached(
     store: &Store,
     on_copy: &mut dyn FnMut(&str, u64),
 ) -> Option<Result<SyncReport>> {
-    let archive = store.archive().filter(|a| attached(a))?;
+    let archive = store.archive().filter(|a| a.attached())?;
     Some(sync(db, store, archive, on_copy))
 }
 
@@ -60,7 +55,7 @@ pub fn sync(
     archive: &Home,
     on_copy: &mut dyn FnMut(&str, u64),
 ) -> Result<SyncReport> {
-    if !attached(archive) {
+    if !archive.attached() {
         bail!(
             "the archive disk is not attached ({} not found)",
             archive.root().display()
@@ -168,20 +163,13 @@ fn attached_archive(store: &Store) -> Result<&Home> {
     let Some(archive) = store.archive() else {
         bail!("no archive folder is set (`archive` in config.toml)");
     };
-    if !attached(archive) {
+    if !archive.attached() {
         bail!(
             "the archive disk is not attached ({} not found)",
             archive.root().display()
         );
     }
     Ok(archive)
-}
-
-fn repo_id(db: &Db, repo: &str) -> Result<i64> {
-    match db.repo_id(PROVIDER_HF, repo)? {
-        Some(id) => Ok(id),
-        None => bail!("{repo} is not in the library"),
-    }
 }
 
 /// What archiving one model would do. Nothing happens until `archive_apply`.
@@ -239,7 +227,7 @@ pub fn archive_plan(
 ) -> Result<ArchivePlan> {
     let archive = attached_archive(store)?;
     maintain::prune_placements(db)?;
-    let id = repo_id(&lock(db), repo)?;
+    let id = lock(db).known_repo(repo)?;
     let mut plan = ArchivePlan {
         repo: repo.to_string(),
         archive: archive.root().to_string_lossy().into_owned(),
@@ -342,6 +330,15 @@ fn secure(store: &Store, archive: &Home, blob: &BlobRow) -> Result<bool> {
 /// model out of every app, remove those files from the store and mark the
 /// model as archived. Nothing is removed unless every copy is good.
 /// `on_file` is told the size of each file as its copy has been checked.
+/// Why a model with a job in the download queue that is not finished is
+/// not archived or restored: the job could fetch or place its files again.
+pub fn busy(repo: &str) -> String {
+    format!(
+        "{repo} has a download or activation that is not finished (also when it is paused or \
+         needs attention); let it finish or cancel it first"
+    )
+}
+
 pub fn archive_apply(
     db: &Mutex<Db>,
     store: &Store,
@@ -368,9 +365,12 @@ fn archive_quietly(
     repo: &str,
     on_file: &mut dyn FnMut(u64),
 ) -> Result<ArchiveReport> {
+    if lock(db).has_unfinished_job(repo)? {
+        bail!("{}", busy(repo));
+    }
     let plan = archive_plan(db, store, dirs, repo)?;
     let archive = attached_archive(store)?;
-    let id = repo_id(&lock(db), repo)?;
+    let id = lock(db).known_repo(repo)?;
     let mut report = ArchiveReport {
         repo: plan.repo.clone(),
         ..Default::default()
@@ -454,7 +454,7 @@ pub fn restore_plan(db: &Mutex<Db>, store: &Store, repo: &str) -> Result<Restore
     let archive = attached_archive(store)?;
     let blobs = {
         let db = lock(db);
-        db.repo_blobs(repo_id(&db, repo)?)?
+        db.repo_blobs(db.known_repo(repo)?)?
     };
     let mut plan = RestorePlan {
         repo: repo.to_string(),
@@ -527,6 +527,9 @@ fn restore_quietly(
     repo: &str,
     on_file: &mut dyn FnMut(u64),
 ) -> Result<RestoreReport> {
+    if lock(db).has_unfinished_job(repo)? {
+        bail!("{}", busy(repo));
+    }
     let plan = restore_plan(db, store, repo)?;
     if plan.bytes > plan.free {
         bail!(
@@ -549,6 +552,6 @@ fn restore_quietly(
         on_file(blob.size);
     }
     let db = lock(db);
-    db.set_archived(repo_id(&db, repo)?, None)?;
+    db.set_archived(db.known_repo(repo)?, None)?;
     Ok(report)
 }

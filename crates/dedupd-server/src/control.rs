@@ -3,27 +3,27 @@
 //! Everything the app shows comes from here, and everything it does goes
 //! through here: the daemon owns the store, the database and the downloads.
 
-use crate::{Call, Server, daemon, json, moves, percent_decode, plain};
+use crate::answer::{Refused, answer, blocking, body, error, failure, internal, ok};
+use crate::{Call, Server, daemon, moves, plain};
 use axum::body::{Body, Bytes};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
 use dedupd_api::activity::ActivityList;
-use dedupd_api::app::{App, AppList};
+use dedupd_api::app::AppList;
 use dedupd_api::daemon::{
-    DaemonEvent, DaemonInfo, DaemonSettings, DaemonStatus, Failure, LogTail, Setting, Started,
+    DaemonEvent, DaemonInfo, DaemonSettings, DaemonStatus, LogTail, Setting, Started,
 };
 use dedupd_api::jobs::{Cleared, Enqueued, JobAction, JobRef, JobState, PullBody};
-use dedupd_api::library::{ModelList, RepoBody, UpstreamCheck, UpstreamState};
+use dedupd_api::library::{ModelList, RepoBody};
 use dedupd_api::moves::{GcBody, MoveBody, MoveKind, UnplaceBody};
+use dedupd_api::url::decode_path;
 use dedupd_core::config::Config;
-use dedupd_core::db::PROVIDER_HF;
-use dedupd_core::fetch::encode_path;
-use dedupd_core::hub::{HubClient, HubError};
+use dedupd_core::db::NotInLibrary;
+use dedupd_core::hub::HubClient;
 use dedupd_core::profile::{self, Installed};
-use dedupd_core::{activity, archive, library, maintain, status};
-use serde::de::DeserializeOwned;
+use dedupd_core::{Home, activity, archive, library, maintain, status};
 use serde_json::Value;
-use std::collections::{BTreeMap, HashSet};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -35,56 +35,6 @@ const HEARTBEAT: Duration = Duration::from_secs(15);
 const SETTLE: Duration = Duration::from_millis(350);
 /// The most of the log that is read for its last lines.
 const LOG_TAIL: u64 = 512 * 1024;
-
-pub(crate) fn error(status: StatusCode, e: impl std::fmt::Display) -> Response {
-    let failure = Failure {
-        error: e.to_string(),
-    };
-    json(status, &serde_json::to_value(failure).unwrap_or_default())
-}
-
-fn internal(e: impl std::fmt::Display) -> Response {
-    error(StatusCode::INTERNAL_SERVER_ERROR, e)
-}
-
-pub(crate) fn ok(value: impl serde::Serialize) -> Response {
-    json(
-        StatusCode::OK,
-        &serde_json::to_value(value).unwrap_or_default(),
-    )
-}
-
-fn answer<T: serde::Serialize>(result: anyhow::Result<T>) -> Response {
-    match result {
-        Ok(value) => ok(value),
-        Err(e) => internal(format!("{e:#}")),
-    }
-}
-
-/// What a handler answers instead of doing its work.
-type Refused = Box<Response>;
-
-fn body<T: DeserializeOwned>(call: &Call) -> Result<T, Refused> {
-    serde_json::from_slice(&call.body).map_err(|e| Box::new(error(StatusCode::BAD_REQUEST, e)))
-}
-
-/// What the provider's failure means for someone who asked the daemon.
-pub(crate) fn hub_error(e: HubError) -> Response {
-    let status = match &e {
-        HubError::NotAvailable { .. } => StatusCode::NOT_FOUND,
-        HubError::Busy { .. } => StatusCode::TOO_MANY_REQUESTS,
-        _ => StatusCode::BAD_GATEWAY,
-    };
-    error(status, e)
-}
-
-/// Run work that reads files or waits for the database off the threads that
-/// answer requests.
-async fn blocking<T: Send + 'static>(
-    work: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
-) -> anyhow::Result<T> {
-    tokio::task::spawn_blocking(work).await?
-}
 
 /// The launchd label this process runs under; `None` when it was started
 /// by hand.
@@ -108,7 +58,7 @@ fn status_answer(server: &Server) -> anyhow::Result<DaemonStatus> {
         home: path_text(server.home.root()),
         endpoint: server.engine.fetcher.endpoint().to_string(),
         archive_path: archive_home.as_ref().map(|a| path_text(a.root())),
-        archive_attached: archive_home.as_ref().is_some_and(archive::attached),
+        archive_attached: archive_home.as_ref().is_some_and(Home::attached),
         store_files: s.store_files,
         store_bytes: s.store_bytes,
         shared_bytes: s.shared_bytes,
@@ -189,30 +139,15 @@ fn events(server: &Arc<Server>) -> Response {
 
 /// Queue a download, or name the one already queued for the same thing.
 fn enqueue(server: &Arc<Server>, body: PullBody) -> Result<(i64, bool), Refused> {
-    let wanted: HashSet<App> = body.apps.iter().copied().collect();
-    let same = server.queue.snapshot().jobs.into_iter().find(|job| {
-        !job.state.is_finished()
-            && job.model == body.model.trim()
-            && job.include == body.include
-            && job.offline == body.offline
-            && job.apps.iter().copied().collect::<HashSet<_>>() == wanted
-    });
-    if let Some(job) = same {
-        if matches!(job.state, JobState::Paused | JobState::NeedsAttention) {
-            let _ = server.queue.resume(job.id);
-        }
-        return Ok((job.id, true));
-    }
     server
         .queue
-        .add(
+        .add_or_find(
             &body.model,
             body.include,
             body.apps,
             body.offline,
             body.kind,
         )
-        .map(|id| (id, false))
         .map_err(|e| Box::new(error(StatusCode::BAD_REQUEST, e)))
 }
 
@@ -232,75 +167,28 @@ async fn download_action(server: &Arc<Server>, id: &str, action: &str) -> Respon
 /// Ask the provider whether it still has the repository and where `main`
 /// is now. Nothing is downloaded.
 async fn check_upstream(server: &Arc<Server>, repo: &str) -> Response {
-    let engine = &server.engine;
-    let known = {
-        let db = engine.db();
-        match db.repo_id(PROVIDER_HF, repo) {
-            Ok(Some(id)) => db.ref_commit(id, "main").ok().flatten(),
-            Ok(None) => {
-                return error(
-                    StatusCode::NOT_FOUND,
-                    format!("{repo} is not in the library"),
-                );
-            }
-            Err(e) => return internal(format!("{e:#}")),
+    match library::check_upstream(&server.engine, repo).await {
+        Ok(found) => {
+            server.touch();
+            ok(found)
         }
-    };
-    let path = format!("/api/models/{}/revision/main", encode_path(repo));
-    let answer = match engine.hub.api(&path, repo).await {
-        Ok(resp) => resp.json::<Value>().await.map_err(HubError::from),
-        Err(e) => Err(e),
-    };
-    let found = match answer {
-        Ok(info) => {
-            let latest = info.get("sha").and_then(|v| v.as_str()).map(str::to_string);
-            let _ = engine.db().set_upstream(PROVIDER_HF, repo, false);
-            UpstreamCheck {
-                upstream: UpstreamState::Ok,
-                changed: latest.is_some() && latest != known,
-                commit: known,
-                latest,
-            }
-        }
-        Err(HubError::NotAvailable { .. }) => {
-            let _ = engine.db().set_upstream(PROVIDER_HF, repo, true);
-            UpstreamCheck {
-                upstream: UpstreamState::Gone,
-                commit: known,
-                latest: None,
-                changed: false,
-            }
-        }
-        Err(e) => return hub_error(e),
-    };
-    server.touch();
-    ok(found)
+        Err(e) => failure(e),
+    }
 }
 
 async fn unplace(server: &Arc<Server>, body: UnplaceBody) -> Response {
     let engine = server.engine.clone();
     let applying = body.apply;
     let done = blocking(move || {
-        let mut plan = maintain::unplace_plan(
+        maintain::unplace(
             &engine.db,
             &engine.store,
             &engine.dirs,
             &body.repo,
             body.app,
-        )?;
-        if let Some(agreed) = &body.paths {
-            plan = plan.only(agreed);
-        }
-        let removed = match body.apply {
-            true => Some(maintain::deactivate(
-                &engine.db,
-                &engine.store,
-                &engine.dirs,
-                &plan,
-            )?),
-            false => None,
-        };
-        Ok(plan.answer(removed))
+            body.paths.as_deref(),
+            body.apply,
+        )
     })
     .await;
     // Also after a failure part of the way: the app's files and the
@@ -349,18 +237,15 @@ fn config_answer(server: &Server) -> anyhow::Result<DaemonSettings> {
     Ok(DaemonSettings {
         path: path_text(&Config::path(&server.home)),
         listen: file.listen().to_string(),
-        hf_endpoint: file
-            .hf_endpoint
-            .clone()
-            .unwrap_or_else(|| dedupd_core::hub::DEFAULT_ENDPOINT.to_string()),
+        hf_endpoint: file.hf_endpoint().to_string(),
         archive: file.archive.as_deref().map(path_text),
         bionic_models: path_text(file.bionic_models.as_ref().unwrap_or(&dirs.bionic)),
         ollama_models: path_text(file.ollama_models.as_ref().unwrap_or(&dirs.ollama)),
         hf_cache: path_text(file.hf_cache.as_ref().unwrap_or(&dirs.hf_cache)),
-        reclaim: file.reclaim != Some(false),
-        set_env: file.set_env == Some(true),
-        verify_days: file.verify_days.unwrap_or(7),
-        scan_interval: file.scan_interval.unwrap_or(300),
+        reclaim: file.reclaim(),
+        set_env: file.set_env(),
+        verify_days: file.verify_days(),
+        scan_interval: file.scan_interval(),
         max_connections: file.max_connections() as u64,
         speed_limit: file.speed_limit(),
         restart_needed: fixed(&file) != fixed(&server.config),
@@ -370,7 +255,7 @@ fn config_answer(server: &Server) -> anyhow::Result<DaemonSettings> {
 /// The last `lines` lines of the daemon's log.
 fn log_tail(server: &Server, lines: usize) -> anyhow::Result<LogTail> {
     use std::io::{Read, Seek, SeekFrom};
-    let path = server.home.root().join("daemon.log");
+    let path = server.home.log_path();
     let mut text = Vec::new();
     if let Ok(mut file) = std::fs::File::open(&path) {
         let size = file.metadata()?.len();
@@ -387,14 +272,6 @@ fn log_tail(server: &Server, lines: usize) -> anyhow::Result<LogTail> {
 }
 
 pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Response {
-    // A web page must not be able to drive the daemon: browsers send Origin
-    // on cross-site requests, and no real client of this API does.
-    if call.header(header::ORIGIN).is_some() {
-        return plain(
-            StatusCode::FORBIDDEN,
-            "the control API is not for web pages",
-        );
-    }
     let engine = server.engine.clone();
     match (&call.method, rest) {
         (&Method::GET, ["status"]) => answer(status_answer(server)),
@@ -462,7 +339,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
             .await,
         ),
         (&Method::GET, ["models", name @ ..]) if !name.is_empty() => {
-            let repo = percent_decode(&name.join("/"));
+            let repo = decode_path(&name.join("/"));
             let found = {
                 let repo = repo.clone();
                 blocking(move || {
@@ -473,10 +350,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
             };
             match found {
                 Ok(Some(detail)) => ok(detail),
-                Ok(None) => error(
-                    StatusCode::NOT_FOUND,
-                    format!("{repo} is not in the library"),
-                ),
+                Ok(None) => error(StatusCode::NOT_FOUND, NotInLibrary(repo).to_string()),
                 Err(e) => internal(format!("{e:#}")),
             }
         }

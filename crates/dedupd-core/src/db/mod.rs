@@ -1,15 +1,18 @@
 //! The database beside the store. It records what each stored file is, which
 //! repository revisions are archived, and every app file dedupd knows about.
 
-use crate::hub::{Snapshot, TreeEntry};
+use crate::hub::{Snapshot, TreeEntry, is_commit, ref_name};
 use crate::now;
 use crate::store::Fingerprint;
 use anyhow::{Context, Result};
 use dedupd_api::app::App;
+use dedupd_api::jobs::JobState;
 use dedupd_api::library::Origin;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
+
+pub mod library;
 
 /// `repos.provider` for Hugging Face repositories.
 pub const PROVIDER_HF: &str = "hf";
@@ -151,6 +154,18 @@ CREATE TABLE downloads (
 );
 "#;
 
+/// A repository the database does not know.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NotInLibrary(pub String);
+
+impl std::fmt::Display for NotInLibrary {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} is not in the library", self.0)
+    }
+}
+
+impl std::error::Error for NotInLibrary {}
+
 pub struct Db {
     conn: Connection,
 }
@@ -280,10 +295,6 @@ impl Db {
         Ok(Self { conn })
     }
 
-    pub fn conn(&self) -> &Connection {
-        &self.conn
-    }
-
     /// Add a job to the download queue and return its id.
     pub fn insert_download(&self, state: &str) -> Result<i64> {
         self.conn.execute(
@@ -308,6 +319,25 @@ impl Db {
             .prepare("SELECT job_json FROM downloads ORDER BY id")?;
         let rows = stmt.query_map([], |r| r.get(0))?;
         Ok(rows.collect::<rusqlite::Result<Vec<String>>>()?)
+    }
+
+    /// Whether a job of the download queue that is not finished (queued,
+    /// running, paused, or waiting for the owner) is for `repo`. Such a job
+    /// can still fetch or place the model's files, so the model is not
+    /// archived or restored meanwhile.
+    pub fn has_unfinished_job(&self, repo: &str) -> Result<bool> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT job_json FROM downloads WHERE state NOT IN (?1, ?2)")?;
+        let finished = [JobState::Done.as_str(), JobState::Cancelled.as_str()];
+        let rows = stmt.query_map(finished, |r| r.get::<_, String>(0))?;
+        for json in rows {
+            let job: serde_json::Value = serde_json::from_str(&json?).unwrap_or_default();
+            if job.get("repo").and_then(serde_json::Value::as_str) == Some(repo) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn delete_download(&self, id: i64) -> Result<()> {
@@ -492,6 +522,13 @@ impl Db {
             params![repo_id, name, commit, now()],
         )?;
         Ok(())
+    }
+
+    /// The id of a Hugging Face repository the database knows; otherwise
+    /// the error [`NotInLibrary`].
+    pub fn known_repo(&self, repo: &str) -> Result<i64> {
+        self.repo_id(PROVIDER_HF, repo)?
+            .ok_or_else(|| NotInLibrary(repo.to_string()).into())
     }
 
     pub fn repo_id(&self, provider: &str, name: &str) -> Result<Option<i64>> {
@@ -799,17 +836,6 @@ fn blob_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<BlobRow> {
     })
 }
 
-/// True for a full 40-character git commit id.
-pub fn is_commit(s: &str) -> bool {
-    s.len() == 40 && s.bytes().all(|b| b.is_ascii_hexdigit())
-}
-
-/// The branch or tag name in `revision`; `None` when it is a commit id,
-/// which is not a ref.
-pub fn ref_name(revision: &str) -> Option<&str> {
-    (!is_commit(revision)).then_some(revision)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -825,7 +851,7 @@ mod tests {
         }
         let db = Db::open(&path).unwrap();
         let n: i64 = db
-            .conn()
+            .conn
             .query_row("SELECT count(*) FROM repos", [], |r| r.get(0))
             .unwrap();
         assert_eq!(n, 1);
@@ -873,7 +899,7 @@ mod tests {
         db.upsert_blob("aa", 3, Some("oid")).unwrap();
         db.upsert_blob("aa", 3, None).unwrap();
         let oid: Option<String> = db
-            .conn()
+            .conn
             .query_row("SELECT git_oid FROM blobs WHERE sha256 = 'aa'", [], |r| {
                 r.get(0)
             })

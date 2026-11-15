@@ -140,16 +140,12 @@ async fn adopts_verifies_and_leaves_app_files_alone() {
 
     // The Hub's answers are archived verbatim, including fields dedupd does
     // not itself use.
-    let (info, tree): (String, String) = db
-        .lock()
-        .unwrap()
-        .conn()
-        .query_row(
-            "SELECT info_json, tree_json FROM revisions WHERE commit_sha = ?1",
-            [COMMIT],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )
-        .unwrap();
+    let (info, tree) = {
+        let db = db.lock().unwrap();
+        let id = db.repo_id("hf", "org/Repo-GGUF").unwrap().unwrap();
+        let snap = db.archived_snapshot(id, COMMIT).unwrap().unwrap();
+        (snap.info_json, snap.tree_json)
+    };
     assert!(info.contains("org/Repo-GGUF"));
     assert!(tree.contains("xetHash") && tree.contains("README.md"));
 

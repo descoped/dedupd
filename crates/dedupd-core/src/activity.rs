@@ -59,11 +59,11 @@ pub const ARCHIVED: &str = "Moved to the archive disk";
 pub const RESTORED: &str = "Brought back from the archive disk";
 
 fn path(home: &Home) -> PathBuf {
-    home.root().join("activity.jsonl")
+    home.activity_path()
 }
 
 fn lock_path(home: &Home) -> PathBuf {
-    home.root().join("activity.lock")
+    home.activity_lock_path()
 }
 
 fn parse(text: &str) -> Vec<ActivityEntry> {

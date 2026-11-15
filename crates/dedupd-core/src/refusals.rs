@@ -44,7 +44,7 @@ pub struct Refusals {
 }
 
 fn path(home: &Home) -> PathBuf {
-    home.root().join("refusals.json")
+    home.refusals_path()
 }
 
 impl Refusals {

@@ -6,11 +6,12 @@ use dedupd_api::library::VerifyState;
 use dedupd_core::adopt::{self, Action, Event, Upstream};
 use dedupd_core::config::Config;
 use dedupd_core::db::Db;
+use dedupd_core::engine::Engine;
 use dedupd_core::fetch::{Fetcher, Progress};
 use dedupd_core::governor::Governor;
-use dedupd_core::hub::{DEFAULT_ENDPOINT, HubClient};
+use dedupd_core::hub::HubClient;
 use dedupd_core::place::AppDirs;
-use dedupd_core::pull::{self, Engine, PullRequest};
+use dedupd_core::pull::{self, PullRequest};
 use dedupd_core::store::Store;
 use dedupd_core::{Home, archive, status};
 use std::path::PathBuf;
@@ -238,9 +239,7 @@ pub fn open(home: Option<PathBuf>, endpoint: Option<String>) -> Result<Opened> {
         .context("HOME is not set; pass --home")?;
     let home = Home::new(root);
     let config = Config::load(&home)?;
-    let endpoint = endpoint
-        .or_else(|| config.hf_endpoint.clone())
-        .unwrap_or_else(|| DEFAULT_ENDPOINT.to_string());
+    let endpoint = endpoint.unwrap_or_else(|| config.hf_endpoint().to_string());
     let token = HubClient::token_from_environment();
     let governor = Governor::new(config.max_connections(), config.speed_limit());
     let engine = Engine {
@@ -264,7 +263,7 @@ pub fn backup_if_attached(o: &Opened) {
     let Some(archive_home) = o.config.archive_home() else {
         return;
     };
-    if !archive::attached(&archive_home) {
+    if !archive_home.attached() {
         eprintln!(
             "The archive disk is not attached; {} will be updated by the next `dedupd backup`.",
             archive_home.root().display()
@@ -536,7 +535,7 @@ fn cmd_status(o: &Opened, json: bool) -> Result<()> {
         println!(
             "Archive: {}{}",
             a.root().display(),
-            if archive::attached(&a) {
+            if a.attached() {
                 ""
             } else {
                 " (disk not attached)"

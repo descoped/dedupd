@@ -90,7 +90,7 @@ pub fn cmd_install(o: &Opened, env: bool, label: &str) -> Result<()> {
     // The agent runs a copy under the home folder, so rebuilding or
     // cleaning the source tree cannot break the daemon.
     let built = std::env::current_exe().context("finding the dedupd binary")?;
-    let exe = o.home.root().join("bin/dedupd");
+    let exe = o.home.program_path();
     if built != exe {
         std::fs::create_dir_all(exe.parent().expect("bin folder"))?;
         let _ = std::fs::remove_file(&exe);
@@ -98,7 +98,7 @@ pub fn cmd_install(o: &Opened, env: bool, label: &str) -> Result<()> {
             .with_context(|| format!("copying dedupd to {}", exe.display()))?;
     }
     let path = plist_path(label)?;
-    let log = o.home.root().join("daemon.log");
+    let log = o.home.log_path();
     std::fs::create_dir_all(path.parent().expect("plist has a parent"))?;
     std::fs::write(
         &path,
@@ -227,7 +227,8 @@ fn same_file(a: &Path, b: &Path) -> bool {
 
 pub fn cmd_agent(home: &Path, label: &str, json: bool) -> Result<()> {
     let plist = plist_path(label)?;
-    let program = home.join("bin/dedupd");
+    let home = dedupd_core::Home::new(home);
+    let program = home.program_path();
     let installed = plist.is_file();
     let running = loaded(label);
     let installed_version = program.is_file().then(|| version_of(&program)).flatten();
@@ -241,12 +242,12 @@ pub fn cmd_agent(home: &Path, label: &str, json: bool) -> Result<()> {
             "plist": plist,
             "installed": installed,
             "running": running,
-            "home": home,
+            "home": home.root(),
             "program": program,
             "installed_version": installed_version,
             "same_build": same_build,
             "version": env!("CARGO_PKG_VERSION"),
-            "log": home.join("daemon.log"),
+            "log": home.log_path(),
         });
         println!("{}", serde_json::to_string_pretty(&state)?);
         return Ok(());
