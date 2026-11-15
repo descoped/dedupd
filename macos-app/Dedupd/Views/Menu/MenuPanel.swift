@@ -13,7 +13,7 @@ struct MenuPanel: View {
             if daemon.connection == .notRunning {
                 notRunning
             } else {
-                if !daemon.jobs.isEmpty {
+                if !daemon.downloadJobs.isEmpty {
                     MenuDownloads()
                 }
                 if let status = daemon.status {
@@ -264,8 +264,8 @@ private struct MenuDownloadRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Image(systemName: job.phase.symbol)
-                    .foregroundStyle(job.phase.tint)
+                Image(systemName: job.symbol)
+                    .foregroundStyle(job.tint)
                 Text(job.model)
                     .font(.callout)
                     .lineLimit(1)

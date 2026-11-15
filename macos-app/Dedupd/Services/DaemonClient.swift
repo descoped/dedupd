@@ -36,6 +36,8 @@ protocol DaemonClient: Sendable {
     func downloadAction(_ action: JobAction, id: Int64, at address: String) async throws
     /// Take the finished downloads off the list; returns how many.
     func clearDownloads(at address: String) async throws -> UInt64
+    /// What happened to the models in the apps, newest first.
+    func activity(at address: String) async throws -> [ActivityEntry]
 
     func checkUpstream(_ repo: String, at address: String) async throws -> UpstreamCheck
     func forget(_ repo: String, at address: String) async throws
@@ -114,9 +116,14 @@ struct LiveDaemonClient: DaemonClient {
                 model: request.model,
                 apps: request.apps,
                 include: request.include,
-                offline: request.offline
+                offline: request.offline,
+                activation: request.activation
             )
         }
+    }
+
+    func activity(at address: String) async throws -> [ActivityEntry] {
+        try await Self.blocking { try DedupdClient.activity(address: address) }
     }
 
     func downloadAction(_ action: JobAction, id: Int64, at address: String) async throws {

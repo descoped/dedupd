@@ -4,6 +4,7 @@
 //! stream says how far it is.
 
 use crate::Server;
+use dedupd_core::activity;
 use dedupd_core::archive::{self, ArchivePlan, RestorePlan};
 use dedupd_core::queue::State;
 use serde_json::{Value, json as j};
@@ -191,6 +192,22 @@ pub(crate) async fn start(server: &Arc<Server>, kind: Kind, repo: String) -> Res
         if let Err(why) = &done {
             eprintln!("dedupd: {} of {repo} failed: {why}", kind.as_str());
         }
+        let (action, words) = match kind {
+            Kind::Archive => (activity::Action::Archive, "Moved to the archive disk"),
+            Kind::Restore => (
+                activity::Action::Restore,
+                "Brought back from the archive disk",
+            ),
+        };
+        activity::record(
+            server.engine.store.home(),
+            action,
+            &repo,
+            None,
+            done.as_ref()
+                .map(|_| words.to_string())
+                .map_err(Clone::clone),
+        );
         server.moving.send_modify(|state| {
             if let Some(s) = state {
                 s.running = false;

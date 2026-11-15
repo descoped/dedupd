@@ -482,7 +482,7 @@ async fn control_api_is_closed_to_web_pages() {
     assert_eq!(seen.store_files, 0);
     assert_eq!(seen.version, env!("CARGO_PKG_VERSION"));
     let pulled = tokio::task::spawn_blocking(move || {
-        dedupd_client::pull(b, REPO.into(), vec!["bionic".into()], vec![], false)
+        dedupd_client::pull(b, REPO.into(), vec!["bionic".into()], vec![], false, false)
     })
     .await
     .unwrap()
@@ -1084,7 +1084,7 @@ async fn the_client_reads_everything_the_daemon_sends() {
         assert_eq!(hub.related.len(), 1);
 
         let spec = hub.variants[0].spec.clone();
-        let queued = client::enqueue(a.clone(), spec, vec!["bionic".into()], vec![], false)?;
+        let queued = client::enqueue(a.clone(), spec, vec!["bionic".into()], vec![], false, false)?;
         assert!(!queued.existing);
         let job = loop {
             let job = client::download(a.clone(), queued.id)?;
@@ -1394,7 +1394,8 @@ async fn control_api_answers_match_the_recorded_ones() {
     let bad = json!({"model": "not a model", "apps": []});
     let (_, error) = control(&fx, "POST", "pull", Some(bad)).await;
     let (_, status) = control(&fx, "GET", "status", None).await;
-    let again = json!({"model": format!("{REPO}:model"), "apps": ["hf"], "offline": true});
+    let again = json!({"model": format!("{REPO}:model"), "apps": ["hf"], "offline": true,
+                       "kind": "activation"});
     let (_, enqueue) = control(&fx, "POST", "downloads", Some(again.clone())).await;
     download(&fx, again).await;
     let (_, downloads) = control(&fx, "GET", "downloads", None).await;
@@ -1435,6 +1436,15 @@ async fn control_api_answers_match_the_recorded_ones() {
     assert_eq!(started, json!({"started": true}));
     let moving = moved(&with_disk).await;
     let (_, restore) = control(&with_disk, "POST", "restore", Some(ask)).await;
+    // What happened to the model: two activations, then the archive. The
+    // ids are times, so they get fixed values.
+    let (_, mut activity) = control(&with_disk, "GET", "activity", None).await;
+    let entries = activity["entries"].as_array_mut().unwrap();
+    let count = entries.len();
+    assert_eq!(count, 3, "{entries:?}");
+    for (i, entry) in entries.iter_mut().enumerate() {
+        entry["id"] = json!(1_700_000_000_000i64 + (count - i) as i64);
+    }
     let (archive, moving, restore) = (on_disk(archive), on_disk(moving), on_disk(restore));
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/control");
@@ -1462,6 +1472,7 @@ async fn control_api_answers_match_the_recorded_ones() {
         ("archive.json", archive),
         ("move.json", moving),
         ("restore.json", restore),
+        ("activity.json", activity),
     ] {
         let now = normalise(&body);
         let file = dir.join(name);

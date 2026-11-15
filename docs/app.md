@@ -1,6 +1,6 @@
 ---
 title: "The macOS app"
-description: "The screens of the dedupd menu bar app: Library, Discover, Downloads, Storage and Daemon."
+description: "The screens of the dedupd menu bar app: Library, Discover, Downloads, Activity, Storage and Daemon."
 group: Guide
 order: 2
 ---
@@ -35,7 +35,9 @@ taken from it. Anything else that looks like an address is refused and sent nowh
 
 The models on this Mac: their format, their size, the apps each one is in, and whether its files are verified
 against Hugging Face. The inspector shows one model in full. Activate puts it into an app as clones; Deactivate
-takes it out again and leaves the stored copy.
+takes it out again and leaves the stored copy. While a model is being activated, the app's row says so. An app that
+cannot use the model has no Activate button; its row says why, for example the version of Ollama that cannot run
+the model's type.
 
 ![The Library screen](images/library.png)
 
@@ -52,9 +54,19 @@ and activates it in the apps you ticked.
 The queue. A download can be paused, continued, retried, started ahead of the others and cancelled, and it
 survives a restart of the daemon. The figures at the top show the request budget Hugging Face allows; dedupd
 adjusts its rate to the limits the source reports. A download that requires action, such as a gated model whose
-terms have not been accepted, states what is required.
+terms have not been accepted, states what is required. Only jobs that fetch files are listed here; activating a
+model that is already stored is listed under Activity. When an app does not take a downloaded model, the download
+says which app and why.
 
 ![The Downloads screen](images/downloads.png)
+
+## Activity
+
+What happened to the models in the apps: each activation, deactivation, archive and restore, newest first, with
+its result. An app that would not take a model is listed with its reason, and the sidebar counts such entries
+until the screen has been opened. Activations in progress are shown at the top. Double-click an entry to open the
+model in the Library. The command line adds its own activations, deactivations, archives and restores to the same
+list, which is kept in `~/.dedupd/activity.jsonl`.
 
 ## Storage
 

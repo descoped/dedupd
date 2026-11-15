@@ -46,12 +46,15 @@ pub enum NotPlaced {
     Ollama(String),
     /// Something about the model's files.
     Model(String),
+    /// Asking Ollama went wrong for a reason that is not about the model (a
+    /// full disk, a crash). Not kept: the next activation asks again.
+    Trouble(String),
 }
 
 impl std::fmt::Display for NotPlaced {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Ollama(why) | Self::Model(why) => f.write_str(why),
+            Self::Ollama(why) | Self::Model(why) | Self::Trouble(why) => f.write_str(why),
         }
     }
 }
@@ -271,8 +274,8 @@ impl Scratch {
     }
 
     /// Have Ollama import the model folder `work` under `name`. `Err` in
-    /// the inner result is Ollama's own refusal.
-    fn import(&self, name: &str, work: &Path) -> Result<Result<Value, String>> {
+    /// the inner result is Ollama's refusal, or trouble asking it.
+    fn import(&self, name: &str, work: &Path) -> Result<Result<Value, NotPlaced>> {
         let modelfile = work.join("Modelfile");
         fs::write(&modelfile, format!("FROM {}\n", work.display()))?;
         let done = Command::new(&self.command)
@@ -288,9 +291,11 @@ impl Scratch {
             let said = String::from_utf8_lossy(&done.stderr);
             let last = said.lines().last().unwrap_or("it gave no reason").trim();
             let last = last.strip_prefix("Error:").map_or(last, str::trim);
-            return Ok(Err(format!(
-                "Ollama would not import a stand-in for the model: {last}"
-            )));
+            return Ok(Err(if crate::refusals::is_about_the_model(last) {
+                NotPlaced::Ollama(last.to_string())
+            } else {
+                NotPlaced::Trouble(format!("Ollama could not be asked about the model: {last}"))
+            }));
         }
         // Which tree and which host name the manifest goes under differs
         // between versions of Ollama.
@@ -410,7 +415,7 @@ fn ask_ollama(
         write_stand_in(&work, small, way, sample)?;
         let answer = match scratch.import(&format!("{STAND_IN}-{i}"), &work)? {
             Ok(answer) => answer,
-            Err(why) => return Ok(Err(NotPlaced::Ollama(why))),
+            Err(why) => return Ok(Err(why)),
         };
         // What Ollama wrote for the layer: its names, and the note in the
         // file that holds the weight.
@@ -424,8 +429,7 @@ fn ask_ollama(
         for (name, _) in &sample.parts {
             if !written.contains_key(&ollama_name(name)) {
                 return Ok(Err(NotPlaced::Ollama(format!(
-                    "this Ollama names tensors differently from the one dedupd was written against: \
-                     it wrote no {}",
+                    "it names the model's layers in a way dedupd does not know yet (it wrote no {})",
                     ollama_name(name)
                 ))));
             }
@@ -435,7 +439,7 @@ fn ask_ollama(
             Some(note) => notes.insert(way.clone(), note),
             None => {
                 return Ok(Err(NotPlaced::Ollama(format!(
-                    "this Ollama has no name for {way} layers, so it cannot run this model"
+                    "it doesn't run {way} MLX layers"
                 ))));
             }
         };

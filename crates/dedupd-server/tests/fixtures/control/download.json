@@ -54,6 +54,7 @@
   "finished_at": 1700000000,
   "id": 2,
   "include": [],
+  "kind": "activation",
   "model": "org/Repo-GGUF:model",
   "offline": true,
   "outcome": {

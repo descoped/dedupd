@@ -29,14 +29,14 @@ struct DownloadsView: View {
                     Button("Clear Finished", systemImage: "checklist.checked") {
                         Task { await daemon.clearFinished() }
                     }
-                    .disabled(!daemon.jobs.contains { $0.phase.isFinished })
+                    .disabled(!daemon.downloadJobs.contains { $0.phase.isFinished })
                     .help("Take the downloads that are done or cancelled off the list")
                     .accessibilityIdentifier("clear-finished")
                     InspectorToggle(isShown: $showsInspector)
                 }
             }
             .inspector(isPresented: $showsInspector) {
-                DownloadInspector(job: daemon.jobs.first { $0.id == selection })
+                DownloadInspector(job: daemon.downloadJobs.first { $0.id == selection })
                     .inspectorColumnWidth(min: 320, ideal: 380, max: 520)
             }
     }
@@ -60,7 +60,7 @@ struct DownloadsView: View {
                     GovernorStrip(downloads: downloads)
                     Divider()
                 }
-                if daemon.jobs.isEmpty {
+                if daemon.downloadJobs.isEmpty {
                     ContentUnavailableView {
                         Label("Nothing is being downloaded", systemImage: "arrow.down.circle")
                     } description: {
@@ -74,7 +74,7 @@ struct DownloadsView: View {
                         }
                     }
                 } else {
-                    List(daemon.jobs, selection: $selection) { job in
+                    List(daemon.downloadJobs, selection: $selection) { job in
                         DownloadRow(job: job)
                             .tag(job.id)
                     }
@@ -94,9 +94,9 @@ struct DownloadRow: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            Image(systemName: job.phase.symbol)
+            Image(systemName: job.symbol)
                 .font(.title3)
-                .foregroundStyle(job.phase.tint)
+                .foregroundStyle(job.tint)
                 .frame(width: 24)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {

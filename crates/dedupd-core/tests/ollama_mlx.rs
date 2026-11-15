@@ -313,6 +313,19 @@ async fn an_mlx_model_is_placed_into_ollama_as_clones_with_a_rewritten_index() {
     assert_eq!(again.placed[0].1.cloned, 0);
     assert_eq!(again.placed[0].1.present, placed.cloned);
 
+    // Cut off before the manifest was written (a crash, the Mac asleep): the
+    // clones are there and Ollama does not list the model. The next try,
+    // which the queue makes by itself after a restart, finishes it with the
+    // clones that are there.
+    fs::remove_file(&manifest_path).unwrap();
+    let resumed = pull::pull(&e, &request(false), &Arc::default())
+        .await
+        .unwrap();
+    assert_eq!(resumed.notes, Vec::<String>::new());
+    assert!(resumed.placed[0].1.conflicts.is_empty());
+    assert_eq!(fs::read_to_string(&manifest_path).unwrap(), body);
+    assert_eq!(e.db().derived_files().unwrap().len(), 3);
+
     // The background pass leaves the clones alone: they are not adopted as
     // new content, their manifest is not archived, and reclaim skips them.
     let stored = e.db().all_blobs().unwrap().len();
@@ -400,9 +413,7 @@ async fn a_width_ollama_cannot_run_is_not_placed() {
     // Ollama's own answer, which dedupd keeps.
     assert_eq!(
         refused,
-        ollama_mlx::NotPlaced::Ollama(
-            "this Ollama has no name for 5-bit layers, so it cannot run this model".into()
-        )
+        ollama_mlx::NotPlaced::Ollama("it doesn't run 5-bit MLX layers".into())
     );
     // Nothing was written into Ollama's folder, and nothing is left of the
     // asking.
@@ -432,11 +443,11 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
         .unwrap();
     assert!(first.placed.is_empty());
     assert_eq!(first.notes.len(), 1);
-    assert!(
-        first.notes[0].starts_with("not placed into Ollama: Ollama would not import a stand-in"),
-        "{:?}",
-        first.notes
+    let plain = format!(
+        "not placed into Ollama: Ollama {version} can't run this model: it doesn't support the \
+         model type NoSuchModelForCausalLM for MLX models."
     );
+    assert_eq!(first.notes, std::slice::from_ref(&plain));
     assert!(!first.notes[0].contains("Error:"), "{:?}", first.notes);
     assert!(!e.dirs.ollama.join("manifests").exists());
 
@@ -445,7 +456,11 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
     let kept = known
         .find("ollama", &version, ollama_mlx::METHOD, &up.config)
         .expect("the refusal is kept");
-    assert!(kept.reason.starts_with("Ollama would not import"));
+    assert!(
+        kept.reason.starts_with("unsupported MLX architecture"),
+        "{}",
+        kept.reason
+    );
 
     // The library shows Ollama as unable to take it, with the reason.
     let library = library::model(&e.db(), &e.store, REPO, &installed)
@@ -457,12 +472,9 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
         .find(|d| d.app == "ollama")
         .unwrap();
     assert_eq!(ollama.state, "no");
-    assert!(
-        ollama
-            .reason
-            .ends_with(&format!("(asked with Ollama {version})")),
-        "{}",
-        ollama.reason
+    assert_eq!(
+        ollama.reason,
+        plain.trim_start_matches("not placed into Ollama: ")
     );
     assert!(
         !library.variants[0]
@@ -475,9 +487,5 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
         .await
         .unwrap();
     assert!(second.placed.is_empty());
-    assert!(
-        second.notes[0].ends_with(&format!("(asked with Ollama {version})")),
-        "{:?}",
-        second.notes
-    );
+    assert_eq!(second.notes, [plain]);
 }

@@ -14,8 +14,8 @@ use dedupd_core::fetch::encode_path;
 use dedupd_core::hub::{HubClient, HubError};
 use dedupd_core::place::App;
 use dedupd_core::profile::Installed;
-use dedupd_core::queue::{FileStage, JobRecord, State};
-use dedupd_core::{archive, library, maintain, status};
+use dedupd_core::queue::{FileStage, JobKind, JobRecord, State};
+use dedupd_core::{activity, archive, library, maintain, status};
 use serde::Deserialize;
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json as j};
@@ -42,6 +42,10 @@ struct PullBody {
     include: Vec<String>,
     #[serde(default)]
     offline: bool,
+    /// `activation` when the model is stored and is to be put into apps;
+    /// the app then shows the job with the activations, not the downloads.
+    #[serde(default)]
+    kind: JobKind,
     /// Accepted from older clients; the daemon decides how many downloads
     /// run at once.
     #[serde(default, rename = "jobs")]
@@ -183,6 +187,11 @@ fn job_summary(record: &JobRecord) -> Value {
             .count();
         o.insert("files_total".into(), j!(record.files.len()));
         o.insert("files_done".into(), j!(stored));
+        // Which of the apps asked for took the model, and why the others
+        // did not; the app shows this on the finished job.
+        o.insert("kind".into(), j!(record.shown_as().as_str()));
+        o.insert("activated".into(), j!(record.activated()));
+        o.insert("notes".into(), j!(record.notes()));
     }
     value
 }
@@ -269,7 +278,13 @@ fn enqueue(server: &Arc<Server>, body: PullBody) -> Result<(i64, bool), Refused>
     }
     server
         .queue
-        .add(&body.model, body.include, body.apps, body.offline)
+        .add(
+            &body.model,
+            body.include,
+            body.apps,
+            body.offline,
+            body.kind,
+        )
         .map(|id| (id, false))
         .map_err(|e| Box::new(error(StatusCode::BAD_REQUEST, e)))
 }
@@ -353,7 +368,20 @@ async fn unplace(server: &Arc<Server>, body: UnplaceBody) -> Response {
             plan.bytes = plan.remove.iter().map(|(_, size)| size).sum();
         }
         let removed = match body.apply {
-            true => Some(maintain::unplace_apply(&engine.db, &engine.dirs, &plan)?),
+            true => {
+                let done = maintain::unplace_apply(&engine.db, &engine.dirs, &plan);
+                activity::record(
+                    engine.store.home(),
+                    activity::Action::Deactivate,
+                    &plan.repo,
+                    Some(body.app.as_str()),
+                    match &done {
+                        Ok(_) => Ok(format!("Deactivated in {}", body.app.title())),
+                        Err(e) => Err(format!("{e:#}")),
+                    },
+                );
+                Some(done?)
+            }
             false => None,
         };
         let pairs = |list: &[(String, String)]| -> Vec<Value> {
@@ -618,6 +646,14 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 }
                 Err(e) => error(StatusCode::BAD_REQUEST, format!("{e:#}")),
             }
+        }
+        (&Method::GET, ["activity"]) => {
+            let limit = call
+                .param("limit")
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(200usize)
+                .min(1000);
+            ok(j!({"entries": activity::recent(engine.store.home(), limit)}))
         }
         (&Method::GET, ["log"]) => {
             let lines = call

@@ -159,7 +159,7 @@ final class LibraryStore {
     /// store has every file; the daemon reports it as a download that is
     /// done at once.
     func place(_ variant: Variant, into app: ModelApp) async {
-        await daemon.enqueue(PullRequest(model: variant.spec, apps: [app.rawValue]))
+        await daemon.enqueue(PullRequest(model: variant.spec, apps: [app.rawValue], activation: true))
     }
 
     /// Fetch the files of a variant that are not on this Mac, for the apps

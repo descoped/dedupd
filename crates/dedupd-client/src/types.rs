@@ -295,6 +295,18 @@ pub struct Job {
     pub files_total: u64,
     #[serde(default)]
     pub files_done: u64,
+    /// `download`, or `activation` for a job that put a stored model into
+    /// apps (also one asked as a download that found every file stored).
+    #[serde(default)]
+    pub kind: String,
+    /// Once the job is done: the apps asked for that took the model. One in
+    /// `apps` and not here did not, and `notes` says why.
+    #[serde(default)]
+    pub activated: Vec<String>,
+    /// Once the job is done: why an app did not take the model, and
+    /// anything else worth knowing.
+    #[serde(default)]
+    pub notes: Vec<String>,
     pub created_at: i64,
     pub updated_at: i64,
     pub finished_at: Option<i64>,
@@ -331,6 +343,29 @@ pub struct JobDetail {
     pub job: Job,
     pub files: Vec<JobFile>,
     pub events: Vec<JobEvent>,
+}
+
+/// One thing that happened to a model in the apps.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, uniffi::Record)]
+pub struct ActivityEntry {
+    /// Grows with every entry, so the app can tell which ones it has shown.
+    pub id: i64,
+    /// Seconds since the Unix epoch.
+    pub at: i64,
+    /// `activate`, `deactivate`, `archive` or `restore`.
+    pub action: String,
+    /// `org/repo`.
+    pub repo: String,
+    /// The app, for an activation or a deactivation.
+    pub app: Option<String>,
+    pub ok: bool,
+    /// What happened, in a sentence; for a failure, why.
+    pub text: String,
+}
+
+#[derive(Deserialize)]
+pub(crate) struct WireActivity {
+    pub entries: Vec<ActivityEntry>,
 }
 
 #[derive(Deserialize)]

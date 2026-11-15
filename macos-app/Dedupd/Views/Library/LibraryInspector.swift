@@ -241,6 +241,15 @@ private struct AppRow: View {
     let variants: [Variant]
 
     @Environment(LibraryStore.self) private var library
+    @Environment(DaemonStore.self) private var daemon
+
+    /// A download or activation of this model for this app is under way.
+    private var isActivating: Bool {
+        guard let repo = library.selected?.repo else {
+            return false
+        }
+        return daemon.jobs.contains { $0.phase.isActive && $0.repo == repo && $0.apps.contains(app.rawValue) }
+    }
 
     /// The variants this app can use and does not have yet.
     private var placeable: [Variant] {
@@ -259,7 +268,18 @@ private struct AppRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if presence != nil {
+            if presence == nil, isActivating {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Activating…")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Activating in \(app.title)")
+                .accessibilityIdentifier("activating-\(app.rawValue)")
+            } else if presence != nil {
                 Button("Deactivate…") {
                     Task { await library.planRemoval(from: app.rawValue) }
                 }

@@ -21,6 +21,7 @@ actor FixtureDaemonClient: DaemonClient {
     private var settings = FixtureData.settings
     private var seq: UInt64 = 0
     private var nextID: Int64 = 20
+    private var history: [ActivityEntry] = FixtureData.activity
     /// The models the owner archived, and the last move, as the daemon
     /// would tell it.
     private var archived: Set<String> = []
@@ -172,66 +173,6 @@ actor FixtureDaemonClient: DaemonClient {
         return FixtureData.hubModel(repo, downloading: jobs.contains { $0.repo == repo && $0.phase.isActive })
     }
 
-    // MARK: - Downloads
-
-    func download(_ id: Int64, at address: String) async throws -> JobDetail {
-        try answering(address)
-        guard let job = jobs.first(where: { $0.id == id }) else {
-            throw ClientError.Failed(message: "no download \(id)")
-        }
-        return FixtureData.jobDetail(job)
-    }
-
-    func enqueue(_ request: PullRequest, at address: String) async throws -> Enqueued {
-        try answering(address)
-        guard ModelSpec.isValid(request.model) else {
-            throw ClientError.Failed(
-                message: "\(request.model) is not a model name; use org/repo, org/repo:Q4_K_M or org/repo@revision"
-            )
-        }
-        if let existing = jobs.first(where: { $0.model == request.model && !$0.phase.isFinished }) {
-            return Enqueued(id: existing.id, existing: true)
-        }
-        let id = nextID
-        nextID += 1
-        // What is already stored is placed at once; anything else waits its
-        // turn, as it would behind a running download.
-        let stored = FixtureData.models.contains { $0.repo == request.model.split(separator: ":").first.map(String.init) }
-        jobs.insert(FixtureData.job(id: id, request: request, state: stored ? .done : .queued), at: 0)
-        changed()
-        return Enqueued(id: id, existing: false)
-    }
-
-    func downloadAction(_ action: JobAction, id: Int64, at address: String) async throws {
-        try answering(address)
-        guard let index = jobs.firstIndex(where: { $0.id == id }) else {
-            throw ClientError.Failed(message: "no download \(id)")
-        }
-        switch action {
-        case .pause:
-            jobs[index].state = JobState.paused.rawValue
-            jobs[index].speed = 0
-        case .resume, .retry, .start:
-            jobs[index].state = JobState.downloading.rawValue
-            jobs[index].detail = nil
-            jobs[index].speed = 11_800_000
-        case .cancel:
-            jobs[index].state = JobState.cancelled.rawValue
-            jobs[index].speed = 0
-        case .remove:
-            jobs.remove(at: index)
-        }
-        changed()
-    }
-
-    func clearDownloads(at address: String) async throws -> UInt64 {
-        try answering(address)
-        let before = jobs.count
-        jobs.removeAll { $0.phase.isFinished }
-        changed()
-        return UInt64(before - jobs.count)
-    }
-
     // MARK: - Models
 
     func checkUpstream(_ repo: String, at address: String) async throws -> UpstreamCheck {
@@ -252,7 +193,7 @@ actor FixtureDaemonClient: DaemonClient {
     func unplace(_ repo: String, app: String, apply: Bool, at address: String) async throws -> UnplacePlan {
         try answering(address)
         let files = FixtureData.detail(repo)?.placements.filter { $0.app == app } ?? []
-        return UnplacePlan(
+        let plan = UnplacePlan(
             repo: repo,
             app: app,
             remove: files.map { PlannedFile(path: $0.path, size: $0.size) },
@@ -261,6 +202,13 @@ actor FixtureDaemonClient: DaemonClient {
             bytes: files.map(\.size).reduce(0, +),
             removed: apply ? UInt64(files.count) : nil
         )
+        if apply {
+            note(.init(action: "deactivate", repo: repo, app: app, ok: true,
+                       text: "Deactivated in \(ModelApp.title(for: app))"))
+            library += 1
+            changed()
+        }
+        return plan
     }
 
     func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan {
@@ -366,5 +314,92 @@ actor FixtureDaemonClient: DaemonClient {
     func restart(at address: String) async throws {
         try answering(address)
         settings.restartNeeded = false
+    }
+}
+
+// MARK: - Downloads
+
+extension FixtureDaemonClient {
+
+    func download(_ id: Int64, at address: String) async throws -> JobDetail {
+        try answering(address)
+        guard let job = jobs.first(where: { $0.id == id }) else {
+            throw ClientError.Failed(message: "no download \(id)")
+        }
+        return FixtureData.jobDetail(job)
+    }
+
+    func enqueue(_ request: PullRequest, at address: String) async throws -> Enqueued {
+        try answering(address)
+        guard ModelSpec.isValid(request.model) else {
+            throw ClientError.Failed(
+                message: "\(request.model) is not a model name; use org/repo, org/repo:Q4_K_M or org/repo@revision"
+            )
+        }
+        if let existing = jobs.first(where: { $0.model == request.model && !$0.phase.isFinished }) {
+            return Enqueued(id: existing.id, existing: true)
+        }
+        let id = nextID
+        nextID += 1
+        // What is already stored is placed at once; anything else waits its
+        // turn, as it would behind a running download.
+        let stored = FixtureData.models.contains { $0.repo == request.model.split(separator: ":").first.map(String.init) }
+        jobs.insert(FixtureData.job(id: id, request: request, state: stored ? .done : .queued), at: 0)
+        if stored {
+            let repo = request.model.split(separator: ":").first.map(String.init) ?? request.model
+            for app in request.apps {
+                note(.init(action: "activate", repo: repo, app: app, ok: true,
+                           text: "Activated in \(ModelApp.title(for: app))"))
+            }
+        }
+        changed()
+        return Enqueued(id: id, existing: false)
+    }
+
+    func downloadAction(_ action: JobAction, id: Int64, at address: String) async throws {
+        try answering(address)
+        guard let index = jobs.firstIndex(where: { $0.id == id }) else {
+            throw ClientError.Failed(message: "no download \(id)")
+        }
+        switch action {
+        case .pause:
+            jobs[index].state = JobState.paused.rawValue
+            jobs[index].speed = 0
+        case .resume, .retry, .start:
+            jobs[index].state = JobState.downloading.rawValue
+            jobs[index].detail = nil
+            jobs[index].speed = 11_800_000
+        case .cancel:
+            jobs[index].state = JobState.cancelled.rawValue
+            jobs[index].speed = 0
+        case .remove:
+            jobs.remove(at: index)
+        }
+        changed()
+    }
+
+    func activity(at address: String) async throws -> [ActivityEntry] {
+        try answering(address)
+        return history
+    }
+
+    /// Add to the canned activity list, newest first.
+    private func note(_ entry: FixtureData.Happened) {
+        let id = (history.first?.id ?? 0) + 1
+        history.insert(
+            ActivityEntry(
+                id: id, at: Int64(Date().timeIntervalSince1970), action: entry.action, repo: entry.repo,
+                app: entry.app, ok: entry.ok, text: entry.text
+            ),
+            at: 0
+        )
+    }
+
+    func clearDownloads(at address: String) async throws -> UInt64 {
+        try answering(address)
+        let before = jobs.count
+        jobs.removeAll { $0.phase.isFinished }
+        changed()
+        return UInt64(before - jobs.count)
     }
 }

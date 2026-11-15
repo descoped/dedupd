@@ -307,6 +307,11 @@ void uniffi_dedupd_client_fn_free_eventsubscription(uint64_t handle, RustCallSta
 void uniffi_dedupd_client_fn_method_eventsubscription_cancel(uint64_t ptr, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ACTIVITY
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ACTIVITY
+RustBuffer uniffi_dedupd_client_fn_func_activity(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_MODEL
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_MODEL
 void uniffi_dedupd_client_fn_func_archive_model(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
@@ -350,7 +355,7 @@ RustBuffer uniffi_dedupd_client_fn_func_downloads(RustBuffer address, RustCallSt
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ENQUEUE
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ENQUEUE
-RustBuffer uniffi_dedupd_client_fn_func_enqueue(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_dedupd_client_fn_func_enqueue(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, int8_t activation, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_FORGET
@@ -400,7 +405,7 @@ RustBuffer uniffi_dedupd_client_fn_func_models(RustBuffer address, RustCallStatu
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_PULL
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_PULL
-RustBuffer uniffi_dedupd_client_fn_func_pull(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_dedupd_client_fn_func_pull(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, int8_t activation, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTART
@@ -721,6 +726,12 @@ void ffi_dedupd_client_rust_future_free_void(uint64_t handle
 #ifndef UNIFFI_FFIDEF_FFI_DEDUPD_CLIENT_RUST_FUTURE_COMPLETE_VOID
 #define UNIFFI_FFIDEF_FFI_DEDUPD_CLIENT_RUST_FUTURE_COMPLETE_VOID
 void ffi_dedupd_client_rust_future_complete_void(uint64_t handle, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ACTIVITY
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ACTIVITY
+uint16_t uniffi_dedupd_client_checksum_func_activity(void
+    
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ARCHIVE_MODEL

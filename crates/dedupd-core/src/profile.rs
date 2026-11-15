@@ -486,11 +486,7 @@ impl Decision {
             .iter()
             .find(|p| p.app.as_str() == self.app)
             .map_or(self.app.as_str(), |p| p.name.as_str());
-        let mut reason = refusal.reason.clone();
-        if let Some(first) = reason.get(..1) {
-            reason.replace_range(..1, &first.to_uppercase());
-        }
-        self.reason = format!("{reason} (asked with {name} {version})");
+        self.reason = crate::refusals::sentence(name, version, &refusal.reason);
         self.state = "no".into();
         self.method = None;
         self.cost = None;
@@ -733,7 +729,7 @@ mod tests {
                 version: "0.40.16".into(),
                 method: ready.method.clone().unwrap(),
                 config: "c0".into(),
-                reason: "ollama would not import a stand-in for the model: unsupported".into(),
+                reason: r#"unsupported MLX architecture: model "NoSuchForCausalLM""#.into(),
                 at: 1,
             },
         )
@@ -746,8 +742,8 @@ mod tests {
         assert_eq!(no.cost, None);
         assert_eq!(
             no.reason,
-            "Ollama would not import a stand-in for the model: unsupported \
-             (asked with Ollama 0.40.16)"
+            "Ollama 0.40.16 can't run this model: it doesn't support the model type \
+             NoSuchForCausalLM for MLX models."
         );
         // Another model, another version, or no config: asked again.
         assert_eq!(ready.clone().unless_refused(&known, Some("c1")), ready);

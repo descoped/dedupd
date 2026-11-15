@@ -145,7 +145,8 @@ extension FixtureData {
         total: UInt64 = 144_800_000,
         done: UInt64 = 0,
         speed: UInt64 = 0,
-        detail: String? = nil
+        detail: String? = nil,
+        notTakenBy: [String: String] = [:]
     ) -> Job {
         let parts = request.model.split(separator: ":", maxSplits: 1).map(String.init)
         let finished = state == .done
@@ -167,6 +168,9 @@ extension FixtureData {
             speed: speed,
             filesTotal: 4,
             filesDone: finished ? 4 : (done > 0 ? 3 : 0),
+            kind: request.activation ? "activation" : "download",
+            activated: finished ? request.apps.filter { notTakenBy[$0] == nil } : [],
+            notes: finished ? notTakenBy.sorted { $0.key < $1.key }.map(\.value) : [],
             createdAt: 1_794_003_000 + id,
             updatedAt: 1_794_003_600 + id,
             finishedAt: finished ? 1_794_003_600 + id : nil
@@ -239,4 +243,40 @@ extension FixtureData {
             ]
         )
     }
+}
+
+extension FixtureData {
+    /// One thing that happened, before it gets an id and a time.
+    struct Happened {
+        var action: String
+        var repo: String
+        var app: String?
+        var ok: Bool
+        var text: String
+    }
+
+    /// What happened to the canned models lately, newest first: activations,
+    /// one an app said no to, and an archive.
+    static let activity: [ActivityEntry] = {
+        let happened: [Happened] = [
+            Happened(action: "activate", repo: nemotron, app: "ollama", ok: false,
+                     text: "Ollama 0.40.16 can't run this model: it doesn't run 6-bit MLX layers."),
+            Happened(action: "activate", repo: nemotron, app: "bionic", ok: true, text: "Activated in Bionic"),
+            Happened(action: "archive", repo: smolMLX, app: nil, ok: true, text: "Moved to the archive disk"),
+            Happened(action: "deactivate", repo: smolGGUF, app: "hf", ok: true,
+                     text: "Deactivated in the Hugging Face cache"),
+            Happened(action: "activate", repo: qwen, app: "ollama", ok: true, text: "Activated in Ollama"),
+        ]
+        return happened.enumerated().map { index, entry in
+            ActivityEntry(
+                id: Int64(100 - index),
+                at: 1_794_003_600 - Int64(index) * 5_400,
+                action: entry.action,
+                repo: entry.repo,
+                app: entry.app,
+                ok: entry.ok,
+                text: entry.text
+            )
+        }
+    }()
 }

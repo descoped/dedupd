@@ -1,6 +1,7 @@
 //! Core of dedupd: one content-addressed store of model files, shared with
 //! local runtimes through APFS clones.
 
+pub mod activity;
 pub mod adopt;
 pub mod archive;
 pub mod clone;

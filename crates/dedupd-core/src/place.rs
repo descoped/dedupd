@@ -33,6 +33,15 @@ impl App {
             App::Hf => "hf",
         }
     }
+
+    /// The app's name in a sentence.
+    pub const fn title(self) -> &'static str {
+        match self {
+            App::Bionic => "Bionic",
+            App::Ollama => "Ollama",
+            App::Hf => "the Hugging Face cache",
+        }
+    }
 }
 
 impl std::str::FromStr for App {

@@ -37,6 +37,7 @@
 		7C5BFD402DCB9AC6D69BCFF9 /* dedupd_client.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AFF74CF2A637B9A04EAE90A /* dedupd_client.swift */; };
 		852E8BFF75CF87037EEE7370 /* DedupdUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A74F3AE0140D67A7C7B9279C /* DedupdUITests.swift */; };
 		8749D13F32B495B5316DC219 /* ArchiveSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A9B5D356603A62C21590620 /* ArchiveSheet.swift */; };
+		8C53B929F48C098542A0AA30 /* ActivityStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C2DC97C251C7A8E58C9E1A8 /* ActivityStore.swift */; };
 		A0B0AFB37DF1534E16D19012 /* ContractTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 485343F149130DDDE1FFD3D4 /* ContractTests.swift */; };
 		A582FBC51E3BA26B922A8817 /* AppEnvironment.swift in Sources */ = {isa = PBXBuildFile; fileRef = 942965A9DC3D46A3BE8DB6EA /* AppEnvironment.swift */; };
 		A78F910DD1DB444E86F45735 /* DaemonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA590A639E56662A566C5687 /* DaemonView.swift */; };
@@ -57,6 +58,7 @@
 		D50840F5A2BF6BE92A2E9413 /* DiscoverView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2428FD9F55E79D7FA4EAC935 /* DiscoverView.swift */; };
 		D592A3B32528770A87981A61 /* StorageStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 562B7D9FB7AE35DB3C4E6C75 /* StorageStore.swift */; };
 		D8612C3610B0CBDF5220EC79 /* ByteFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = 33DD97D2DB9E0D43DD3D8315 /* ByteFormat.swift */; };
+		D98869525BEB15516A38BCC9 /* ActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3EC5788EA74724B1B88FD0F8 /* ActivityView.swift */; };
 		DA489A8E4D8A7C39F6A45506 /* TextViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F2823E06C3F677C7118CD75 /* TextViews.swift */; };
 		EAD27C28064E8BE49E35CA42 /* TestSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB7FAC14D4C02E857832C7C5 /* TestSupport.swift */; };
 		F1A0A530A5ED18815107DFF2 /* Pane.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CB84174DFBEEA057166A63F /* Pane.swift */; };
@@ -101,10 +103,12 @@
 		393B089D3714D2F21FAB6A54 /* DedupdUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = DedupdUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		3AFF74CF2A637B9A04EAE90A /* dedupd_client.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = dedupd_client.swift; sourceTree = "<group>"; };
 		3E3A2969749C0A1640EF764D /* control */ = {isa = PBXFileReference; lastKnownFileType = folder; name = control; path = "../crates/dedupd-server/tests/fixtures/control"; sourceTree = SOURCE_ROOT; };
+		3EC5788EA74724B1B88FD0F8 /* ActivityView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityView.swift; sourceTree = "<group>"; };
 		3F2823E06C3F677C7118CD75 /* TextViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TextViews.swift; sourceTree = "<group>"; };
 		4070E9EE36A2CB759E66A166 /* DisplayTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DisplayTests.swift; sourceTree = "<group>"; };
 		47154FFC00A98EEA33F16A24 /* libDedupdClient.a */ = {isa = PBXFileReference; explicitFileType = archive.ar; includeInIndex = 0; path = libDedupdClient.a; sourceTree = BUILT_PRODUCTS_DIR; };
 		485343F149130DDDE1FFD3D4 /* ContractTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContractTests.swift; sourceTree = "<group>"; };
+		4C2DC97C251C7A8E58C9E1A8 /* ActivityStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActivityStore.swift; sourceTree = "<group>"; };
 		4C855F026EBAE19EDE057932 /* Developer.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Developer.xcconfig; sourceTree = "<group>"; };
 		529D77FFCA704C733E442B0C /* DaemonStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DaemonStore.swift; sourceTree = "<group>"; };
 		562B7D9FB7AE35DB3C4E6C75 /* StorageStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StorageStore.swift; sourceTree = "<group>"; };
@@ -209,6 +213,7 @@
 			isa = PBXGroup;
 			children = (
 				ED2F7E93AEE384DEFB2882EC /* MenuBarLabel.swift */,
+				62EA99039B11FC7FD8EC055E /* Activity */,
 				E9631847855187598C9D962D /* Daemon */,
 				23E812847BAFCBA444D728F8 /* Discover */,
 				69A3CDC824026F6A7E7D84FE /* Downloads */,
@@ -260,6 +265,14 @@
 				A74F3AE0140D67A7C7B9279C /* DedupdUITests.swift */,
 			);
 			path = DedupdUITests;
+			sourceTree = "<group>";
+		};
+		62EA99039B11FC7FD8EC055E /* Activity */ = {
+			isa = PBXGroup;
+			children = (
+				3EC5788EA74724B1B88FD0F8 /* ActivityView.swift */,
+			);
+			path = Activity;
 			sourceTree = "<group>";
 		};
 		63E54C6356B7E145F5986E5C /* Utilities */ = {
@@ -386,6 +399,7 @@
 		D28F4B964BA9C2A4E1632975 /* Stores */ = {
 			isa = PBXGroup;
 			children = (
+				4C2DC97C251C7A8E58C9E1A8 /* ActivityStore.swift */,
 				80C2447C5E4050B482849954 /* AppSettings.swift */,
 				529D77FFCA704C733E442B0C /* DaemonStore.swift */,
 				0AD0E3AA1965269EEFB6C82E /* DiscoverStore.swift */,
@@ -708,6 +722,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				8C53B929F48C098542A0AA30 /* ActivityStore.swift in Sources */,
+				D98869525BEB15516A38BCC9 /* ActivityView.swift in Sources */,
 				0A2EB6313FF4BDB6E5CB1E02 /* AgentService.swift in Sources */,
 				A582FBC51E3BA26B922A8817 /* AppEnvironment.swift in Sources */,
 				CF61A5B7B2462BEDD9A5F9DE /* AppSettings.swift in Sources */,

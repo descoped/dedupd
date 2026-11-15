@@ -12,6 +12,7 @@ final class AppSettings {
         static let targets = "targets"
         static let notifications = "notifications"
         static let launched = "hasLaunchedBefore"
+        static let activitySeen = "activitySeen"
     }
 
     /// Where the daemon listens unless the user chose another address.
@@ -34,6 +35,12 @@ final class AppSettings {
     /// How much room a row of the tables takes.
     var density: RowDensity {
         didSet { defaults.set(density.rawValue, forKey: Key.density) }
+    }
+
+    /// The newest entry of the Activity list the owner has seen; a failure
+    /// after it counts on the sidebar's badge.
+    var activitySeen: Int64 {
+        didSet { defaults.set(Int(activitySeen), forKey: Key.activitySeen) }
     }
 
     /// Tell the owner when a download is done or needs them.
@@ -67,6 +74,7 @@ final class AppSettings {
         customAddress = defaults.string(forKey: Key.address) ?? ""
         density = RowDensity(rawValue: defaults.string(forKey: Key.density) ?? "") ?? .compact
         notifications = defaults.object(forKey: Key.notifications) as? Bool ?? true
+        activitySeen = Int64(defaults.integer(forKey: Key.activitySeen))
         let stored = defaults.dictionary(forKey: Key.targets) as? [String: [String]] ?? [:]
         targets = Dictionary(uniqueKeysWithValues: stored.compactMap { kind, apps in
             ModelKind(rawValue: kind).map { ($0, Set(apps.compactMap(ModelApp.init(rawValue:)))) }
