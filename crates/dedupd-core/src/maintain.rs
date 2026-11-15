@@ -328,13 +328,30 @@ pub struct Link {
 impl UnplacePlan {
     /// Only the files the owner agreed to, out of this plan, and the links
     /// that name nothing else.
+    /// A model leaves Ollama whole or not at all, so there the owner agrees
+    /// to every layer or none is removed.
     pub fn only(mut self, agreed: &[String]) -> Self {
         let agreed: HashSet<&str> = agreed.iter().map(String::as_str).collect();
+        if self.app == App::Ollama && !self.remove.iter().all(|f| agreed.contains(f.path.as_str()))
+        {
+            self.keep_all(Kept::RestOfModelStays);
+            return self;
+        }
         self.remove.retain(|f| agreed.contains(f.path.as_str()));
         self.links
             .retain(|l| l.goes_with.iter().all(|p| agreed.contains(p.as_str())));
         self.bytes = self.remove.iter().map(|f| f.size).sum();
         self
+    }
+
+    /// Keep every file the plan would remove, and every link.
+    fn keep_all(&mut self, why: Kept) {
+        self.keep.extend(self.remove.drain(..).map(|f| KeptFile {
+            path: f.path,
+            why: why.sentence().to_string(),
+        }));
+        self.links.clear();
+        self.bytes = 0;
     }
 
     /// The paths of the links and manifests that would be removed.
@@ -385,33 +402,30 @@ pub fn unplace_plan(
         App::Ollama => ollama_use(dirs, repo),
         _ => Default::default(),
     };
-    // Whether the model leaves Ollama whole: every file of it goes, is gone
-    // already, or stays only for another model.
+    // Whether the model can leave Ollama whole: every file of it goes, is
+    // gone already, or stays only for another model.
     let mut whole = true;
     for p in placed {
         let reason = match Fingerprint::of(Path::new(&p.path)) {
-            Err(_) => Some("it is no longer there"),
-            Ok(now) if now != p.fingerprint() => Some("it has changed since dedupd looked at it"),
+            Err(_) => Some(Kept::Gone),
+            Ok(now) if now != p.fingerprint() => Some(Kept::Changed),
             // Ollama names a layer by the bytes of the file itself.
             Ok(_) if used_elsewhere.contains(p.derived_sha256.as_ref().unwrap_or(&p.sha256)) => {
-                Some("another Ollama model uses it")
+                Some(Kept::UsedByAnotherModel)
             }
             Ok(_)
                 if !store.contains(&p.sha256)
                     && !archive.is_some_and(|a| a.blob_path(&p.sha256).is_file()) =>
             {
-                Some("the store has no copy of it")
+                Some(Kept::NoStoredCopy)
             }
             Ok(_) => None,
         };
-        whole &= matches!(
-            reason,
-            None | Some("it is no longer there" | "another Ollama model uses it")
-        );
+        whole &= reason.is_none_or(Kept::lets_the_model_go);
         match reason {
             Some(why) => plan.keep.push(KeptFile {
                 path: p.path,
-                why: why.to_string(),
+                why: why.sentence().to_string(),
             }),
             None => {
                 plan.bytes += p.size;
@@ -422,22 +436,55 @@ pub fn unplace_plan(
             }
         }
     }
+    // A manifest names every layer of the model: while one layer has to
+    // stay, the model stays in Ollama whole, every layer and the manifest.
+    if app == App::Ollama && !whole {
+        plan.keep_all(Kept::RestOfModelStays);
+        return Ok(plan);
+    }
     let going: Vec<String> = plan.remove.iter().map(|f| f.path.clone()).collect();
     plan.links = match app {
-        // A manifest names every layer of the model, so it goes only with
-        // all of them; while one stays, so does the model in Ollama.
-        App::Ollama if whole => manifests
+        App::Ollama => manifests
             .into_iter()
             .map(|path| Link {
                 path,
                 goes_with: going.clone(),
             })
             .collect(),
-        App::Ollama => Vec::new(),
         App::Hf => hf_links(&hf_repo_dir(dirs, repo), &going),
         App::Bionic => Vec::new(),
     };
     Ok(plan)
+}
+
+/// Why a file of the model stays in the app.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Kept {
+    Gone,
+    Changed,
+    UsedByAnotherModel,
+    NoStoredCopy,
+    /// Ollama: another layer of the model has to stay, so all of it does.
+    RestOfModelStays,
+}
+
+impl Kept {
+    fn sentence(self) -> &'static str {
+        match self {
+            Kept::Gone => "it is no longer there",
+            Kept::Changed => "it has changed since dedupd looked at it",
+            Kept::UsedByAnotherModel => "another Ollama model uses it",
+            Kept::NoStoredCopy => "the store has no copy of it",
+            Kept::RestOfModelStays => {
+                "another file of the model stays, and Ollama needs all of them"
+            }
+        }
+    }
+
+    /// Whether the model can still leave the app with this file kept.
+    fn lets_the_model_go(self) -> bool {
+        matches!(self, Kept::Gone | Kept::UsedByAnotherModel)
+    }
 }
 
 /// The manifest files of `repo` in Ollama's folder, and the layers that
@@ -491,8 +538,6 @@ fn hf_links(repo_dir: &Path, going: &[String]) -> Vec<Link> {
         .collect()
 }
 
-/// Carry out a plan made by `unplace_plan`. A file that has changed since
-/// the plan was made is left alone. Returns the files removed.
 /// Take a model out of an app as the owner agreed (`unplace_apply`), and
 /// say so in the activity list: deactivated, partly, or why not. Nothing is
 /// told when nothing was removed.
@@ -526,6 +571,9 @@ pub fn deactivate(
     done
 }
 
+/// Carry out a plan made by `unplace_plan`. A file that has changed since
+/// the plan was made is left alone, and in Ollama the whole model with it.
+/// Returns the files removed.
 pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Result<usize> {
     let app = plan.app;
     let recorded: std::collections::HashMap<String, Fingerprint> = lock(db)
@@ -534,12 +582,19 @@ pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Resu
         .filter(|p| p.repo == plan.repo && p.app == app.as_str())
         .map(|p| (p.path.clone(), p.fingerprint()))
         .collect();
+    let unchanged = |path: &str| {
+        recorded
+            .get(path)
+            .is_some_and(|fp| Fingerprint::of(Path::new(path)).is_ok_and(|now| now == *fp))
+    };
+    // An Ollama model leaves whole: one layer that changed after the plan
+    // was made keeps all of them.
+    if app == App::Ollama && !plan.remove.iter().all(|f| unchanged(&f.path)) {
+        return Ok(0);
+    }
     let mut removed: HashSet<&str> = HashSet::new();
     for PlannedFile { path, .. } in &plan.remove {
-        let unchanged = recorded
-            .get(path)
-            .is_some_and(|fp| Fingerprint::of(Path::new(path)).is_ok_and(|now| now == *fp));
-        if !unchanged {
+        if !unchanged(path) {
             continue;
         }
         fs::remove_file(path).with_context(|| format!("removing {path}"))?;
