@@ -14,7 +14,7 @@ use dedupd_core::place::AppDirs;
 use dedupd_core::pull::{self, PullRequest};
 use dedupd_core::store::Store;
 use dedupd_core::{Home, archive, status};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -282,18 +282,27 @@ pub fn backup_if_attached(o: &Opened) {
     }
 }
 
+/// Whether two names are of one folder: `~/.dedupd` and the same folder
+/// reached through a link, or written with a trailing slash, are one.
+fn same_folder(a: &Path, b: &Path) -> bool {
+    match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => a == b,
+    }
+}
+
 async fn cmd_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> Result<()> {
     let model_spec = model.model.clone();
     let req = PullRequest::from_spec(&model.model, model.include, model.apps, offline, jobs)?;
     // When the daemon is running on this store it does the work, so one
     // process downloads and the daemon's own requests share the result.
     let address = o.config.listen().to_string();
-    let home = o.home.root().to_string_lossy().into_owned();
+    let home = o.home.root().to_path_buf();
     let via_daemon = {
         let address = address.clone();
         tokio::task::spawn_blocking(move || dedupd_client::status(address))
             .await?
-            .is_ok_and(|s| s.home == home)
+            .is_ok_and(|s| same_folder(Path::new(&s.home), &home))
     };
 
     let progress = Arc::new(Progress::default());
@@ -520,7 +529,7 @@ async fn cmd_adopt(
 }
 
 fn cmd_status(o: &Opened, json: bool) -> Result<()> {
-    let s = status::status(&o.engine.db())?;
+    let s = status::status(&o.engine.db(), &o.engine.store)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&s)?);
         return Ok(());
@@ -674,5 +683,15 @@ mod tests {
             dedupd_client::default_address(),
             dedupd_core::config::DEFAULT_LISTEN
         );
+    }
+    #[test]
+    fn one_folder_by_two_names_is_one_home() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        std::fs::create_dir(&home).unwrap();
+        std::os::unix::fs::symlink(&home, dir.path().join("link")).unwrap();
+        assert!(super::same_folder(&dir.path().join("link"), &home));
+        assert!(super::same_folder(&dir.path().join("home/"), &home));
+        assert!(!super::same_folder(dir.path(), &home));
     }
 }

@@ -195,9 +195,11 @@ actor FixtureDaemonClient: DaemonClient {
         }
     }
 
-    func unplace(_ repo: String, app: ModelApp, apply: Bool, at address: String) async throws -> UnplacePlan {
+    func unplace(_ repo: String, app: ModelApp, paths: [String]?, apply: Bool, at address: String) async throws
+        -> UnplacePlan {
         try answering(address)
-        let files = FixtureData.detail(repo)?.placements.filter { $0.app == app } ?? []
+        let files = (FixtureData.detail(repo)?.placements.filter { $0.app == app } ?? [])
+            .filter { paths?.contains($0.path) ?? true }
         let plan = UnplacePlan(
             repo: repo,
             app: app,

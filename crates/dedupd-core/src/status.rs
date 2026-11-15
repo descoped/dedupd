@@ -1,6 +1,7 @@
 //! The totals: what the store holds, what each app holds, and each model.
 
 use crate::db::Db;
+use crate::store::Store;
 use anyhow::Result;
 use dedupd_api::daemon::{AppUsage, Repository};
 
@@ -15,8 +16,8 @@ pub struct Status {
     pub repos: Vec<Repository>,
 }
 
-pub fn status(db: &Db) -> Result<Status> {
-    let (store_files, store_bytes) = db.store_totals()?;
+pub fn status(db: &Db, store: &Store) -> Result<Status> {
+    let (store_files, store_bytes) = store_totals(db, store)?;
     Ok(Status {
         store_files,
         store_bytes,
@@ -24,4 +25,17 @@ pub fn status(db: &Db) -> Result<Status> {
         apps: db.app_usage()?,
         repos: db.repositories()?,
     })
+}
+
+/// The files the store holds on the internal disk, and their size. A file
+/// that is only on the archive disk (offloaded, or of an archived model) is
+/// known to the database but takes no room here.
+pub fn store_totals(db: &Db, store: &Store) -> Result<(u64, u64)> {
+    let here: Vec<u64> = db
+        .all_blobs()?
+        .into_iter()
+        .filter(|b| store.contains(&b.sha256))
+        .map(|b| b.size)
+        .collect();
+    Ok((here.len() as u64, here.iter().sum()))
 }

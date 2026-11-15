@@ -325,11 +325,6 @@ fn secure(store: &Store, archive: &Home, blob: &BlobRow) -> Result<bool> {
     Ok(true)
 }
 
-/// Archive one model: check that the archive disk holds every file that is
-/// about to leave the internal disk (reading each copy in full), take the
-/// model out of every app, remove those files from the store and mark the
-/// model as archived. Nothing is removed unless every copy is good.
-/// `on_file` is told the size of each file as its copy has been checked.
 /// Why a model with a job in the download queue that is not finished is
 /// not archived or restored: the job could fetch or place its files again.
 pub fn busy(repo: &str) -> String {
@@ -339,6 +334,11 @@ pub fn busy(repo: &str) -> String {
     )
 }
 
+/// Archive one model: check that the archive disk holds every file that is
+/// about to leave the internal disk (reading each copy in full), take the
+/// model out of every app, remove those files from the store and mark the
+/// model as archived. Nothing is removed unless every copy is good.
+/// `on_file` is told the size of each file as its copy has been checked.
 pub fn archive_apply(
     db: &Mutex<Db>,
     store: &Store,

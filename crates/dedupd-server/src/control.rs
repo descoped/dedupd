@@ -49,7 +49,7 @@ fn path_text(path: &std::path::Path) -> String {
 }
 
 fn status_answer(server: &Server) -> anyhow::Result<DaemonStatus> {
-    let s = status::status(&server.engine.db())?;
+    let s = status::status(&server.engine.db(), &server.engine.store)?;
     let archive_home = server.config.archive_home();
     let (total, done) = server.queue.totals();
     let governor = server.engine.governor.state();
@@ -138,7 +138,13 @@ fn events(server: &Arc<Server>) -> Response {
 }
 
 /// Queue a download, or name the one already queued for the same thing.
+/// Refused while the model is being archived or restored: the job would
+/// fetch or place the files the move is taking away or bringing back.
 fn enqueue(server: &Arc<Server>, body: PullBody) -> Result<(i64, bool), Refused> {
+    let _starting = server.starting.lock().expect("lock");
+    if let Some(why) = moves::refuses_job(server.moving.borrow().as_ref(), &body.model) {
+        return Err(Box::new(error(StatusCode::CONFLICT, why)));
+    }
     server
         .queue
         .add_or_find(

@@ -251,6 +251,10 @@ private struct AppRow: View {
         return daemon.jobs.contains { $0.state.isActive && $0.repo == repo && $0.apps.contains(app) }
     }
 
+    /// The model is being archived or restored; the daemon takes no other
+    /// change to it until that has finished.
+    private var isMoving: Bool { library.move?.running == true }
+
     /// The variants this app can use and does not have yet.
     private var placeable: [Variant] {
         variants.filter { $0.usableApps.contains(app) && !$0.isPlaced(in: app) && $0.isStored }
@@ -284,6 +288,7 @@ private struct AppRow: View {
                     Task { await library.planRemoval(from: app) }
                 }
                 .controlSize(.small)
+                .disabled(isMoving)
                 .help("Take the model out of \(app.title). The stored copy stays.")
                 .accessibilityIdentifier("remove-\(app.name)")
             } else if placeable.count == 1, let variant = placeable.first {
@@ -291,7 +296,8 @@ private struct AppRow: View {
                     Task { await library.place(variant, into: app) }
                 }
                 .controlSize(.small)
-                .help(variant.placeHelp(for: app))
+                .disabled(isMoving)
+                .help(isMoving ? "Wait until the move of this model has finished" : variant.placeHelp(for: app))
                 .accessibilityIdentifier("place-\(app.name)")
             } else if !placeable.isEmpty {
                 Menu("Activate") {
@@ -303,6 +309,7 @@ private struct AppRow: View {
                 }
                 .controlSize(.small)
                 .fixedSize()
+                .disabled(isMoving)
             }
         }
         .accessibilityElement(children: .contain)

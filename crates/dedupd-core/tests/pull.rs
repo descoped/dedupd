@@ -323,6 +323,68 @@ async fn a_model_is_removed_from_an_app_and_placed_again() {
 /// once the archive disk is known to hold a good copy of each file; restoring
 /// copies the files back and leaves the apps alone.
 #[tokio::test]
+async fn links_and_manifests_stay_with_the_files_that_stay() {
+    let up = upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let e = engine(&home, &up.server.uri(), &dir.path().join("apps"), None);
+    pull::pull(&e, &request(&App::ALL, false), &Arc::default())
+        .await
+        .unwrap();
+    let snap = e
+        .dirs
+        .hf_cache
+        .join("models--org--Repo-GGUF/snapshots")
+        .join(COMMIT);
+
+    // The owner agrees to remove the weights from the Hugging Face cache but
+    // not the config: the config's link stays with it.
+    let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, REPO, App::Hf).unwrap();
+    let weights = plan
+        .remove
+        .iter()
+        .find(|f| f.path.ends_with(&sha256(&up.weights)))
+        .unwrap()
+        .path
+        .clone();
+    let plan = plan.only(std::slice::from_ref(&weights));
+    assert_eq!(plan.link_paths().len(), 1);
+    assert_eq!(maintain::unplace_apply(&e.db, &e.dirs, &plan).unwrap(), 1);
+    assert!(fs::symlink_metadata(snap.join("model-Q4_K_M.gguf")).is_err());
+    assert_eq!(fs::read(snap.join("sub/config.json")).unwrap(), up.config);
+
+    // A file that changes after the plan was made stays, and so does its
+    // link.
+    let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, REPO, App::Hf).unwrap();
+    assert_eq!(plan.link_paths().len(), 1);
+    let config = &plan.remove[0].path;
+    fs::write(config, b"edited after the plan").unwrap();
+    assert_eq!(maintain::unplace_apply(&e.db, &e.dirs, &plan).unwrap(), 0);
+    assert!(fs::symlink_metadata(snap.join("sub/config.json")).is_ok());
+
+    // One of Ollama's layers was changed: the model stays whole in Ollama,
+    // manifest and all, and only the untouched layers could go.
+    let manifest = e
+        .dirs
+        .ollama
+        .join("manifests/hf.co")
+        .join(REPO)
+        .join("Q4_K_M");
+    let layer = e
+        .dirs
+        .ollama
+        .join("blobs")
+        .join(format!("sha256-{}", sha256(&up.weights)));
+    fs::set_permissions(&layer, std::os::unix::fs::PermissionsExt::from_mode(0o644)).unwrap();
+    fs::write(&layer, b"changed").unwrap();
+    let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, REPO, App::Ollama).unwrap();
+    assert_eq!(plan.keep.len(), 1);
+    assert!(plan.link_paths().is_empty());
+    maintain::unplace_apply(&e.db, &e.dirs, &plan).unwrap();
+    assert!(manifest.is_file());
+}
+
+#[tokio::test]
 async fn a_model_is_archived_and_restored() {
     let up = upstream().await;
     let dir = tempfile::tempdir().unwrap();

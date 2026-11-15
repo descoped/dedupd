@@ -14,6 +14,7 @@ use dedupd_api::library::{Cost, DecisionState, UpstreamState};
 use dedupd_api::moves::{ModelMove, MoveKind};
 use dedupd_core::Home;
 use dedupd_core::config::Config;
+use dedupd_core::ollama::MANIFEST_TYPE;
 use dedupd_server::Server;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -209,6 +210,46 @@ async fn remove_upstream(fx: &Fixture) {
         .mount(&fx.upstream)
         .await;
     fx.server.forget_refs();
+}
+
+/// Hugging Face is out of reach: every request gets a server error.
+async fn upstream_down(fx: &Fixture) {
+    fx.upstream.reset().await;
+    Mock::given(path_regex(".*"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&fx.upstream)
+        .await;
+    fx.server.forget_refs();
+}
+
+#[tokio::test]
+async fn a_gated_model_is_not_served_from_the_kept_copy_without_asking() {
+    for gated in [false, true] {
+        let fx = fixture().await;
+        let snap = dedupd_core::hub::Snapshot {
+            commit: COMMIT.into(),
+            info_json: json!({"sha": COMMIT, "id": REPO, "gated": if gated { json!("manual") } else { json!(false) }})
+                .to_string(),
+            tree_json: "[]".into(),
+            entries: vec![],
+        };
+        {
+            let mut db = fx.server.engine.db();
+            let id = db.archive_snapshot("hf", REPO, "main", &snap).unwrap();
+            db.save_manifest(id, "latest", "", MANIFEST_TYPE, &fx.manifest)
+                .unwrap();
+        }
+        upstream_down(&fx).await;
+        let get = |p: String| fx.http.get(format!("{}{p}", fx.base)).send();
+        let info = get(format!("/api/models/{REPO}/revision/main"))
+            .await
+            .unwrap();
+        let manifest = get(format!("/v2/{REPO}/manifests/latest")).await.unwrap();
+        let served = (info.status() == 200, manifest.status() == 200);
+        // An open model is answered from what is kept; a gated one waits
+        // until the Hub can say whether this client may have it.
+        assert_eq!(served, (!gated, !gated), "gated: {gated}");
+    }
 }
 
 #[tokio::test]

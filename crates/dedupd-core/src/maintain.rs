@@ -130,6 +130,9 @@ pub struct VerifyReport {
     pub missing: Vec<String>,
     /// Files that are only on the archive disk.
     pub only_in_archive: usize,
+    /// When the archive disk is checked: files that are only on the
+    /// internal disk, because the backup has not copied them yet.
+    pub not_backed_up: usize,
 }
 
 /// Hash every stored file and compare with its name. With `archive`, check
@@ -145,7 +148,6 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
         (true, None) => bail!("no archive folder is configured"),
         (false, _) => store.home().clone(),
     };
-    let other = if archive { None } else { store.archive() };
 
     let next = AtomicUsize::new(0);
     let report = Mutex::new(VerifyReport::default());
@@ -158,7 +160,13 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
                     let path = root.blob_path(&blob.sha256);
                     if !path.is_file() {
                         let mut r = report.lock().expect("lock");
-                        if other.is_some_and(|a| a.blob_path(&blob.sha256).is_file()) {
+                        if archive && store.contains(&blob.sha256) {
+                            r.not_backed_up += 1;
+                        } else if !archive
+                            && store
+                                .archive()
+                                .is_some_and(|a| a.blob_path(&blob.sha256).is_file())
+                        {
                             r.only_in_archive += 1;
                         } else {
                             r.missing.push(blob.sha256.clone());
@@ -184,8 +192,9 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
 
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct GcPlan {
-    /// Stored files that no archived revision, Ollama manifest or app file
-    /// refers to. Removing them loses nothing dedupd knows a use for.
+    /// Stored files that no app file refers to, and no model in the library
+    /// through a revision, an Ollama manifest or a file it held. A model's
+    /// files become orphans only once it is forgotten.
     pub orphans: Vec<BlobRow>,
     /// Stored files that are safely on the archive disk and that no app
     /// uses. Removing the local copy frees space; they come back on demand.
@@ -254,8 +263,17 @@ pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
         }
         lock(db).delete_blob(&blob.sha256)?;
     }
+    // The local copy of a file to offload goes only once the archive disk's
+    // copy has been read in full and is good; a damaged copy or a detached
+    // disk leaves it.
     for blob in &plan.offload {
-        freed += remove_local(blob)?;
+        let good = store.archive().is_some_and(|archive| {
+            hash_file(&archive.blob_path(&blob.sha256), false)
+                .is_ok_and(|h| h.sha256 == blob.sha256)
+        });
+        if good {
+            freed += remove_local(blob)?;
+        }
     }
     Ok(freed)
 }
@@ -291,28 +309,47 @@ pub struct UnplacePlan {
     /// when it was hashed, and its content stays in the store.
     pub remove: Vec<PlannedFile>,
     /// Links and manifests that go with them.
-    pub links: Vec<String>,
+    pub links: Vec<Link>,
     /// Files that would be left alone, and why.
     pub keep: Vec<KeptFile>,
     pub bytes: u64,
 }
 
+/// A link or manifest in an app's folder that names app files: a snapshot
+/// link in the Hugging Face cache, or an Ollama manifest. It goes only with
+/// every file it names that would otherwise stay.
+#[derive(Debug, Clone)]
+pub struct Link {
+    pub path: String,
+    /// The files of `remove` that must all go for this link to go.
+    pub goes_with: Vec<String>,
+}
+
 impl UnplacePlan {
-    /// Only the files the owner agreed to, out of this plan.
+    /// Only the files the owner agreed to, out of this plan, and the links
+    /// that name nothing else.
     pub fn only(mut self, agreed: &[String]) -> Self {
         let agreed: HashSet<&str> = agreed.iter().map(String::as_str).collect();
         self.remove.retain(|f| agreed.contains(f.path.as_str()));
+        self.links
+            .retain(|l| l.goes_with.iter().all(|p| agreed.contains(p.as_str())));
         self.bytes = self.remove.iter().map(|f| f.size).sum();
         self
     }
 
+    /// The paths of the links and manifests that would be removed.
+    pub fn link_paths(&self) -> Vec<String> {
+        self.links.iter().map(|l| l.path.clone()).collect()
+    }
+
     /// The plan as the control API shows it; `removed` once it was done.
     pub fn answer(self, removed: Option<usize>) -> dedupd_api::moves::UnplacePlan {
+        let links = self.link_paths();
         dedupd_api::moves::UnplacePlan {
             repo: self.repo,
             app: self.app,
+            links,
             remove: self.remove,
-            links: self.links,
             keep: self.keep,
             bytes: self.bytes,
             removed: removed.map(|n| n as u64),
@@ -348,6 +385,9 @@ pub fn unplace_plan(
         App::Ollama => ollama_use(dirs, repo),
         _ => Default::default(),
     };
+    // Whether the model leaves Ollama whole: every file of it goes, is gone
+    // already, or stays only for another model.
+    let mut whole = true;
     for p in placed {
         let reason = match Fingerprint::of(Path::new(&p.path)) {
             Err(_) => Some("it is no longer there"),
@@ -364,6 +404,10 @@ pub fn unplace_plan(
             }
             Ok(_) => None,
         };
+        whole &= matches!(
+            reason,
+            None | Some("it is no longer there" | "another Ollama model uses it")
+        );
         match reason {
             Some(why) => plan.keep.push(KeptFile {
                 path: p.path,
@@ -378,12 +422,19 @@ pub fn unplace_plan(
             }
         }
     }
+    let going: Vec<String> = plan.remove.iter().map(|f| f.path.clone()).collect();
     plan.links = match app {
-        App::Ollama => manifests,
-        App::Hf => {
-            let going: HashSet<&str> = plan.remove.iter().map(|f| f.path.as_str()).collect();
-            hf_links(&hf_repo_dir(dirs, repo), &going)
-        }
+        // A manifest names every layer of the model, so it goes only with
+        // all of them; while one stays, so does the model in Ollama.
+        App::Ollama if whole => manifests
+            .into_iter()
+            .map(|path| Link {
+                path,
+                goes_with: going.clone(),
+            })
+            .collect(),
+        App::Ollama => Vec::new(),
+        App::Hf => hf_links(&hf_repo_dir(dirs, repo), &going),
         App::Bionic => Vec::new(),
     };
     Ok(plan)
@@ -420,21 +471,23 @@ fn ollama_use(dirs: &AppDirs, repo: &str) -> (Vec<String>, HashSet<String>) {
 }
 
 /// The snapshot links in a Hugging Face cache folder that point at one of
-/// the blobs in `going`.
-fn hf_links(repo_dir: &Path, going: &HashSet<&str>) -> Vec<String> {
+/// the blobs in `going`, each with the blob it points at.
+fn hf_links(repo_dir: &Path, going: &[String]) -> Vec<Link> {
     let blobs = repo_dir.join("blobs");
     walkdir::WalkDir::new(repo_dir.join("snapshots"))
         .sort_by_file_name()
         .into_iter()
         .flatten()
         .filter(|e| e.path_is_symlink())
-        .filter(|e| {
-            fs::read_link(e.path())
-                .ok()
-                .and_then(|target| target.file_name().map(|name| blobs.join(name)))
-                .is_some_and(|blob| going.contains(blob.to_string_lossy().as_ref()))
+        .filter_map(|e| {
+            let target = fs::read_link(e.path()).ok()?;
+            let blob = blobs.join(target.file_name()?);
+            let blob = blob.to_string_lossy();
+            going.iter().any(|g| *g == blob).then(|| Link {
+                path: e.path().to_string_lossy().into_owned(),
+                goes_with: vec![blob.into_owned()],
+            })
         })
-        .map(|e| e.path().to_string_lossy().into_owned())
         .collect()
 }
 
@@ -481,7 +534,7 @@ pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Resu
         .filter(|p| p.repo == plan.repo && p.app == app.as_str())
         .map(|p| (p.path.clone(), p.fingerprint()))
         .collect();
-    let mut removed = 0;
+    let mut removed: HashSet<&str> = HashSet::new();
     for PlannedFile { path, .. } in &plan.remove {
         let unchanged = recorded
             .get(path)
@@ -491,9 +544,17 @@ pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Resu
         }
         fs::remove_file(path).with_context(|| format!("removing {path}"))?;
         lock(db).delete_placement(path)?;
-        removed += 1;
+        removed.insert(path);
     }
-    for link in &plan.links {
+    // A file that changed after the plan was made stays, and so does every
+    // link that names it.
+    let links: Vec<&str> = plan
+        .links
+        .iter()
+        .filter(|l| l.goes_with.iter().all(|p| removed.contains(p.as_str())))
+        .map(|l| l.path.as_str())
+        .collect();
+    for link in &links {
         let _ = fs::remove_file(link);
     }
     if app == App::Hf {
@@ -511,11 +572,9 @@ pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Resu
         App::Hf => (dirs.hf_cache.as_path(), false),
         App::Ollama => (dirs.ollama.as_path(), true),
     };
-    let mut folders: Vec<PathBuf> = plan
-        .remove
+    let mut folders: Vec<PathBuf> = removed
         .iter()
-        .map(|f| &f.path)
-        .chain(&plan.links)
+        .chain(&links)
         .filter_map(|p| Path::new(p).parent().map(Path::to_path_buf))
         .collect();
     folders.sort();
@@ -535,7 +594,7 @@ pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Resu
             }
         }
     }
-    Ok(removed)
+    Ok(removed.len())
 }
 
 /// Remove `dir` when nothing is in it but what Finder leaves behind.

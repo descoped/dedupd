@@ -254,7 +254,7 @@ fn read_text(path: &Path) -> Option<String> {
 
 /// Where everything is: the store, the archive and each app's folder.
 pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
-    let (files, bytes) = db.store_totals()?;
+    let (files, bytes) = crate::status::store_totals(db, store)?;
     let repos = db.repo_count()?;
     let (volume_total, volume_free) = store.volume()?;
     let mut apps = Vec::new();

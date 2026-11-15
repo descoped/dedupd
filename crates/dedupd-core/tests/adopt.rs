@@ -149,7 +149,7 @@ async fn adopts_verifies_and_leaves_app_files_alone() {
     assert!(info.contains("org/Repo-GGUF"));
     assert!(tree.contains("xetHash") && tree.contains("README.md"));
 
-    let s = status(&db.lock().unwrap()).unwrap();
+    let s = status(&db.lock().unwrap(), &store).unwrap();
     assert_eq!(s.store_files, 4);
     assert_eq!(s.apps.len(), 1);
     assert_eq!((s.apps[0].app.as_str(), s.apps[0].files), ("bionic", 4));
@@ -182,7 +182,10 @@ async fn second_run_does_not_rehash_and_offline_keeps_earlier_verification() {
     assert_eq!(out[0].upstream, Upstream::NotAsked);
     assert!(out[0].files.iter().all(|f| f.action == Action::Unchanged));
     assert_eq!(verify_of(&out[0], "model.gguf").0, VerifyState::Verified);
-    assert_eq!(status(&db.lock().unwrap()).unwrap().repos[0].verified, 2);
+    assert_eq!(
+        status(&db.lock().unwrap(), &store).unwrap().repos[0].verified,
+        2
+    );
 
     // A file the app replaced is hashed again and gets a new store entry;
     // the old one stays, because nothing is deleted automatically.
@@ -196,7 +199,7 @@ async fn second_run_does_not_rehash_and_offline_keeps_earlier_verification() {
     assert_eq!((v, action), (VerifyState::Mismatch, Action::Cloned));
     assert_ne!(new_sha, old_sha);
     assert!(store.contains(&old_sha) && store.contains(new_sha));
-    assert_eq!(status(&db.lock().unwrap()).unwrap().store_files, 5);
+    assert_eq!(status(&db.lock().unwrap(), &store).unwrap().store_files, 5);
 }
 
 #[tokio::test]
@@ -255,7 +258,7 @@ async fn dry_run_writes_nothing() {
     .unwrap();
     assert!(out[0].files.iter().all(|f| f.action == Action::DryRun));
     assert_eq!(verify_of(&out[0], "model.gguf").0, VerifyState::Verified);
-    let s = status(&db.lock().unwrap()).unwrap();
+    let s = status(&db.lock().unwrap(), &store).unwrap();
     assert_eq!((s.store_files, s.repos.len()), (0, 0));
     assert!(!store.contains(verify_of(&out[0], "model.gguf").2));
 }
@@ -289,5 +292,5 @@ async fn repo_missing_upstream_is_still_adopted() {
             .iter()
             .all(|f| f.verify == VerifyState::Unchecked && f.action == Action::Cloned)
     );
-    assert_eq!(status(&db.lock().unwrap()).unwrap().store_files, 4);
+    assert_eq!(status(&db.lock().unwrap(), &store).unwrap().store_files, 4);
 }

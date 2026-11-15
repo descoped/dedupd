@@ -63,6 +63,9 @@ final class DiscoverStore {
 
     @ObservationIgnored private let daemon: DaemonStore
     @ObservationIgnored private var generation = 0
+    /// Counts the reads of a model's details, so an answer that comes back
+    /// after a later one is dropped.
+    @ObservationIgnored private var detailGeneration = 0
     /// The words of the last search, as they were checked; a next page
     /// asks for the same ones.
     @ObservationIgnored private var words = ""
@@ -185,6 +188,8 @@ final class DiscoverStore {
             detail = .idle
             return
         }
+        detailGeneration += 1
+        let mine = detailGeneration
         if !quietly || detail.value == nil {
             detail = .loading
         }
@@ -194,7 +199,9 @@ final class DiscoverStore {
         } catch {
             answer = .failed(describe(error))
         }
-        if selection == repo {
+        // The owner may have selected another model, or a later read may
+        // have answered, meanwhile.
+        if mine == detailGeneration, selection == repo {
             detail = answer
         }
     }
