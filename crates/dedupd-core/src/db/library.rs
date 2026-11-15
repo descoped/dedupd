@@ -268,15 +268,6 @@ impl Db {
     }
 
     /// The files in the store and their size.
-    pub fn store_totals(&self) -> Result<(u64, u64)> {
-        let (files, bytes): (i64, i64) = self.conn.query_row(
-            "SELECT count(*), COALESCE(sum(size), 0) FROM blobs",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
-        Ok((count(files), count(bytes)))
-    }
-
     pub fn repo_count(&self) -> Result<u64> {
         let n: i64 = self
             .conn

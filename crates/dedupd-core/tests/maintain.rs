@@ -263,6 +263,9 @@ async fn offload_frees_local_space_and_the_file_comes_back() {
         70_000
     );
     assert!(!fx.store.contains(&sha));
+    // The internal disk's totals no longer count it.
+    let totals = dedupd_core::status::store_totals(&fx.db.lock().unwrap(), &fx.store).unwrap();
+    assert_eq!(totals, (0, 0));
     assert_eq!(
         maintain::verify(&fx.db, &fx.store, false, 1)
             .unwrap()

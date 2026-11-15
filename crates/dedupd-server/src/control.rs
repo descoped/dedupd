@@ -49,7 +49,7 @@ fn path_text(path: &std::path::Path) -> String {
 }
 
 fn status_answer(server: &Server) -> anyhow::Result<DaemonStatus> {
-    let s = status::status(&server.engine.db())?;
+    let s = status::status(&server.engine.db(), &server.engine.store)?;
     let archive_home = server.config.archive_home();
     let (total, done) = server.queue.totals();
     let governor = server.engine.governor.state();

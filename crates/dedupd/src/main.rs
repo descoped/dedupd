@@ -520,7 +520,7 @@ async fn cmd_adopt(
 }
 
 fn cmd_status(o: &Opened, json: bool) -> Result<()> {
-    let s = status::status(&o.engine.db())?;
+    let s = status::status(&o.engine.db(), &o.engine.store)?;
     if json {
         println!("{}", serde_json::to_string_pretty(&s)?);
         return Ok(());
