@@ -43,9 +43,10 @@ protocol DaemonClient: Sendable {
 
     func checkUpstream(_ repo: String, at address: String) async throws -> UpstreamCheck
     func forget(_ repo: String, at address: String) async throws
-    /// What removing a model from an app would delete, and with `apply` the
-    /// removal itself.
-    func unplace(_ repo: String, app: ModelApp, apply: Bool, at address: String) async throws -> UnplacePlan
+    /// What removing `repo` from `app` would delete; with `apply`, remove it.
+    /// `paths` limits the removal to the files the owner saw and agreed to.
+    func unplace(_ repo: String, app: ModelApp, paths: [String]?, apply: Bool, at address: String) async throws
+        -> UnplacePlan
     /// What archiving a model would do: which apps it is taken out of and
     /// how much leaves the internal disk.
     func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan
@@ -148,9 +149,10 @@ struct LiveDaemonClient: DaemonClient {
         try await Self.blocking { try DedupdClient.forget(address: address, repo: repo) }
     }
 
-    func unplace(_ repo: String, app: ModelApp, apply: Bool, at address: String) async throws -> UnplacePlan {
+    func unplace(_ repo: String, app: ModelApp, paths: [String]?, apply: Bool, at address: String) async throws
+        -> UnplacePlan {
         try await Self.blocking {
-            try DedupdClient.unplace(address: address, repo: repo, app: app, apply: apply, paths: nil)
+            try DedupdClient.unplace(address: address, repo: repo, app: app, apply: apply, paths: paths)
         }
     }
 

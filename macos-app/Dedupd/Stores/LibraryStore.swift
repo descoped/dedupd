@@ -174,18 +174,20 @@ final class LibraryStore {
             return
         }
         removal = await daemon.attempt { client, address in
-            try await client.unplace(model.repo, app: app, apply: false, at: address)
+            try await client.unplace(model.repo, app: app, paths: nil, apply: false, at: address)
         }
     }
 
-    /// Remove what the plan lists. The stored copy stays.
+    /// Remove what the plan lists, and nothing the owner was not shown. The
+    /// stored copy stays.
     func applyRemoval() async {
         guard let plan = removal else {
             return
         }
         removal = nil
+        let agreed = plan.remove.map(\.path)
         await daemon.attempt { client, address in
-            try await client.unplace(plan.repo, app: plan.app, apply: true, at: address)
+            try await client.unplace(plan.repo, app: plan.app, paths: agreed, apply: true, at: address)
         }
         await reload()
     }

@@ -200,7 +200,7 @@ struct ScreenContractTests {
         #expect(!check.running)
         #expect(check.finishedAt == nil)
 
-        let removal = try await client.unplace("org/Repo-GGUF", app: .bionic, apply: false, at: server.address)
+        let removal = try await client.unplace("org/Repo-GGUF", app: .bionic, paths: nil, apply: false, at: server.address)
         #expect(removal.remove.count == 2)
         #expect(removal.bytes == 300_008)
         #expect(removal.removed == nil)
