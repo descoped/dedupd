@@ -84,11 +84,23 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
         return manifest_response(call, &media_type, body);
     }
 
+    // The Hub said no to this client, or the repository is gated or
+    // private: its answer stands, as for the Hub API. Otherwise (gone,
+    // down, out of reach) the archived manifest answers.
+    let refused = answer
+        .as_ref()
+        .is_ok_and(|r| matches!(r.status().as_u16(), 401 | 403));
     let archived = {
         let db = server.engine.db();
+        let restricted = db
+            .archived(PROVIDER_HF, name, "main")
+            .ok()
+            .flatten()
+            .is_some_and(|(_, snap)| crate::hubapi::restricted(&snap.info_json));
         db.repo_id(PROVIDER_HF, name)
             .ok()
             .flatten()
+            .filter(|_| !refused && !restricted)
             .and_then(|id| db.manifest(id, tag, Some(&user_agent)).ok().flatten())
     };
     match archived {

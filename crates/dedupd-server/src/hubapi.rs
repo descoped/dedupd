@@ -30,7 +30,7 @@ pub(crate) struct Rev {
 
 /// True when the archived model info says access is restricted. Such a
 /// repository is checked upstream on every request.
-fn restricted(info_json: &str) -> bool {
+pub(crate) fn restricted(info_json: &str) -> bool {
     let info: Value = serde_json::from_str(info_json).unwrap_or(Value::Null);
     let gated = info
         .get("gated")
@@ -115,8 +115,10 @@ impl Server {
                 }
                 _ => None,
             },
-            // Upstream is down or unreachable: the archive answers.
-            Err(e) => archived.map(|snap| {
+            // Upstream is down or unreachable: the archive answers for an
+            // open repository. A restricted one is served only once the Hub
+            // has said yes to this client, so not while it cannot be asked.
+            Err(e) => archived.filter(|_| open).map(|snap| {
                 eprintln!("dedupd: {repo}@{rev}: {e}; using the archived copy");
                 Rev {
                     snap,
