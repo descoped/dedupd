@@ -1427,6 +1427,22 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
     assert_eq!(code, 409);
     let (_, none) = control(&plain, "GET", "move", None).await;
     assert!(none.is_null());
+    // Asked to start, the daemon refuses both too, and both refusals are
+    // in the activity list as failures with the reason. Plans are not.
+    let go = json!({"repo": REPO, "apply": true});
+    let (code, _) = control(&plain, "POST", "archive", Some(go.clone())).await;
+    assert_eq!(code, 409);
+    let (code, _) = control(&plain, "POST", "restore", Some(go)).await;
+    assert_eq!(code, 409);
+    let (_, activity) = control(&plain, "GET", "activity", None).await;
+    let refusals: Vec<(&str, bool)> = activity["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["action"] != "activate")
+        .map(|e| (e["action"].as_str().unwrap(), e["ok"].as_bool().unwrap()))
+        .collect();
+    assert_eq!(refusals, [("restore", false), ("archive", false)]);
 
     let fx = fixture_with_archive().await;
     download(&fx, json!({"model": REPO, "apps": ["bionic", "hf"]})).await;

@@ -207,9 +207,9 @@ final class DiscoverStore {
     }
 
     /// Queue a variant for download into the apps chosen for its kind; one
-    /// that is stored is only activated in them.
+    /// whose weights are stored is only activated in them.
     func download(_ variant: Variant, into apps: [ModelApp]) async {
-        let request = PullRequest(model: variant.spec, apps: apps, kind: variant.isStored ? .activation : .download)
+        let request = PullRequest(model: variant.spec, apps: apps, kind: variant.canActivate ? .activation : .download)
         let taken = await daemon.enqueue(request)
         if taken {
             await loadDetail(quietly: true)

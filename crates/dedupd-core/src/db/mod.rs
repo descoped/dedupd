@@ -473,6 +473,30 @@ impl Db {
         Ok(())
     }
 
+    /// Record a stored file only when a repository refers to it: through a
+    /// revision, an Ollama manifest or a file it held. Returns whether it
+    /// was recorded. A file nothing refers to stays out of the records, so
+    /// it never shows up as something `gc` could remove.
+    pub fn record_blob_if_used(
+        &self,
+        sha256: &str,
+        size: u64,
+        git_oid: Option<&str>,
+    ) -> Result<bool> {
+        let added = self.conn.execute(
+            &format!(
+                "INSERT INTO blobs (sha256, size, git_oid, added_at)
+                 SELECT b.sha256, b.size, b.git_oid, b.added_at
+                 FROM (SELECT ?1 AS sha256, ?2 AS size, ?3 AS git_oid, ?4 AS added_at) b
+                 WHERE {}
+                 ON CONFLICT (sha256) DO NOTHING",
+                used_by("IS NOT NULL")
+            ),
+            params![sha256, size as i64, git_oid, now()],
+        )?;
+        Ok(added > 0)
+    }
+
     pub fn placement(&self, path: &str) -> Result<Option<PlacementRow>> {
         Ok(self
             .conn

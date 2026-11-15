@@ -353,7 +353,7 @@ pub fn archive_apply(
         repo,
         None,
         &done,
-        |_| Some(activity::ARCHIVED.to_string()),
+        |r| Some(activity::archived(r.files, r.freed, r.keep.len())),
     );
     done
 }
@@ -507,7 +507,7 @@ pub fn restore(
         repo,
         None,
         &done,
-        |r| (r.files > 0).then(|| activity::RESTORED.to_string()),
+        |r| (r.files > 0).then(|| activity::restored(r.files, r.bytes)),
     );
     done
 }

@@ -310,6 +310,11 @@ pub struct Variant {
     pub files: u64,
     pub bytes: u64,
     pub stored_bytes: u64,
+    /// Every weights file of it is stored. The small files it may lack (a
+    /// README, or a settings file the app it came from did not download)
+    /// are fetched when it is activated.
+    #[serde(default)]
+    pub weights_stored: bool,
     /// The apps dedupd can put it into: those whose decision is `ready`.
     pub usable_by: Vec<App>,
     /// The apps that have all its weight files.

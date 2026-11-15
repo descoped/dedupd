@@ -195,6 +195,26 @@ impl Store {
         removed
     }
 
+    /// The sha256 of every file in the store, read from the names in its
+    /// folder (`sha256/ab/<hex>`). Anything else there is left out: a name
+    /// that is not 64 lowercase hex digits, or one in the wrong subfolder.
+    pub fn stored_hashes(&self) -> Vec<String> {
+        let root = self.home.store_dir().join("sha256");
+        let mut out = Vec::new();
+        for prefix in fs::read_dir(&root).into_iter().flatten().flatten() {
+            let prefix_name = prefix.file_name().to_string_lossy().into_owned();
+            for entry in fs::read_dir(prefix.path()).into_iter().flatten().flatten() {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let is_file = entry.file_type().is_ok_and(|t| t.is_file());
+                if is_file && is_sha256_hex(&name) && name.starts_with(&prefix_name) {
+                    out.push(name);
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
     pub fn blob_path(&self, sha256: &str) -> PathBuf {
         self.home.blob_path(sha256)
     }
@@ -267,6 +287,11 @@ fn is_leftover_copy(name: &str) -> bool {
         && sha.bytes().all(|b| b.is_ascii_hexdigit())
         && !pid.is_empty()
         && pid.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// 64 lowercase hex digits: how the store names a file.
+fn is_sha256_hex(name: &str) -> bool {
+    name.len() == 64 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 #[cfg(all(test, target_os = "macos"))]

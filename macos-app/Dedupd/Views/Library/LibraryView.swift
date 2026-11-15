@@ -49,7 +49,9 @@ struct LibraryView: View {
                 await library.reload()
             }
             .task(id: library.selection) {
-                await library.loadDetail()
+                // Quietly: a model looked at before keeps its last answer on
+                // screen until the new one is there.
+                await library.loadDetail(quietly: true)
             }
     }
 

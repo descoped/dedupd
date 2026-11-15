@@ -267,7 +267,7 @@ private struct HubVariantRow: View {
         }
         if !variant.placedIn.isEmpty {
             parts.append("in " + ListFormatter.localizedString(byJoining: variant.placedIn.map(\.shortTitle)))
-        } else if variant.isStored {
+        } else if variant.canActivate {
             parts.append("in the store")
         }
         return parts.joined(separator: " · ")
@@ -286,14 +286,16 @@ private struct HubVariantRow: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-        } else if variant.isStored, missing.isEmpty {
+        } else if variant.canActivate, missing.isEmpty {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
-                .help(chosen.isEmpty ? "Stored on this Mac" : "On this Mac, in every app chosen above")
+                .help(chosen.isEmpty
+                    ? (variant.isStored ? "Stored on this Mac" : "Its weights are stored on this Mac")
+                    : "On this Mac, in every app chosen above")
                 .accessibilityLabel("On this Mac")
         } else {
-            Button(variant.isStored ? "Activate" : "Download") {
-                Task { await discover.download(variant, into: variant.isStored ? missing : chosen) }
+            Button(variant.canActivate ? "Activate" : "Download") {
+                Task { await discover.download(variant, into: variant.canActivate ? missing : chosen) }
             }
             .controlSize(.small)
             // Until the daemon has said which apps take the model, the apps
@@ -305,12 +307,17 @@ private struct HubVariantRow: View {
     }
 
     private var help: String {
-        let apps = variant.isStored ? missing : chosen
+        let apps = variant.canActivate ? missing : chosen
         let place = apps.isEmpty
             ? "keeps it in the store"
             : "activates it in \(ListFormatter.localizedString(byJoining: apps.map(\.shortTitle)))"
-        return variant.isStored
-            ? "Already stored: \(place) as a clone, without downloading"
-            : "Downloads \(ByteFormat.string(variant.bytes - min(variant.bytes, variant.storedBytes))) and \(place)"
+        if variant.isStored {
+            return "Already stored: \(place) as a clone, without downloading"
+        }
+        if variant.weightsStored {
+            let lacking = ByteFormat.string(variant.missingBytes)
+            return "Already stored: \(place) as a clone, after fetching the \(lacking) of small files it lacks"
+        }
+        return "Downloads \(ByteFormat.string(variant.missingBytes)) and \(place)"
     }
 }

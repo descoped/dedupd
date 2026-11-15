@@ -106,7 +106,7 @@ struct ContractTests {
         #expect(entries.map(\.action) == [.archive, .activate, .activate])
         #expect(entries.map(\.app) == [nil, .huggingFace, .bionic])
         #expect(entries.allSatisfy { $0.ok })
-        #expect(entries[0].text == "Moved to the archive disk")
+        #expect(entries[0].text == "Moved to the archive disk: 2 files, 300.01 KB freed on this Mac")
         #expect(entries[0].id > entries[1].id)
     }
 
@@ -118,7 +118,7 @@ struct ContractTests {
         let result = try await LiveDaemonClient().scan(at: server.address)
 
         #expect(result == ScanResult(
-            forgotten: 0, adopted: 0, adoptedBytes: 0, reclaimed: 0, reclaimedBytes: 0, archived: 0, errors: []
+            forgotten: 0, adopted: 0, adoptedBytes: 0, recognised: 0, reclaimed: 0, reclaimedBytes: 0, archived: 0, errors: []
         ))
     }
 

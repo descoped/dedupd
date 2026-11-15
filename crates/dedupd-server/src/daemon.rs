@@ -24,11 +24,15 @@ pub(crate) struct PassState {
     /// App files whose adoption failed, as they looked then. They are not
     /// hashed again until they change.
     failed_adoptions: Mutex<Seen>,
+    /// Store files the database does not know that were read and left out
+    /// (damaged, or nothing refers to them), by sha256, as they looked
+    /// then. They are not read again until they change.
+    store_looked_at: Mutex<Seen>,
     /// Serialises the background pass and requests to run one now.
     lock: tokio::sync::Mutex<()>,
 }
 
-/// App files by path, as they looked when they were scanned.
+/// Files by path or sha256, as they looked when they were looked at.
 type Seen = HashMap<String, Fingerprint>;
 
 /// How long ago the file was last written. `None` when it cannot be read.
@@ -60,14 +64,42 @@ pub async fn pass_with(
     };
     report.forgotten = scanned.forgotten as u64;
     adopt_new(server, repos, &scanned.files, &mut report).await?;
+    recognise_stored(server, &mut report).await?;
     if server.config.reclaim() {
         reclaim_duplicates(server, reclaim_age, &mut report).await?;
     }
     update_archive(server, &mut report).await?;
-    if report.forgotten + report.adopted + report.reclaimed + report.archived > 0 {
+    if report.forgotten + report.adopted + report.recognised + report.reclaimed + report.archived
+        > 0
+    {
         server.touch();
     }
     Ok(report)
+}
+
+/// Record the files the store holds and the database does not know.
+async fn recognise_stored(server: &Arc<Server>, report: &mut ScanResult) -> anyhow::Result<()> {
+    let server = server.clone();
+    let found = tokio::task::spawn_blocking(move || {
+        let mut looked_at = server.passes.store_looked_at.lock().expect("lock");
+        adopt::recognise_stored(&server.engine.db, &server.engine.store, &mut looked_at)
+    })
+    .await??;
+    report.recognised = found.files;
+    // Said once: a damaged file is not read again until it changes.
+    if found.damaged > 0 {
+        report.errors.push(format!(
+            "{} in the store {} not match {} name; `dedupd verify` checks the store",
+            if found.damaged == 1 {
+                "1 file".to_string()
+            } else {
+                format!("{} files", found.damaged)
+            },
+            if found.damaged == 1 { "does" } else { "do" },
+            if found.damaged == 1 { "its" } else { "their" },
+        ));
+    }
+    Ok(())
 }
 
 /// What a look at the app folders found.
@@ -318,10 +350,10 @@ pub async fn run(server: Arc<Server>) {
     loop {
         match pass(&server).await {
             Ok(r) => {
-                if r.adopted + r.reclaimed + r.archived + r.forgotten > 0 {
+                if r.adopted + r.recognised + r.reclaimed + r.archived + r.forgotten > 0 {
                     eprintln!(
-                        "dedupd: adopted {} files, swapped {} duplicates for clones, archived {}, forgot {} removed files",
-                        r.adopted, r.reclaimed, r.archived, r.forgotten
+                        "dedupd: adopted {} files, recognised {} stored files, swapped {} duplicates for clones, archived {}, forgot {} removed files",
+                        r.adopted, r.recognised, r.reclaimed, r.archived, r.forgotten
                     );
                 }
                 for e in r.errors {

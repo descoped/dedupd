@@ -2,10 +2,11 @@ import DedupdClient
 import Foundation
 import Observation
 
-/// A line of the Activity list: an activation under way, or an entry of
-/// the history.
+/// A line of the Activity list: an activation under way, the archive or
+/// restore under way, or an entry of the history.
 enum ActivityLine: Hashable, Sendable {
     case job(Int64)
+    case move
     case entry(Int64)
 }
 
@@ -33,10 +34,20 @@ final class ActivityStore {
         daemon.activationJobs.filter { !$0.state.isFinished }
     }
 
+    /// The archive or restore the daemon is doing. Once it has finished,
+    /// its result is an entry of the history.
+    var move: ModelMove? {
+        daemon.moving.flatMap { $0.running ? $0 : nil }
+    }
+
+    /// Everything under way: activations and the move.
+    var runningCount: Int { running.count + (move == nil ? 0 : 1) }
+
     /// The model a line is about.
     func repo(of line: ActivityLine) -> String? {
         switch line {
         case let .job(id): running.first { $0.id == id }?.repo
+        case .move: move?.repo
         case let .entry(id): entries.first { $0.id == id }?.repo
         }
     }

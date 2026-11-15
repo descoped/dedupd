@@ -75,7 +75,7 @@ extension FixtureData {
                 let judged = judged(repo, formats: meta.formats, stored: here)
                 return Variant(
                     kind: .gguf, format: judged.format, name: quant, spec: "\(repo):\(quant)", files: 4,
-                    bytes: bytes, storedBytes: here ? bytes : 0, usableBy: judged.usableBy,
+                    bytes: bytes, storedBytes: here ? bytes : 0, weightsStored: here, usableBy: judged.usableBy,
                     placedIn: here ? local?.appNames ?? [] : [], decisions: judged.decisions
                 )
             }
@@ -94,7 +94,7 @@ extension FixtureData {
             variants = [
                 Variant(
                     kind: .files, format: judged.format, name: "all files", spec: repo, files: 8, bytes: bytes,
-                    storedBytes: local == nil ? 0 : bytes, usableBy: judged.usableBy,
+                    storedBytes: local == nil ? 0 : bytes, weightsStored: local != nil, usableBy: judged.usableBy,
                     placedIn: local?.appNames ?? [], decisions: judged.decisions
                 ),
             ]
@@ -255,7 +255,8 @@ extension FixtureData {
             Happened(action: .activate, repo: nemotron, app: .ollama, ok: false,
                      text: "Ollama 0.40.16 can't run this model: it doesn't run 6-bit MLX layers."),
             Happened(action: .activate, repo: nemotron, app: .bionic, ok: true, text: "Activated in Bionic"),
-            Happened(action: .archive, repo: smolMLX, app: nil, ok: true, text: "Moved to the archive disk"),
+            Happened(action: .archive, repo: smolMLX, app: nil, ok: true,
+                     text: "Moved to the archive disk: 3 files, 412.30 MB freed on this Mac"),
             Happened(action: .deactivate, repo: smolGGUF, app: .huggingFace, ok: true,
                      text: "Deactivated in the Hugging Face cache"),
             Happened(action: .activate, repo: qwen, app: .ollama, ok: true, text: "Activated in Ollama"),

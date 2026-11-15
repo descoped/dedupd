@@ -295,7 +295,7 @@ extension FixtureData {
             return [
                 Variant(
                     kind: .gguf, format: judged.format, name: "Q4_K_M", spec: "\(model.repo):Q4_K_M", files: 4,
-                    bytes: model.storedBytes, storedBytes: model.storedBytes, usableBy: judged.usableBy,
+                    bytes: model.storedBytes, storedBytes: model.storedBytes, weightsStored: true, usableBy: judged.usableBy,
                     placedIn: model.appNames, decisions: judged.decisions
                 ),
             ]
@@ -303,7 +303,7 @@ extension FixtureData {
         return [
             Variant(
                 kind: .files, format: judged.format, name: "all files", spec: model.repo, files: model.storedFiles,
-                bytes: model.storedBytes, storedBytes: model.storedBytes, usableBy: judged.usableBy,
+                bytes: model.storedBytes, storedBytes: model.storedBytes, weightsStored: true, usableBy: judged.usableBy,
                 placedIn: model.appNames, decisions: judged.decisions
             ),
         ]

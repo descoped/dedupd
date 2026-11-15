@@ -93,6 +93,10 @@ pub struct ScanResult {
     /// App files brought into the store.
     pub adopted: u64,
     pub adopted_bytes: u64,
+    /// Files that were in the store but not in its records, such as after
+    /// the database was removed, and are recorded again.
+    #[serde(default)]
+    pub recognised: u64,
     /// Duplicate app files swapped for clones.
     pub reclaimed: u64,
     pub reclaimed_bytes: u64,

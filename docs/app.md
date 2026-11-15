@@ -38,7 +38,8 @@ against Hugging Face. The inspector shows one model in full. Activate puts it in
 takes it out again and leaves the stored copy; a model leaves Ollama whole or not at all, because Ollama needs every
 file of it. While a model is being activated, the app's row says so. An app that
 cannot use the model has no Activate button; its row says why, for example the version of Ollama that cannot run
-the model's type.
+the model's type. A model whose weights are stored can be activated even when small files of it are missing, such as
+a README the app it came from did not download; activating it fetches them first.
 
 ![The Library screen](images/library.png)
 
@@ -65,8 +66,10 @@ says which app and why.
 ## Activity
 
 What happened to the models in the apps: each activation, deactivation, archive and restore, newest first, with
-its result. An app that would not take a model is listed with its reason, and the sidebar counts such entries
-until the screen has been opened. Activations in progress are shown at the top. Double-click an entry to open the
+its result. An archive says how many files left the internal disk and how much space that freed, a restore how
+much it copied back. A failure is listed with its reason, also an archive or restore the daemon refused to start,
+and the sidebar counts failures until the screen has been opened. What is in progress is shown at the top: the
+archive or restore with its progress, speed and time left, and the activations. Double-click an entry to open the
 model in the Library. The command line adds its own activations, deactivations, archives and restores to the same
 list, which is kept in `~/.dedupd/activity.jsonl`.
 

@@ -144,14 +144,32 @@ private struct LibraryOverview: View {
         }
         InspectorSection(title: "Apps") {
             ForEach(ModelApp.allCases) { app in
-                AppRow(app: app, presence: model.apps.first { $0.app == app }, variants: detail?.variants ?? [])
+                AppRow(
+                    app: app, presence: model.apps.first { $0.app == app }, variants: detail?.variants ?? [],
+                    loaded: detail != nil
+                )
             }
         }
-        if let variants = detail?.variants, !variants.isEmpty {
-            InspectorSection(title: "Variants") {
-                ForEach(variants) { variant in
-                    LocalVariantRow(variant: variant, archived: model.isArchived)
+        if let variants = detail?.variants {
+            if !variants.isEmpty {
+                InspectorSection(title: "Variants") {
+                    ForEach(variants) { variant in
+                        LocalVariantRow(variant: variant, archived: model.isArchived)
+                    }
                 }
+            }
+        } else {
+            // Until the daemon has answered: the section's shape, greyed out,
+            // so nothing below it moves when the answer comes.
+            InspectorSection(title: "Variants") {
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Variant name")
+                        .font(.callout.weight(.medium))
+                    Text("Files and size · stored")
+                        .font(.caption)
+                }
+                .redacted(reason: .placeholder)
+                .accessibilityHidden(true)
             }
         }
         InspectorSection(title: "About") {
@@ -239,6 +257,8 @@ private struct AppRow: View {
     let app: ModelApp
     let presence: AppPresence?
     let variants: [Variant]
+    /// The daemon has answered what each app can do with the model.
+    let loaded: Bool
 
     @Environment(LibraryStore.self) private var library
     @Environment(DaemonStore.self) private var daemon
@@ -255,9 +275,10 @@ private struct AppRow: View {
     /// change to it until that has finished.
     private var isMoving: Bool { library.move?.running == true }
 
-    /// The variants this app can use and does not have yet.
+    /// The variants this app can use and does not have yet, whose weights
+    /// are stored.
     private var placeable: [Variant] {
-        variants.filter { $0.usableApps.contains(app) && !$0.isPlaced(in: app) && $0.isStored }
+        variants.filter { $0.usableApps.contains(app) && !$0.isPlaced(in: app) && $0.canActivate }
     }
 
     var body: some View {
@@ -270,6 +291,9 @@ private struct AppRow: View {
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    // What an app without the model can do with it is known
+                    // once the daemon has answered; until then, its shape.
+                    .redacted(reason: presence == nil && !loaded ? .placeholder : [])
             }
             Spacer()
             if presence == nil, isActivating {
@@ -312,6 +336,9 @@ private struct AppRow: View {
                 .disabled(isMoving)
             }
         }
+        // As tall with a button as without one, so the row does not grow
+        // when Activate appears.
+        .frame(minHeight: 28)
         .accessibilityElement(children: .contain)
     }
 
@@ -345,7 +372,7 @@ private struct LocalVariantRow: View {
             }
             Spacer()
             AppBadges(apps: variant.placedIn, none: "")
-            if !variant.isStored, !archived {
+            if !variant.canActivate, !archived {
                 Button("Download") {
                     Task { await library.download(variant) }
                 }
@@ -358,6 +385,9 @@ private struct LocalVariantRow: View {
     private var state: String {
         if variant.isStored {
             return "stored"
+        }
+        if variant.weightsStored {
+            return "stored; \(ByteFormat.string(variant.missingBytes)) of small files are fetched when it is activated"
         }
         if archived {
             return "on the archive disk"

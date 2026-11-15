@@ -133,6 +133,13 @@ extension Variant: @retroactive Identifiable {
     /// Every file of it is on the internal disk.
     var isStored: Bool { bytes > 0 && storedBytes >= bytes }
 
+    /// What of it is not on the internal disk.
+    var missingBytes: UInt64 { bytes - min(bytes, storedBytes) }
+
+    /// It can be activated without a download of its weights: what it lacks
+    /// is small files (a README, a settings file), fetched on the way.
+    var canActivate: Bool { isStored || weightsStored }
+
     var usableApps: [ModelApp] {
         ModelApp.allCases.filter(usableBy.contains)
     }
@@ -149,7 +156,7 @@ extension Variant: @retroactive Identifiable {
     /// What placing this into an app does and what it costs, as the daemon
     /// decided it.
     func placeHelp(for app: ModelApp) -> String {
-        switch decision(for: app)?.cost {
+        let how = switch decision(for: app)?.cost {
         case .megabytes:
             "Give \(app.title) the model as clones of the stored files with their index rewritten. "
                 + "It takes a few megabytes."
@@ -158,6 +165,7 @@ extension Variant: @retroactive Identifiable {
         case .nothing, nil:
             "Give \(app.title) the model as a clone of the stored copy. It takes no extra space."
         }
+        return isStored ? how : how + " First the \(ByteFormat.string(missingBytes)) of small files it lacks are fetched."
     }
 }
 
@@ -258,6 +266,9 @@ extension ScanResult {
         }
         if forgotten > 0 {
             parts.append("forgot \(ByteFormat.files(forgotten)) no longer there")
+        }
+        if recognised > 0 {
+            parts.append("recorded \(ByteFormat.files(recognised)) that were already in the store")
         }
         if parts.isEmpty {
             return "Nothing new in the app folders."

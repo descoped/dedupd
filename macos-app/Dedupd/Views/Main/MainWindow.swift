@@ -64,7 +64,7 @@ struct Sidebar: View {
                 row(.library)
                 row(.discover)
                 row(.downloads, badge: daemon.activeJobs.count + daemon.attentionJobs.count)
-                row(.activity, badge: activity.unseenFailures + activity.running.count)
+                row(.activity, badge: activity.unseenFailures + activity.runningCount)
             }
             Section("This Mac") {
                 row(.storage)

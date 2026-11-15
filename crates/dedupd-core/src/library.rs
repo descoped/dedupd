@@ -143,6 +143,10 @@ pub fn local_variants(
                     .filter(|e| sha_of(&e.path).is_some_and(|sha| store.contains(sha)))
                     .map(|e| e.size)
                     .sum(),
+                weights_stored: !v.weights.is_empty()
+                    && v.weights
+                        .iter()
+                        .all(|w| sha_of(w).is_some_and(|sha| store.contains(sha))),
                 kind: v.kind,
                 name: v.name,
             }
