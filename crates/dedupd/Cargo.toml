@@ -9,10 +9,10 @@ description = "One shared local store for AI models: the dedupd command and daem
 [dependencies]
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive", "env"] }
-dedupd-client = { version = "0.1.0", path = "../dedupd-client" }
-dedupd-api = { version = "0.1.0", path = "../dedupd-api" }
-dedupd-core = { version = "0.1.0", path = "../dedupd-core" }
-dedupd-server = { version = "0.1.0", path = "../dedupd-server" }
+dedupd-client = { version = "0.2.0", path = "../dedupd-client" }
+dedupd-api = { version = "0.2.0", path = "../dedupd-api" }
+dedupd-core = { version = "0.2.0", path = "../dedupd-core" }
+dedupd-server = { version = "0.2.0", path = "../dedupd-server" }
 serde_json = "1.0.154"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "signal", "net"] }
 

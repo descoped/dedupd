@@ -43,7 +43,7 @@ with a command line and a macOS app.
 
 | | |
 |---|---|
-| Version | 0.1.0 |
+| Version | 0.2.0 |
 | Platform | macOS 26 on Apple silicon |
 | Apps | Ollama; Bionic and LM Studio; the Hugging Face cache (`hf`, `huggingface_hub`, `mlx_lm`, llama.cpp) |
 | Model source | Hugging Face |

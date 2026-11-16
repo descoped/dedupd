@@ -483,7 +483,7 @@ checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
 
 [[package]]
 name = "dedupd"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
@@ -498,7 +498,7 @@ dependencies = [
 
 [[package]]
 name = "dedupd-api"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -507,7 +507,7 @@ dependencies = [
 
 [[package]]
 name = "dedupd-client"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "dedupd-api",
  "serde",
@@ -519,7 +519,7 @@ dependencies = [
 
 [[package]]
 name = "dedupd-core"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "dedupd-api",
@@ -543,7 +543,7 @@ dependencies = [
 
 [[package]]
 name = "dedupd-server"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "anyhow",
  "axum",
