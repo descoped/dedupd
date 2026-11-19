@@ -13,6 +13,7 @@
 pub mod activity;
 pub mod app;
 pub mod daemon;
+pub mod favorites;
 pub mod hub;
 pub mod jobs;
 pub mod library;

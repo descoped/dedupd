@@ -358,6 +358,77 @@ impl HubClient {
     }
 }
 
+impl HubClient {
+    /// The Hugging Face account the token belongs to. `None` when there is
+    /// no token, or when it belongs to an organisation, which likes nothing.
+    /// Hugging Face limits how often this may be asked; the caller keeps
+    /// the answer.
+    pub async fn whoami(&self) -> Result<Option<String>, HubError> {
+        if self.token.is_none() {
+            return Ok(None);
+        }
+        let url = format!("{}/api/whoami-v2", self.endpoint);
+        let me: serde_json::Value = self
+            .get(&url, "your account", None)
+            .await?
+            .json()
+            .await
+            .map_err(|e| HubError::Malformed(format!("account: {e}")))?;
+        if me.get("type").and_then(|v| v.as_str()) != Some("user") {
+            return Ok(None);
+        }
+        let name = me.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+        if !is_user_name(name) {
+            return Err(HubError::Malformed(format!("account name {name:?}")));
+        }
+        Ok(Some(name.to_string()))
+    }
+
+    /// The models `user` has liked, as `org/repo`. Likes are public on
+    /// Hugging Face; datasets, Spaces and names that are not a model's
+    /// are left out.
+    pub async fn liked_models(&self, user: &str) -> Result<Vec<String>, HubError> {
+        if !is_user_name(user) {
+            return Err(HubError::Malformed(format!("account name {user:?}")));
+        }
+        let mut models = Vec::new();
+        let mut next = Some(format!("{}/api/users/{user}/likes", self.endpoint));
+        while let Some(url) = next {
+            let resp = self.get(&url, "your likes", None).await?;
+            next = resp
+                .headers()
+                .get(reqwest::header::LINK)
+                .and_then(|v| v.to_str().ok())
+                .and_then(next_link);
+            let page: Vec<serde_json::Value> = resp
+                .json()
+                .await
+                .map_err(|e| HubError::Malformed(format!("likes: {e}")))?;
+            for like in &page {
+                let repo = &like["repo"];
+                if repo["type"].as_str() == Some("model")
+                    && let Some(name) = repo["name"].as_str()
+                    && crate::names::is_repo_name(name)
+                {
+                    models.push(name.to_string());
+                }
+            }
+        }
+        Ok(models)
+    }
+}
+
+/// Hugging Face's rule for an account name, which goes into a path.
+fn is_user_name(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 96
+        && !name.starts_with(['-', '.'])
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && !name.contains("..")
+}
+
 /// The file Hugging Face's own tools keep the token in.
 fn token_file() -> Option<PathBuf> {
     std::env::var_os("HF_TOKEN_PATH")
@@ -543,5 +614,58 @@ mod tests {
             hub.snapshot("org/repo", "main").await,
             Err(HubError::Malformed(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn reads_whose_token_it_is_and_the_models_they_like() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/whoami-v2"))
+            .and(header("authorization", "Bearer secret"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"type": "user", "name": "ove"})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/users/ove/likes"))
+            .and(query_param("cursor", "2"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                {"createdAt": "2026-01-01T00:00:00.000Z", "repo": {"name": "org/second", "type": "model"}}
+            ])))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/users/ove/likes"))
+            .and(query_param_is_missing("cursor"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header(
+                        "link",
+                        format!(
+                            r#"<{}/api/users/ove/likes?cursor=2>; rel="next""#,
+                            server.uri()
+                        )
+                        .as_str(),
+                    )
+                    .set_body_json(json!([
+                        {"repo": {"name": "org/first", "type": "model"}},
+                        {"repo": {"name": "org/data", "type": "dataset"}},
+                        {"repo": {"name": "org/app", "type": "space"}},
+                        {"repo": {"name": "../../etc", "type": "model"}}
+                    ])),
+            )
+            .mount(&server)
+            .await;
+        let hub = HubClient::new(server.uri(), Some("secret".into())).unwrap();
+        assert_eq!(hub.whoami().await.unwrap().as_deref(), Some("ove"));
+        assert_eq!(
+            hub.liked_models("ove").await.unwrap(),
+            ["org/first", "org/second"]
+        );
+        assert!(hub.liked_models("../x").await.is_err());
+        // No token: nobody to ask about, and nothing is sent.
+        let anonymous = HubClient::new(server.uri(), None).unwrap();
+        assert_eq!(anonymous.whoami().await.unwrap(), None);
     }
 }

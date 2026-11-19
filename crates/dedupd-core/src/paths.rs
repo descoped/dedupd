@@ -69,6 +69,11 @@ impl Home {
         self.root.join("refusals.json")
     }
 
+    /// The models marked as favorites, and the Hugging Face likes read.
+    pub fn favorites_path(&self) -> PathBuf {
+        self.root.join("favorites.json")
+    }
+
     pub fn tmp_dir(&self) -> PathBuf {
         self.store_dir().join("tmp")
     }

@@ -19,6 +19,18 @@ struct DisplayTests {
         #expect(ByteFormat.parameters(value) == text)
     }
 
+    @Test("Where the likes on Hugging Face stand, in a sentence")
+    func likes() {
+        let none = LikesSync(hasToken: false, user: nil, syncedAt: nil, problem: nil)
+        #expect(none.summary.contains("hf auth login"))
+        let waiting = LikesSync(hasToken: true, user: nil, syncedAt: nil, problem: nil)
+        #expect(waiting.summary == "Your likes on Hugging Face have not been read yet.")
+        let failed = LikesSync(hasToken: true, user: "example", syncedAt: 1, problem: "Your likes could not be read.")
+        #expect(failed.summary == "Your likes could not be read.")
+        let read = LikesSync(hasToken: true, user: "example", syncedAt: Int64(Date().timeIntervalSince1970), problem: nil)
+        #expect(read.summary == "Likes of example on Hugging Face, read just now.")
+    }
+
     @Test("Durations", arguments: [(45, "45 s"), (60, "1 min"), (700, "12 min"), (3600, "1 h"), (7500, "2 h 5 min")])
     func durations(seconds: UInt64, text: String) {
         #expect(ByteFormat.duration(seconds: seconds) == text)

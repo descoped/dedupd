@@ -1,0 +1,15 @@
+{
+  "favorites": [
+    {
+      "added_at": 1700000000,
+      "repo": "org/Repo-GGUF",
+      "source": "dedupd"
+    }
+  ],
+  "likes": {
+    "has_token": false,
+    "problem": null,
+    "synced_at": null,
+    "user": null
+  }
+}

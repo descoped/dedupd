@@ -1,0 +1,89 @@
+//! The favorites, and bringing in the likes on Hugging Face: read in the
+//! background once they are older than an hour, and on request.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+
+use dedupd_api::favorites::Favorites;
+use dedupd_core::favorites::{self, Kept};
+
+use crate::Server;
+
+/// What the daemon holds for the favorites between calls.
+#[derive(Default)]
+pub(crate) struct State {
+    /// Held while the file is read and written, so two changes do not undo
+    /// each other.
+    file: Mutex<()>,
+    /// Set while the likes are being read.
+    reading: AtomicBool,
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or_default()
+}
+
+fn answer(server: &Server, kept: &Kept) -> Favorites {
+    kept.answer(server.engine.hub.has_token())
+}
+
+/// The favorites as they are.
+pub(crate) fn current(server: &Server) -> Favorites {
+    let _held = server.favorites.file.lock().expect("lock");
+    answer(server, &Kept::load(&server.home))
+}
+
+/// Mark a model as a favorite, or no longer.
+pub(crate) fn set(server: &Server, repo: &str, favorite: bool) -> anyhow::Result<Favorites> {
+    let kept = {
+        let _held = server.favorites.file.lock().expect("lock");
+        favorites::set(&server.home, repo, favorite, now())?
+    };
+    server.touch();
+    Ok(answer(server, &kept))
+}
+
+/// Read the likes now. `by_hand` also asks Hugging Face again whose token
+/// it is. A reading that is already going is not started twice.
+pub(crate) async fn sync(server: &Arc<Server>, by_hand: bool) -> anyhow::Result<Favorites> {
+    if server.favorites.reading.swap(true, Ordering::SeqCst) {
+        return Ok(current(server));
+    }
+    let known = {
+        let _held = server.favorites.file.lock().expect("lock");
+        Kept::load(&server.home).user
+    };
+    let read = favorites::read_likes(&server.engine.hub, known, by_hand).await;
+    let kept = read.map(|likes| {
+        let _held = server.favorites.file.lock().expect("lock");
+        favorites::record_likes(&server.home, likes, now())
+    });
+    server.favorites.reading.store(false, Ordering::SeqCst);
+    match kept {
+        Some(kept) => {
+            let kept = kept?;
+            server.touch();
+            Ok(answer(server, &kept))
+        }
+        None => Ok(current(server)),
+    }
+}
+
+/// Read the likes in the background when they are due.
+pub(crate) fn sync_if_due(server: &Arc<Server>) {
+    let due = server.engine.hub.has_token() && {
+        let _held = server.favorites.file.lock().expect("lock");
+        Kept::load(&server.home).likes_due(now())
+    };
+    if due {
+        let server = server.clone();
+        tokio::spawn(async move {
+            if let Err(e) = sync(&server, false).await {
+                eprintln!("dedupd: favorites: {e:#}");
+            }
+        });
+    }
+}

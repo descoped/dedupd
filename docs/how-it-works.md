@@ -132,4 +132,4 @@ All other functions operate with the archive disk detached.
   in the app, only after the list has been confirmed.
 - **Local only.** The daemon binds to `127.0.0.1` and `localhost` and uses plain HTTP.
 - **Credentials.** A Hugging Face token is sent to Hugging Face only, never to the hosts the files are downloaded
-  from.
+  from. dedupd only reads with it: the models, and the account's likes for the favorites.

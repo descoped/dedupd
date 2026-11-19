@@ -6,6 +6,7 @@ mod answer;
 mod control;
 pub mod daemon;
 mod discover;
+mod favorites;
 mod files;
 mod hubapi;
 mod moves;
@@ -52,6 +53,8 @@ pub struct Server {
     library: watch::Sender<u64>,
     /// Answers from the provider's search, kept for a few minutes.
     pub(crate) searches: Mutex<HashMap<String, (Instant, discover::Found)>>,
+    /// The favorites file, and the reading of the likes on Hugging Face.
+    pub(crate) favorites: favorites::State,
     /// Seconds since the epoch when this daemon started.
     pub started_at: i64,
     /// Cancelled when the daemon is stopping; ends the long-lived answers.
@@ -94,6 +97,7 @@ impl Server {
                 .duration_since(std::time::UNIX_EPOCH)
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0),
+            favorites: Default::default(),
             shutdown: CancellationToken::new(),
             restart: AtomicBool::new(false),
         });

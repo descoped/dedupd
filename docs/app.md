@@ -49,6 +49,13 @@ Search Hugging Face, or paste a model's name or address into the search field. T
 already on this Mac. The inspector shows a model's variants with their sizes; Download fetches one variant once
 and activates it in the apps you ticked.
 
+The star in a model's details, in Discover and in the Library, marks it as a favorite; Favorites in the toolbar
+lists them in place of the search results. When dedupd has a Hugging Face token (the one `hf auth login` stores, or
+`HF_TOKEN`), the models that account likes on Hugging Face are added to the favorites, read once an hour and with
+Sync Now. Likes are only read: Hugging Face does not let a program like a model. Taking the star off a liked model
+keeps it off, and a model that is no longer liked on Hugging Face leaves the favorites unless it was starred in
+dedupd. The favorites are kept in `~/.dedupd/favorites.json`.
+
 ![The Discover screen](images/discover.png)
 
 ## Downloads

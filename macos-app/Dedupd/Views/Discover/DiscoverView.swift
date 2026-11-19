@@ -7,6 +7,7 @@ struct DiscoverView: View {
     @Environment(DiscoverStore.self) private var discover
     @Environment(DaemonStore.self) private var daemon
     @Environment(AppSettings.self) private var settings
+    @Environment(FavoritesStore.self) private var favorites
     @State private var showsInspector = true
 
     /// What makes the inspector read its model again: another selection, or
@@ -23,11 +24,18 @@ struct DiscoverView: View {
             .navigationSubtitle(subtitle)
             .searchable(text: $discover.text, placement: .toolbar, prompt: "Search, or paste a model's name or address")
             .onSubmit(of: .search) {
+                discover.showsFavorites = false
                 Task { await discover.search() }
             }
             .toolbar {
                 ToolbarItemGroup {
+                    Toggle(isOn: $discover.showsFavorites) {
+                        Label("Favorites", systemImage: discover.showsFavorites ? "star.fill" : "star")
+                    }
+                    .help("Show your favorite models in place of the search results")
+                    .accessibilityIdentifier("discover-favorites")
                     filters
+                        .disabled(discover.showsFavorites)
                 }
                 ToolbarSpacer(.fixed)
                 ToolbarItemGroup {
@@ -59,6 +67,10 @@ struct DiscoverView: View {
     }
 
     private var subtitle: String {
+        if discover.showsFavorites {
+            let count = favorites.favorites.count
+            return "\(count) favorite\(count == 1 ? "" : "s")"
+        }
         if discover.isSearching {
             return "Searching…"
         }
@@ -96,6 +108,8 @@ struct DiscoverView: View {
     @ViewBuilder private var content: some View {
         if !daemon.isRunning {
             DaemonAwayView()
+        } else if discover.showsFavorites {
+            FavoritesList()
         } else if let failure = discover.failure {
             ContentUnavailableView {
                 Label("Hugging Face could not be searched", systemImage: "wifi.exclamationmark")
@@ -133,6 +147,11 @@ struct DiscoverView: View {
         @Bindable var discover = discover
         let comfortable = settings.density == .comfortable
         return Table(discover.hits, selection: $discover.selection) {
+            TableColumn("") { hit in
+                FavoriteMark(isFavorite: favorites.isFavorite(hit.id))
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .width(16)
             TableColumn("Model") { hit in
                 ModelNameCell(
                     name: hit.name,
@@ -194,6 +213,9 @@ struct DiscoverView: View {
         }
         .contextMenu(forSelectionType: SearchHit.ID.self) { ids in
             if let repo = ids.first {
+                Button(favorites.isFavorite(repo) ? "Remove from Favorites" : "Add to Favorites") {
+                    Task { await favorites.toggle(repo) }
+                }
                 Button("Copy Name") {
                     Pasteboard.copy(repo)
                 }

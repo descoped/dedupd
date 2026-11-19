@@ -4,7 +4,7 @@
 //! through here: the daemon owns the store, the database and the downloads.
 
 use crate::answer::{Refused, answer, blocking, body, error, failure, internal, ok};
-use crate::{Call, Server, daemon, moves, plain};
+use crate::{Call, Server, daemon, favorites, moves, plain};
 use axum::body::{Body, Bytes};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
@@ -13,6 +13,7 @@ use dedupd_api::app::AppList;
 use dedupd_api::daemon::{
     DaemonEvent, DaemonInfo, DaemonSettings, DaemonStatus, LogTail, Setting, Started,
 };
+use dedupd_api::favorites::FavoriteBody;
 use dedupd_api::jobs::{Cleared, Enqueued, JobAction, JobRef, JobState, PullBody};
 use dedupd_api::library::{ModelList, RepoBody};
 use dedupd_api::moves::{GcBody, MoveBody, MoveKind, UnplaceBody};
@@ -461,6 +462,18 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 .await,
             )
         }
+        (&Method::GET, ["favorites"]) => ok(favorites::current(server)),
+        (&Method::POST, ["favorites"]) => match body::<FavoriteBody>(call) {
+            Ok(b) => match favorites::set(server, &b.repo, b.favorite) {
+                Ok(list) => ok(list),
+                Err(e) => error(StatusCode::BAD_REQUEST, format!("{e:#}")),
+            },
+            Err(refused) => *refused,
+        },
+        (&Method::POST, ["favorites", "sync"]) => match favorites::sync(server, true).await {
+            Ok(list) => ok(list),
+            Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
+        },
         (&Method::GET, ["log"]) => {
             let lines = call
                 .param("lines")

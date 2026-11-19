@@ -22,6 +22,7 @@ actor FixtureDaemonClient: DaemonClient {
     private var seq: UInt64 = 0
     private var nextID: Int64 = 20
     private var history: [ActivityEntry] = FixtureData.activity
+    private var favoriteList: Favorites = FixtureData.favorites
     /// The models the owner archived, and the last move, as the daemon
     /// would tell it.
     private var archived: Set<String> = []
@@ -392,6 +393,28 @@ extension FixtureDaemonClient {
     func activity(at address: String) async throws -> [ActivityEntry] {
         try answering(address)
         return history
+    }
+
+    func favorites(at address: String) async throws -> Favorites {
+        try answering(address)
+        return favoriteList
+    }
+
+    func setFavorite(_ repo: String, _ favorite: Bool, at address: String) async throws -> Favorites {
+        try answering(address)
+        favoriteList.favorites.removeAll { $0.repo == repo }
+        if favorite {
+            favoriteList.favorites.insert(Favorite(repo: repo, addedAt: FixtureData.now, source: .dedupd), at: 0)
+        }
+        changed()
+        return favoriteList
+    }
+
+    func syncFavorites(at address: String) async throws -> Favorites {
+        try answering(address)
+        favoriteList.likes.syncedAt = FixtureData.now
+        changed()
+        return favoriteList
     }
 
     /// Add to the canned activity list, newest first.

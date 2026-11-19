@@ -47,6 +47,7 @@ struct Sidebar: View {
     @Environment(Navigation.self) private var navigation
     @Environment(DaemonStore.self) private var daemon
     @Environment(ActivityStore.self) private var activity
+    @Environment(FavoritesStore.self) private var favorites
 
     private var selection: Binding<Pane?> {
         Binding {
@@ -78,6 +79,7 @@ struct Sidebar: View {
         // kept current while another screen is shown.
         .task(id: daemon.revision) {
             await activity.reload()
+            await favorites.reload()
         }
     }
 

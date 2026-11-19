@@ -376,6 +376,11 @@ RustBuffer uniffi_dedupd_client_fn_func_downloads(RustBuffer address, RustCallSt
 RustBuffer uniffi_dedupd_client_fn_func_enqueue(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, RustBuffer kind, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_FAVORITES
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_FAVORITES
+RustBuffer uniffi_dedupd_client_fn_func_favorites(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_FORGET
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_FORGET
 void uniffi_dedupd_client_fn_func_forget(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
@@ -451,6 +456,11 @@ RustBuffer uniffi_dedupd_client_fn_func_scan(RustBuffer address, RustCallStatus 
 RustBuffer uniffi_dedupd_client_fn_func_search(RustBuffer address, RustBuffer query, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SET_FAVORITE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SET_FAVORITE
+RustBuffer uniffi_dedupd_client_fn_func_set_favorite(RustBuffer address, RustBuffer repo, int8_t favorite, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SETTINGS
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SETTINGS
 RustBuffer uniffi_dedupd_client_fn_func_settings(RustBuffer address, RustCallStatus *_Nonnull out_status
@@ -469,6 +479,11 @@ RustBuffer uniffi_dedupd_client_fn_func_status(RustBuffer address, RustCallStatu
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_STORE_CHECK
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_STORE_CHECK
 RustBuffer uniffi_dedupd_client_fn_func_store_check(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SYNC_FAVORITES
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SYNC_FAVORITES
+RustBuffer uniffi_dedupd_client_fn_func_sync_favorites(RustBuffer address, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_UNPLACE
@@ -812,6 +827,12 @@ uint16_t uniffi_dedupd_client_checksum_func_enqueue(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_FAVORITES
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_FAVORITES
+uint16_t uniffi_dedupd_client_checksum_func_favorites(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_FORGET
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_FORGET
 uint16_t uniffi_dedupd_client_checksum_func_forget(void
@@ -902,6 +923,12 @@ uint16_t uniffi_dedupd_client_checksum_func_search(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SET_FAVORITE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SET_FAVORITE
+uint16_t uniffi_dedupd_client_checksum_func_set_favorite(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SETTINGS
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SETTINGS
 uint16_t uniffi_dedupd_client_checksum_func_settings(void
@@ -923,6 +950,12 @@ uint16_t uniffi_dedupd_client_checksum_func_status(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_STORE_CHECK
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_STORE_CHECK
 uint16_t uniffi_dedupd_client_checksum_func_store_check(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SYNC_FAVORITES
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SYNC_FAVORITES
+uint16_t uniffi_dedupd_client_checksum_func_sync_favorites(void
     
 );
 #endif

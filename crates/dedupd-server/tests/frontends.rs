@@ -1657,6 +1657,30 @@ async fn control_api_answers_match_the_recorded_ones() {
         entry["id"] = json!(1_700_000_000_000i64 + (count - i) as i64);
     }
     let (archive, moving, restore) = (on_disk(archive), on_disk(moving), on_disk(restore));
+    // A favorite, starred in dedupd; the test daemon has no token, so no
+    // likes are read. The time gets a fixed value.
+    let star = json!({"repo": REPO, "favorite": true});
+    let (code, mut favorites) = control(&with_disk, "POST", "favorites", Some(star)).await;
+    assert_eq!(code, 200, "{favorites}");
+    assert_eq!(favorites["favorites"][0]["source"], "dedupd");
+    assert_eq!(favorites["likes"]["has_token"], false);
+    favorites["favorites"][0]["added_at"] = json!(1_700_000_000i64);
+    let (_, listed) = control(&with_disk, "GET", "favorites", None).await;
+    assert_eq!(listed["favorites"].as_array().unwrap().len(), 1);
+    let (code, _) = control(
+        &with_disk,
+        "POST",
+        "favorites",
+        Some(json!({"repo": "../x", "favorite": true})),
+    )
+    .await;
+    assert_eq!(code, 400, "a name that is not a model's is refused");
+    let (_, synced) = control(&with_disk, "POST", "favorites/sync", Some(json!({}))).await;
+    assert_eq!(
+        synced["likes"]["synced_at"],
+        json!(null),
+        "no token, nothing read"
+    );
 
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/control");
     let update = std::env::var_os("DEDUPD_UPDATE_FIXTURES").is_some();
@@ -1685,6 +1709,7 @@ async fn control_api_answers_match_the_recorded_ones() {
         ("move.json", moving),
         ("restore.json", restore),
         ("activity.json", activity),
+        ("favorites.json", favorites),
     ] {
         let now = normalise(&body);
         let file = dir.join(name);
