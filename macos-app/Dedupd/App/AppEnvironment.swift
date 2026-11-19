@@ -28,6 +28,7 @@ final class AppEnvironment {
     let activity: ActivityStore
     let discover: DiscoverStore
     let storage: StorageStore
+    let favorites: FavoritesStore
     let service: ServiceStore
     let notifier: Notifier
 
@@ -62,6 +63,7 @@ final class AppEnvironment {
         activity = ActivityStore(daemon: daemon)
         discover = DiscoverStore(daemon: daemon)
         storage = StorageStore(daemon: daemon)
+        favorites = FavoritesStore(daemon: daemon)
         service = ServiceStore(daemon: daemon, control: control)
         notifier = Notifier(isLive: options.fixture == nil && !options.isHostingUnitTests)
         daemon.onJobsChanged = { [notifier, settings] before, after in
@@ -105,6 +107,7 @@ extension View {
             .environment(environment.activity)
             .environment(environment.discover)
             .environment(environment.storage)
+            .environment(environment.favorites)
             .environment(environment.service)
     }
 }

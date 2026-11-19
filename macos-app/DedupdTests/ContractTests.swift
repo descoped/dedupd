@@ -110,6 +110,19 @@ struct ContractTests {
         #expect(entries[0].id > entries[1].id)
     }
 
+    @Test("Favorites: a starred model, and no token for the likes")
+    func favorites() async throws {
+        let server = try await Self.daemon(["GET /dedupd/v1/favorites": .init(body: Self.recorded("favorites"))])
+        defer { server.stop() }
+        let address = server.address
+        let list = try await Self.blocking { try DedupdClient.favorites(address: address) }
+
+        #expect(list.favorites.map(\.repo) == ["org/Repo-GGUF"])
+        #expect(list.favorites.first?.source == .dedupd)
+        #expect(list.likes.hasToken == false)
+        #expect(list.likes.syncedAt == nil)
+    }
+
     @Test("Scan")
     func scan() async throws {
         let server = try await Self.daemon(["POST /dedupd/v1/scan": .init(body: Self.recorded("scan"))])

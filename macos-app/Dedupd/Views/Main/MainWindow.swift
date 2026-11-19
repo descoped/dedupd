@@ -16,6 +16,7 @@ struct MainWindow: View {
             switch navigation.pane {
             case .library: LibraryView()
             case .discover: DiscoverView()
+            case .favorites: FavoritesView()
             case .downloads: DownloadsView()
             case .activity: ActivityView()
             case .storage: StorageView()
@@ -47,6 +48,7 @@ struct Sidebar: View {
     @Environment(Navigation.self) private var navigation
     @Environment(DaemonStore.self) private var daemon
     @Environment(ActivityStore.self) private var activity
+    @Environment(FavoritesStore.self) private var favorites
 
     private var selection: Binding<Pane?> {
         Binding {
@@ -63,6 +65,7 @@ struct Sidebar: View {
             Section("Models") {
                 row(.library)
                 row(.discover)
+                row(.favorites)
                 row(.downloads, badge: daemon.activeJobs.count + daemon.attentionJobs.count)
                 row(.activity, badge: activity.unseenFailures + activity.runningCount)
             }
@@ -78,6 +81,7 @@ struct Sidebar: View {
         // kept current while another screen is shown.
         .task(id: daemon.revision) {
             await activity.reload()
+            await favorites.reload()
         }
     }
 

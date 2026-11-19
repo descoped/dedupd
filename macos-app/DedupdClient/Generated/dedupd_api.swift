@@ -1814,6 +1814,193 @@ public func FfiConverterTypeEnqueued_lower(_ value: Enqueued) -> RustBuffer {
 
 
 /**
+ * One favorite model.
+ */
+public struct Favorite: Equatable, Hashable {
+    /**
+     * `org/repo`.
+     */
+    public var repo: String
+    /**
+     * Seconds since the Unix epoch.
+     */
+    public var addedAt: Int64
+    public var source: FavoriteSource
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * `org/repo`.
+         */repo: String, 
+        /**
+         * Seconds since the Unix epoch.
+         */addedAt: Int64, source: FavoriteSource) {
+        self.repo = repo
+        self.addedAt = addedAt
+        self.source = source
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Favorite: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFavorite: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Favorite {
+        return
+            try Favorite(
+                repo: FfiConverterString.read(from: &buf), 
+                addedAt: FfiConverterInt64.read(from: &buf), 
+                source: FfiConverterTypeFavoriteSource.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Favorite, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.repo, into: &buf)
+        FfiConverterInt64.write(value.addedAt, into: &buf)
+        FfiConverterTypeFavoriteSource.write(value.source, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFavorite_lift(_ buf: RustBuffer) throws -> Favorite {
+    return try FfiConverterTypeFavorite.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFavorite_lower(_ value: Favorite) -> RustBuffer {
+    return FfiConverterTypeFavorite.lower(value)
+}
+
+
+/**
+ * Mark a model as a favorite, or no longer.
+ */
+public struct FavoriteBody: Equatable, Hashable {
+    public var repo: String
+    public var favorite: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(repo: String, favorite: Bool) {
+        self.repo = repo
+        self.favorite = favorite
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension FavoriteBody: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFavoriteBody: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FavoriteBody {
+        return
+            try FavoriteBody(
+                repo: FfiConverterString.read(from: &buf), 
+                favorite: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: FavoriteBody, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.repo, into: &buf)
+        FfiConverterBool.write(value.favorite, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFavoriteBody_lift(_ buf: RustBuffer) throws -> FavoriteBody {
+    return try FfiConverterTypeFavoriteBody.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFavoriteBody_lower(_ value: FavoriteBody) -> RustBuffer {
+    return FfiConverterTypeFavoriteBody.lower(value)
+}
+
+
+/**
+ * The favorites, newest first, and how the likes are brought in.
+ */
+public struct Favorites: Equatable, Hashable {
+    public var favorites: [Favorite]
+    public var likes: LikesSync
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(favorites: [Favorite], likes: LikesSync) {
+        self.favorites = favorites
+        self.likes = likes
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension Favorites: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFavorites: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> Favorites {
+        return
+            try Favorites(
+                favorites: FfiConverterSequenceTypeFavorite.read(from: &buf), 
+                likes: FfiConverterTypeLikesSync.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: Favorites, into buf: inout [UInt8]) {
+        FfiConverterSequenceTypeFavorite.write(value.favorites, into: &buf)
+        FfiConverterTypeLikesSync.write(value.likes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFavorites_lift(_ buf: RustBuffer) throws -> Favorites {
+    return try FfiConverterTypeFavorites.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFavorites_lower(_ value: Favorites) -> RustBuffer {
+    return FfiConverterTypeFavorites.lower(value)
+}
+
+
+/**
  * Stored files that could be removed, or were.
  */
 public struct GcPlan: Equatable, Hashable {
@@ -2879,6 +3066,99 @@ public func FfiConverterTypeLibraryModel_lift(_ buf: RustBuffer) throws -> Libra
 #endif
 public func FfiConverterTypeLibraryModel_lower(_ value: LibraryModel) -> RustBuffer {
     return FfiConverterTypeLibraryModel.lower(value)
+}
+
+
+/**
+ * How the likes on Hugging Face are brought in.
+ */
+public struct LikesSync: Equatable, Hashable {
+    /**
+     * Whether the daemon has a Hugging Face token; without one it does not
+     * know whose likes to read.
+     */
+    public var hasToken: Bool
+    /**
+     * The Hugging Face account the token belongs to, once known.
+     */
+    public var user: String?
+    /**
+     * When the likes were last asked for, in seconds since the Unix epoch,
+     * whether or not that worked; `problem` says when it did not.
+     */
+    public var syncedAt: Int64?
+    /**
+     * Why the last reading failed, in a sentence.
+     */
+    public var problem: String?
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(
+        /**
+         * Whether the daemon has a Hugging Face token; without one it does not
+         * know whose likes to read.
+         */hasToken: Bool, 
+        /**
+         * The Hugging Face account the token belongs to, once known.
+         */user: String?, 
+        /**
+         * When the likes were last asked for, in seconds since the Unix epoch,
+         * whether or not that worked; `problem` says when it did not.
+         */syncedAt: Int64?, 
+        /**
+         * Why the last reading failed, in a sentence.
+         */problem: String?) {
+        self.hasToken = hasToken
+        self.user = user
+        self.syncedAt = syncedAt
+        self.problem = problem
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension LikesSync: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeLikesSync: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> LikesSync {
+        return
+            try LikesSync(
+                hasToken: FfiConverterBool.read(from: &buf), 
+                user: FfiConverterOptionString.read(from: &buf), 
+                syncedAt: FfiConverterOptionInt64.read(from: &buf), 
+                problem: FfiConverterOptionString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: LikesSync, into buf: inout [UInt8]) {
+        FfiConverterBool.write(value.hasToken, into: &buf)
+        FfiConverterOptionString.write(value.user, into: &buf)
+        FfiConverterOptionInt64.write(value.syncedAt, into: &buf)
+        FfiConverterOptionString.write(value.problem, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLikesSync_lift(_ buf: RustBuffer) throws -> LikesSync {
+    return try FfiConverterTypeLikesSync.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeLikesSync_lower(_ value: LikesSync) -> RustBuffer {
+    return FfiConverterTypeLikesSync.lower(value)
 }
 
 
@@ -5472,6 +5752,81 @@ public func FfiConverterTypeDecisionState_lower(_ value: DecisionState) -> RustB
 
 
 /**
+ * Where a favorite came from.
+ */
+
+public enum FavoriteSource: Equatable, Hashable, CaseIterable {
+    
+    /**
+     * Starred in dedupd.
+     */
+    case dedupd
+    /**
+     * Liked on Hugging Face, and brought in from there.
+     */
+    case huggingFace
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension FavoriteSource: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeFavoriteSource: FfiConverterRustBuffer {
+    typealias SwiftType = FavoriteSource
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FavoriteSource {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .dedupd
+        
+        case 2: return .huggingFace
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: FavoriteSource, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .dedupd:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .huggingFace:
+            writeInt(&buf, Int32(2))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFavoriteSource_lift(_ buf: RustBuffer) throws -> FavoriteSource {
+    return try FfiConverterTypeFavoriteSource.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeFavoriteSource_lower(_ value: FavoriteSource) -> RustBuffer {
+    return FfiConverterTypeFavoriteSource.lower(value)
+}
+
+
+
+/**
  * Where one file of a job is.
  */
 
@@ -7170,6 +7525,31 @@ fileprivate struct FfiConverterSequenceTypeDecision: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeDecision.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeFavorite: FfiConverterRustBuffer {
+    typealias SwiftType = [Favorite]
+
+    public static func write(_ value: [Favorite], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeFavorite.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [Favorite] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [Favorite]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeFavorite.read(from: &buf))
         }
         return seq
     }

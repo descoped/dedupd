@@ -187,6 +187,24 @@ struct DiscoverStoreTests {
         #expect(discover.hits.first?.localState == "In Bionic and Ollama")
     }
 
+    @Test("A model is starred and the star taken off, and the likes are read on request")
+    func favorites() async {
+        let favorites = FavoritesStore(daemon: await startedDaemon())
+        await favorites.reload()
+        #expect(favorites.favorites.count == 3)
+        #expect(favorites.isFavorite(FixtureData.smolGGUF))
+        #expect(!favorites.isFavorite(FixtureData.smolMLX))
+
+        await favorites.toggle(FixtureData.smolMLX)
+        #expect(favorites.favorites.first?.repo == FixtureData.smolMLX, "newest first")
+        await favorites.toggle(FixtureData.smolGGUF)
+        #expect(!favorites.isFavorite(FixtureData.smolGGUF))
+
+        await favorites.sync()
+        #expect(favorites.list.likes.syncedAt == FixtureData.now)
+        #expect(!favorites.isSyncing)
+    }
+
     @Test("Words and a format narrow the search")
     func filters() async {
         let discover = DiscoverStore(daemon: await startedDaemon())

@@ -12,6 +12,7 @@ use dedupd_api::daemon::{
     DEFAULT_ADDRESS, DaemonSettings, DaemonStatus, Failure, LogTail, ScanResult, SettingChange,
     StoreCheck,
 };
+use dedupd_api::favorites::{FavoriteBody, Favorites};
 use dedupd_api::hub::{HubModel, SearchPage, SearchQuery};
 use dedupd_api::jobs::{
     Cleared, Downloads, Enqueued, JobAction, JobDetail, JobKind, PullBody, PullResult,
@@ -245,6 +246,34 @@ pub fn downloads(address: String) -> Result<Downloads, ClientError> {
 #[uniffi::export]
 pub fn activity(address: String) -> Result<Vec<ActivityEntry>, ClientError> {
     get::<ActivityList>(&address, "activity", QUICK).map(|list| list.entries)
+}
+
+/// The favorite models, newest first, and how the likes on Hugging Face
+/// are brought in.
+#[uniffi::export]
+pub fn favorites(address: String) -> Result<Favorites, ClientError> {
+    get(&address, "favorites", QUICK)
+}
+
+/// Mark `repo` (`org/repo`) as a favorite, or no longer.
+#[uniffi::export]
+pub fn set_favorite(
+    address: String,
+    repo: String,
+    favorite: bool,
+) -> Result<Favorites, ClientError> {
+    post(
+        &address,
+        "favorites",
+        &FavoriteBody { repo, favorite },
+        QUICK,
+    )
+}
+
+/// Read the likes on Hugging Face now, and bring them in.
+#[uniffi::export]
+pub fn sync_favorites(address: String) -> Result<Favorites, ClientError> {
+    post(&address, "favorites/sync", &serde_json::json!({}), PATIENT)
 }
 
 /// One job with its files and its history.

@@ -7,6 +7,7 @@ struct DiscoverView: View {
     @Environment(DiscoverStore.self) private var discover
     @Environment(DaemonStore.self) private var daemon
     @Environment(AppSettings.self) private var settings
+    @Environment(FavoritesStore.self) private var favorites
     @State private var showsInspector = true
 
     /// What makes the inspector read its model again: another selection, or
@@ -133,6 +134,11 @@ struct DiscoverView: View {
         @Bindable var discover = discover
         let comfortable = settings.density == .comfortable
         return Table(discover.hits, selection: $discover.selection) {
+            TableColumn("") { hit in
+                FavoriteMark(isFavorite: favorites.isFavorite(hit.id))
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+            .width(18)
             TableColumn("Model") { hit in
                 ModelNameCell(
                     name: hit.name,
@@ -194,6 +200,9 @@ struct DiscoverView: View {
         }
         .contextMenu(forSelectionType: SearchHit.ID.self) { ids in
             if let repo = ids.first {
+                Button(favorites.isFavorite(repo) ? "Remove from Favorites" : "Add to Favorites") {
+                    Task { await favorites.toggle(repo) }
+                }
                 Button("Copy Name") {
                     Pasteboard.copy(repo)
                 }

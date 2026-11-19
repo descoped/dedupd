@@ -44,6 +44,12 @@ protocol DaemonClient: Sendable {
     /// What happened to the models in the apps, newest first.
     func activity(at address: String) async throws -> [ActivityEntry]
 
+    /// The favorite models, and how the likes on Hugging Face are brought in.
+    func favorites(at address: String) async throws -> Favorites
+    func setFavorite(_ repo: String, _ favorite: Bool, at address: String) async throws -> Favorites
+    /// Read the likes on Hugging Face now.
+    func syncFavorites(at address: String) async throws -> Favorites
+
     func checkUpstream(_ repo: String, at address: String) async throws -> UpstreamCheck
     func forget(_ repo: String, at address: String) async throws
     /// What removing `repo` from `app` would delete; with `apply`, remove it.
@@ -134,6 +140,18 @@ struct LiveDaemonClient: DaemonClient {
 
     func activity(at address: String) async throws -> [ActivityEntry] {
         try await Self.blocking { try DedupdClient.activity(address: address) }
+    }
+
+    func favorites(at address: String) async throws -> Favorites {
+        try await Self.blocking { try DedupdClient.favorites(address: address) }
+    }
+
+    func setFavorite(_ repo: String, _ favorite: Bool, at address: String) async throws -> Favorites {
+        try await Self.blocking { try DedupdClient.setFavorite(address: address, repo: repo, favorite: favorite) }
+    }
+
+    func syncFavorites(at address: String) async throws -> Favorites {
+        try await Self.blocking { try DedupdClient.syncFavorites(address: address) }
     }
 
     func downloadAction(_ action: JobAction, id: Int64, at address: String) async throws {

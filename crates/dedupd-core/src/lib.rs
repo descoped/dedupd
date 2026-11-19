@@ -8,6 +8,7 @@ pub mod clone;
 pub mod config;
 pub mod db;
 pub mod engine;
+pub mod favorites;
 pub mod fetch;
 pub mod governor;
 pub mod hash;
@@ -28,6 +29,7 @@ pub mod select;
 pub mod sources;
 pub mod status;
 pub mod store;
+pub mod token;
 
 pub use paths::Home;
 

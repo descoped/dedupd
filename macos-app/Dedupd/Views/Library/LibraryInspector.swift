@@ -26,6 +26,7 @@ struct ModelHeader: View {
                     .foregroundStyle(.secondary)
                 FormatBadges(formats: meta.formats)
                 Spacer()
+                FavoriteButton(repo: repo)
                 Link(destination: HuggingFace.page(repo)) {
                     Label("Hugging Face", systemImage: "arrow.up.right.square")
                         .font(.callout)

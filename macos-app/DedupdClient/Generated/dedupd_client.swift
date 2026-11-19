@@ -1462,6 +1462,18 @@ public func enqueue(address: String, model: String, apps: [ModelApp], include: [
 })
 }
 /**
+ * The favorite models, newest first, and how the likes on Hugging Face
+ * are brought in.
+ */
+public func favorites(address: String)throws  -> Favorites  {
+    return try  FfiConverterTypeFavorites_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_favorites(
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+})
+}
+/**
  * Drop `repo` from the library, so its files can be cleaned up.
  * Refused while an app still has files of it.
  */
@@ -1653,6 +1665,19 @@ public func search(address: String, query: SearchQuery)throws  -> SearchPage  {
 })
 }
 /**
+ * Mark `repo` (`org/repo`) as a favorite, or no longer.
+ */
+public func setFavorite(address: String, repo: String, favorite: Bool)throws  -> Favorites  {
+    return try  FfiConverterTypeFavorites_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_set_favorite(
+        FfiConverterString.lower(address),
+        FfiConverterString.lower(repo),
+        FfiConverterBool.lower(favorite),uniffiCallStatus
+    )
+})
+}
+/**
  * The daemon's settings.
  */
 public func settings(address: String)throws  -> DaemonSettings  {
@@ -1693,6 +1718,17 @@ public func storeCheck(address: String)throws  -> StoreCheck  {
     return try  FfiConverterTypeStoreCheck_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
         uniffiCallStatus in
     uniffi_dedupd_client_fn_func_store_check(
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+})
+}
+/**
+ * Read the likes on Hugging Face now, and bring them in.
+ */
+public func syncFavorites(address: String)throws  -> Favorites  {
+    return try  FfiConverterTypeFavorites_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_sync_favorites(
         FfiConverterString.lower(address),uniffiCallStatus
     )
 })
@@ -1789,6 +1825,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_func_enqueue() != 17010) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dedupd_client_checksum_func_favorites() != 50348) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dedupd_client_checksum_func_forget() != 9779) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1834,6 +1873,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_func_search() != 1763) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dedupd_client_checksum_func_set_favorite() != 53814) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dedupd_client_checksum_func_settings() != 39721) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1844,6 +1886,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_store_check() != 7645) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dedupd_client_checksum_func_sync_favorites() != 8080) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_unplace() != 63773) {

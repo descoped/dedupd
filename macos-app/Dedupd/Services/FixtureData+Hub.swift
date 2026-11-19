@@ -274,3 +274,19 @@ extension FixtureData {
         }
     }()
 }
+
+extension FixtureData {
+    /// The canned daemon's clock, in seconds since 1970.
+    static let now: Int64 = 1_794_003_600
+
+    /// Two models starred in dedupd and one liked on Hugging Face, by an
+    /// account with no personal name.
+    static let favorites = Favorites(
+        favorites: [
+            Favorite(repo: "unsloth/Qwen3.8-9B-Instruct-GGUF", addedAt: now - 600, source: .huggingFace),
+            Favorite(repo: smolGGUF, addedAt: now - 7_200, source: .dedupd),
+            Favorite(repo: "bartowski/Gemma-4-12B-it-GGUF", addedAt: now - 86_400, source: .dedupd),
+        ],
+        likes: LikesSync(hasToken: true, user: "example", syncedAt: now - 600, problem: nil)
+    )
+}
