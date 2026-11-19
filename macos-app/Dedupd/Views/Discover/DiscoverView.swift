@@ -59,8 +59,10 @@ struct DiscoverView: View {
                 Task { await discover.search() }
             }
             .onChange(of: discover.text) { _, text in
-                // Clearing the field goes back to the list without a Return.
-                if text.isEmpty, discover.hasSearched {
+                // Clearing the field goes back to the list without a Return;
+                // not while the favorites are shown, whose selection it
+                // would drop.
+                if text.isEmpty, discover.hasSearched, !discover.showsFavorites {
                     Task { await discover.search() }
                 }
             }

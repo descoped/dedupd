@@ -63,7 +63,7 @@ extension LikesSync {
     /// Where the likes stand, in a sentence.
     var summary: String {
         if !hasToken {
-            return "To bring in your likes from Hugging Face, sign in there with `hf auth login`."
+            return "To bring in your likes from Hugging Face, sign in with hf auth login in Terminal."
         }
         if let problem {
             return problem

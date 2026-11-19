@@ -46,12 +46,29 @@ pub(crate) fn set(server: &Server, repo: &str, favorite: bool) -> anyhow::Result
     Ok(answer(server, &kept))
 }
 
+/// Clears `reading` when the reading ends, however it ends.
+struct Reading<'a>(&'a AtomicBool);
+
+impl Drop for Reading<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
 /// Read the likes now. `by_hand` also asks Hugging Face again whose token
-/// it is. A reading that is already going is not started twice.
+/// it is. A reading that is already going is not started twice. The
+/// reading runs on its own task, so a caller that goes away (a request cut
+/// off) does not cut it off.
 pub(crate) async fn sync(server: &Arc<Server>, by_hand: bool) -> anyhow::Result<Favorites> {
+    let task = server.clone();
+    tokio::spawn(async move { read_now(&task, by_hand).await }).await?
+}
+
+async fn read_now(server: &Arc<Server>, by_hand: bool) -> anyhow::Result<Favorites> {
     if server.favorites.reading.swap(true, Ordering::SeqCst) {
         return Ok(current(server));
     }
+    let _reading = Reading(&server.favorites.reading);
     let known = {
         let _held = server.favorites.file.lock().expect("lock");
         Kept::load(&server.home).user
@@ -61,7 +78,6 @@ pub(crate) async fn sync(server: &Arc<Server>, by_hand: bool) -> anyhow::Result<
         let _held = server.favorites.file.lock().expect("lock");
         favorites::record_likes(&server.home, likes, now())
     });
-    server.favorites.reading.store(false, Ordering::SeqCst);
     match kept {
         Some(kept) => {
             let kept = kept?;

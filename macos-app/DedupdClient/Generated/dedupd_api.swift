@@ -3083,7 +3083,8 @@ public struct LikesSync: Equatable, Hashable {
      */
     public var user: String?
     /**
-     * When the likes were last read, in seconds since the Unix epoch.
+     * When the likes were last asked for, in seconds since the Unix epoch,
+     * whether or not that worked; `problem` says when it did not.
      */
     public var syncedAt: Int64?
     /**
@@ -3102,7 +3103,8 @@ public struct LikesSync: Equatable, Hashable {
          * The Hugging Face account the token belongs to, once known.
          */user: String?, 
         /**
-         * When the likes were last read, in seconds since the Unix epoch.
+         * When the likes were last asked for, in seconds since the Unix epoch,
+         * whether or not that worked; `problem` says when it did not.
          */syncedAt: Int64?, 
         /**
          * Why the last reading failed, in a sentence.

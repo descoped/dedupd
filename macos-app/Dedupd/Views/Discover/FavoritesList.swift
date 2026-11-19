@@ -64,7 +64,8 @@ struct FavoritesList: View {
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             HStack {
-                Text(LocalizedStringKey(favorites.list.likes.summary))
+                // The daemon's words, never read as Markdown or a format.
+                Text(verbatim: favorites.list.likes.summary)
                     .font(.callout)
                     .foregroundStyle(favorites.list.likes.problem == nil ? Color.secondary : Color.orange)
                     .lineLimit(2)

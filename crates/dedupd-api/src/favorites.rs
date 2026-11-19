@@ -34,7 +34,8 @@ pub struct LikesSync {
     pub has_token: bool,
     /// The Hugging Face account the token belongs to, once known.
     pub user: Option<String>,
-    /// When the likes were last read, in seconds since the Unix epoch.
+    /// When the likes were last asked for, in seconds since the Unix epoch,
+    /// whether or not that worked; `problem` says when it did not.
     pub synced_at: Option<i64>,
     /// Why the last reading failed, in a sentence.
     pub problem: Option<String>,

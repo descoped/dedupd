@@ -464,9 +464,13 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
         }
         (&Method::GET, ["favorites"]) => ok(favorites::current(server)),
         (&Method::POST, ["favorites"]) => match body::<FavoriteBody>(call) {
+            Ok(b) if !dedupd_core::names::is_repo_name(&b.repo) => error(
+                StatusCode::BAD_REQUEST,
+                format!("{:?} is not a model's name", b.repo),
+            ),
             Ok(b) => match favorites::set(server, &b.repo, b.favorite) {
                 Ok(list) => ok(list),
-                Err(e) => error(StatusCode::BAD_REQUEST, format!("{e:#}")),
+                Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
             },
             Err(refused) => *refused,
         },
