@@ -74,6 +74,7 @@ pub async fn pass_with(
     {
         server.touch();
     }
+    crate::favorites::refresh_token(server);
     crate::favorites::sync_if_due(server);
     Ok(report)
 }

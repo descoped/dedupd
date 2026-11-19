@@ -52,7 +52,7 @@ and activates it in the apps you ticked.
 The star in a model's details, in Discover and in the Library, marks it as a favorite; Favorites in the toolbar
 lists them in place of the search results. When dedupd has a Hugging Face token (the one `hf auth login` stores, or
 `HF_TOKEN`), the models that account likes on Hugging Face are added to the favorites, read once an hour and with
-Sync Now. Likes are only read: Hugging Face does not let a program like a model. Taking the star off a liked model
+Sync Now. Signing in or out takes effect without restarting the daemon; a new token's likes are read at once. Likes are only read: Hugging Face does not let a program like a model. Taking the star off a liked model
 keeps it off, and a model that is no longer liked on Hugging Face leaves the favorites unless it was starred in
 dedupd. Without a token the liked models stay among the favorites as they were last read. The favorites are kept
 in `~/.dedupd/favorites.json`.

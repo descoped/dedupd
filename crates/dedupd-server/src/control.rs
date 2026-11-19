@@ -281,7 +281,10 @@ fn log_tail(server: &Server, lines: usize) -> anyhow::Result<LogTail> {
 pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Response {
     let engine = server.engine.clone();
     match (&call.method, rest) {
-        (&Method::GET, ["status"]) => answer(status_answer(server)),
+        (&Method::GET, ["status"]) => {
+            favorites::refresh_token(server);
+            answer(status_answer(server))
+        }
         (&Method::POST, ["pull"]) => {
             let body: PullBody = match body(call) {
                 Ok(b) => b,
@@ -462,7 +465,10 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 .await,
             )
         }
-        (&Method::GET, ["favorites"]) => ok(favorites::current(server)),
+        (&Method::GET, ["favorites"]) => {
+            favorites::refresh_token(server);
+            ok(favorites::current(server))
+        }
         (&Method::POST, ["favorites"]) => match body::<FavoriteBody>(call) {
             Ok(b) if !dedupd_core::names::is_repo_name(&b.repo) => error(
                 StatusCode::BAD_REQUEST,

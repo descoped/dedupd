@@ -5,7 +5,6 @@ use crate::fetch::Expect;
 use crate::governor::{self, Class, Governor};
 use dedupd_api::library::ModelMeta;
 use serde::Deserialize;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 pub const DEFAULT_ENDPOINT: &str = "https://huggingface.co";
@@ -176,10 +175,12 @@ struct RawLfs {
     oid: String,
 }
 
+pub use crate::token::Token;
+
 pub struct HubClient {
     http: reqwest::Client,
     endpoint: String,
-    token: Option<String>,
+    token: Arc<Token>,
     governor: Arc<Governor>,
 }
 
@@ -193,9 +194,20 @@ impl HubClient {
         Ok(Self {
             http,
             endpoint: endpoint.into().trim_end_matches('/').to_string(),
-            token,
+            token: Token::fixed(token),
             governor: Governor::new(governor::DEFAULT_CONNECTIONS, 0),
         })
+    }
+
+    /// Send `token`, shared with the fetcher, in place of a fixed one.
+    pub fn with_token(mut self, token: Arc<Token>) -> Self {
+        self.token = token;
+        self
+    }
+
+    /// The token this client sends.
+    pub fn token(&self) -> &Arc<Token> {
+        &self.token
     }
 
     /// Share `governor` with everything else that asks the provider.
@@ -210,18 +222,13 @@ impl HubClient {
 
     /// Whether a token is sent with requests to the Hub.
     pub fn has_token(&self) -> bool {
-        self.token.is_some()
+        self.token.get().is_some()
     }
 
     /// Where `token_from_environment` would read the token from: the name
     /// of the variable or the path of the file. `None` when there is none.
     pub fn token_source() -> Option<String> {
-        if std::env::var("HF_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
-            return Some("HF_TOKEN".into());
-        }
-        let file = token_file()?;
-        let text = std::fs::read_to_string(&file).ok()?;
-        (!text.trim().is_empty()).then(|| file.to_string_lossy().into_owned())
+        crate::token::source()
     }
 
     /// A GET under the endpoint, for the parts of the Hub API this client
@@ -238,13 +245,7 @@ impl HubClient {
 
     /// The token other Hugging Face tools use: `HF_TOKEN`, else the token file.
     pub fn token_from_environment() -> Option<String> {
-        if let Ok(t) = std::env::var("HF_TOKEN")
-            && !t.trim().is_empty()
-        {
-            return Some(t.trim().to_string());
-        }
-        let t = std::fs::read_to_string(token_file()?).ok()?;
-        (!t.trim().is_empty()).then(|| t.trim().to_string())
+        crate::token::from_environment()
     }
 
     async fn get(
@@ -264,7 +265,7 @@ impl HubClient {
         let mut req = self.http.get(url);
         if let Some(value) = auth {
             req = req.header(reqwest::header::AUTHORIZATION, value);
-        } else if let Some(t) = &self.token {
+        } else if let Some(t) = self.token.get() {
             req = req.bearer_auth(t);
         }
         let _permit = self.governor.permit(Class::Api).await;
@@ -364,7 +365,7 @@ impl HubClient {
     /// Hugging Face limits how often this may be asked; the caller keeps
     /// the answer.
     pub async fn whoami(&self) -> Result<Option<String>, HubError> {
-        if self.token.is_none() {
+        if !self.has_token() {
             return Ok(None);
         }
         let url = format!("{}/api/whoami-v2", self.endpoint);
@@ -427,16 +428,6 @@ fn is_user_name(name: &str) -> bool {
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         && !name.contains("..")
-}
-
-/// The file Hugging Face's own tools keep the token in.
-fn token_file() -> Option<PathBuf> {
-    std::env::var_os("HF_TOKEN_PATH")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HF_HOME").map(|h| PathBuf::from(h).join("token")))
-        .or_else(|| {
-            std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/huggingface/token"))
-        })
 }
 
 /// Pull the `rel="next"` target out of a `Link` header.
@@ -667,5 +658,42 @@ mod tests {
         // No token: nobody to ask about, and nothing is sent.
         let anonymous = HubClient::new(server.uri(), None).unwrap();
         assert_eq!(anonymous.whoami().await.unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn a_token_signed_in_later_is_sent_without_a_restart() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/whoami-v2"))
+            .and(header("authorization", "Bearer second"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"type": "user", "name": "ove"})),
+            )
+            .mount(&server)
+            .await;
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("token");
+        let read = file.clone();
+        let token = Token::read_by(move || {
+            std::fs::read_to_string(&read)
+                .ok()
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+        });
+        let hub = HubClient::new(server.uri(), None)
+            .unwrap()
+            .with_token(token.clone());
+        assert!(!hub.has_token());
+        assert!(!token.refresh(), "still none");
+
+        std::fs::write(&file, "second\n").unwrap();
+        assert!(token.refresh());
+        assert!(!token.refresh(), "the same again");
+        assert_eq!(hub.whoami().await.unwrap().as_deref(), Some("ove"));
+
+        std::fs::remove_file(&file).unwrap();
+        assert!(token.refresh());
+        assert!(!hub.has_token(), "signed out");
+        assert!(!Token::fixed(Some("x".into())).refresh());
     }
 }

@@ -29,6 +29,7 @@ pub mod select;
 pub mod sources;
 pub mod status;
 pub mod store;
+pub mod token;
 
 pub use paths::Home;
 

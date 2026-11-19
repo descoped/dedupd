@@ -188,7 +188,7 @@ pub struct Fetcher {
     /// The same client, except that it hands redirects back to the caller.
     http_no_redirect: reqwest::Client,
     endpoint: String,
-    token: Option<String>,
+    token: Arc<crate::token::Token>,
     governor: Arc<Governor>,
     /// One download at a time per file, so two requests for the same file
     /// never write the same partial file.
@@ -216,7 +216,7 @@ impl Fetcher {
             http,
             http_no_redirect,
             endpoint: endpoint.into().trim_end_matches('/').to_string(),
-            token,
+            token: crate::token::Token::fixed(token),
             governor: Governor::new(governor::DEFAULT_CONNECTIONS, 0),
             in_flight: Mutex::new(HashMap::new()),
             patient: AtomicBool::new(false),
@@ -228,6 +228,12 @@ impl Fetcher {
     /// Share `governor` with everything else that asks the provider.
     pub fn with_governor(mut self, governor: Arc<Governor>) -> Self {
         self.governor = governor;
+        self
+    }
+
+    /// Send `token`, shared with the Hub client, in place of a fixed one.
+    pub fn with_token(mut self, token: Arc<crate::token::Token>) -> Self {
+        self.token = token;
         self
     }
 
@@ -264,7 +270,7 @@ impl Fetcher {
     /// endpoint; on a redirect to another host the HTTP client drops it.
     pub fn get(&self, url: &str) -> reqwest::RequestBuilder {
         let mut req = self.http.get(url);
-        if let Some(t) = &self.token
+        if let Some(t) = self.token.get()
             && url.starts_with(&self.endpoint)
         {
             req = req.bearer_auth(t);
@@ -274,7 +280,7 @@ impl Fetcher {
 
     /// The `Authorization` value dedupd itself uses for the endpoint.
     pub fn authorization(&self) -> Option<String> {
-        self.token.as_ref().map(|t| format!("Bearer {t}"))
+        self.token.get().map(|t| format!("Bearer {t}"))
     }
 
     pub fn resolve_url(&self, repo: &str, commit: &str, path: &str) -> String {
@@ -619,7 +625,7 @@ impl Fetcher {
         for _ in 0..8 {
             let ours = url.as_str().starts_with(&self.endpoint);
             let mut req = self.http_no_redirect.get(url.clone());
-            if let Some(t) = &self.token
+            if let Some(t) = self.token.get()
                 && ours
             {
                 req = req.bearer_auth(t);

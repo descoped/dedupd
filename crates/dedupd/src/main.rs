@@ -13,6 +13,7 @@ use dedupd_core::hub::HubClient;
 use dedupd_core::place::AppDirs;
 use dedupd_core::pull::{self, PullRequest};
 use dedupd_core::store::Store;
+use dedupd_core::token::Token;
 use dedupd_core::{Home, archive, status};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -227,13 +228,17 @@ pub fn open(home: Option<PathBuf>, endpoint: Option<String>) -> Result<Opened> {
     let home = Home::new(root);
     let config = Config::load(&home)?;
     let endpoint = endpoint.unwrap_or_else(|| config.hf_endpoint().to_string());
-    let token = HubClient::token_from_environment();
+    let token = Token::from_environment();
     let governor = Governor::new(config.max_connections(), config.speed_limit());
     let engine = Engine {
         store: Store::open(&home)?.with_archive(config.archive_home()),
         db: Mutex::new(Db::open(&home.db_path())?),
-        hub: HubClient::new(endpoint.clone(), token.clone())?.with_governor(governor.clone()),
-        fetcher: Fetcher::new(endpoint, token)?.with_governor(governor.clone()),
+        hub: HubClient::new(endpoint.clone(), None)?
+            .with_token(token.clone())
+            .with_governor(governor.clone()),
+        fetcher: Fetcher::new(endpoint, None)?
+            .with_token(token)
+            .with_governor(governor.clone()),
         dirs: AppDirs::resolve(&config)?,
         governor,
     };

@@ -30,6 +30,29 @@ fn answer(server: &Server, kept: &Kept) -> Favorites {
     kept.answer(server.engine.hub.has_token())
 }
 
+/// Read the Hugging Face token again: signing in or out with `hf auth`
+/// takes effect without a restart. A new token's likes are read at once,
+/// asking Hugging Face whose it is.
+pub(crate) fn refresh_token(server: &Arc<Server>) {
+    if !server.engine.hub.token().refresh() {
+        return;
+    }
+    let now_has = server.engine.hub.has_token();
+    eprintln!(
+        "dedupd: the Hugging Face token {}",
+        if now_has { "changed" } else { "was removed" }
+    );
+    server.touch();
+    if now_has {
+        let server = server.clone();
+        tokio::spawn(async move {
+            if let Err(e) = sync(&server, true).await {
+                eprintln!("dedupd: favorites: {e:#}");
+            }
+        });
+    }
+}
+
 /// The favorites as they are.
 pub(crate) fn current(server: &Server) -> Favorites {
     let _held = server.favorites.file.lock().expect("lock");
