@@ -39,8 +39,6 @@ final class DiscoverStore {
     var format = ""
     var task = ""
     var sort = SearchSort.trending
-    /// The favorites are listed in place of the search results.
-    var showsFavorites = false
 
     private(set) var hits: [SearchHit] = []
     /// Where the next page starts; nil when there is none.
@@ -167,7 +165,6 @@ final class DiscoverStore {
     /// Show one model in place of the list, as if its name had been typed
     /// into the search field. The name is one `ModelSpec` has checked.
     func show(_ repo: String) {
-        showsFavorites = false
         leaveTheList()
         text = repo
         open(repo)

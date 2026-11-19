@@ -1,6 +1,7 @@
 import SwiftUI
 
-/// A star that marks a model as a favorite, or takes the mark off.
+/// A star that marks a model as a favorite, or takes the mark off. Larger
+/// than the text around it, so it is found at a glance.
 struct FavoriteButton: View {
     @Environment(FavoritesStore.self) private var favorites
     let repo: String
@@ -11,6 +12,7 @@ struct FavoriteButton: View {
             Task { await favorites.toggle(repo) }
         } label: {
             Image(systemName: starred ? "star.fill" : "star")
+                .font(.title2)
                 .foregroundStyle(starred ? Color.yellow : Color.secondary)
         }
         .buttonStyle(.borderless)
@@ -28,7 +30,7 @@ struct FavoriteMark: View {
         if isFavorite {
             Image(systemName: "star.fill")
                 .foregroundStyle(.yellow)
-                .imageScale(.small)
+                .imageScale(.medium)
                 .accessibilityLabel("Favorite")
         }
     }

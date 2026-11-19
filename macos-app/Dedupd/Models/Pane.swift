@@ -4,6 +4,7 @@ import Foundation
 enum Pane: String, CaseIterable, Identifiable, Sendable {
     case library
     case discover
+    case favorites
     case downloads
     case activity
     case storage
@@ -15,6 +16,7 @@ enum Pane: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .library: "Library"
         case .discover: "Discover"
+        case .favorites: "Favorites"
         case .downloads: "Downloads"
         case .activity: "Activity"
         case .storage: "Storage"
@@ -26,6 +28,7 @@ enum Pane: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .library: "books.vertical"
         case .discover: "magnifyingglass"
+        case .favorites: "star"
         case .downloads: "arrow.down.circle"
         case .activity: "clock.arrow.circlepath"
         case .storage: "internaldrive"
@@ -38,6 +41,7 @@ enum Pane: String, CaseIterable, Identifiable, Sendable {
         switch self {
         case .library: "The models on this Mac and where each app has them"
         case .discover: "Search Hugging Face and look at a model before downloading it"
+        case .favorites: "The models you starred, and the ones you like on Hugging Face"
         case .downloads: "What is being downloaded, and how hard the server is being asked"
         case .activity: "What happened to your models in the apps"
         case .storage: "Where the files are and what can be cleaned up"

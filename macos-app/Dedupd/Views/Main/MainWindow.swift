@@ -16,6 +16,7 @@ struct MainWindow: View {
             switch navigation.pane {
             case .library: LibraryView()
             case .discover: DiscoverView()
+            case .favorites: FavoritesView()
             case .downloads: DownloadsView()
             case .activity: ActivityView()
             case .storage: StorageView()
@@ -64,6 +65,7 @@ struct Sidebar: View {
             Section("Models") {
                 row(.library)
                 row(.discover)
+                row(.favorites)
                 row(.downloads, badge: daemon.activeJobs.count + daemon.attentionJobs.count)
                 row(.activity, badge: activity.unseenFailures + activity.runningCount)
             }

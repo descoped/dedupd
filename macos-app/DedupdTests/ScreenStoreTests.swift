@@ -205,15 +205,6 @@ struct DiscoverStoreTests {
         #expect(!favorites.isSyncing)
     }
 
-    @Test("Searching leaves the favorites; showing a model by name does too")
-    func favoritesShown() async {
-        let discover = DiscoverStore(daemon: await startedDaemon())
-        discover.showsFavorites = true
-        discover.show(FixtureData.smolGGUF)
-        #expect(!discover.showsFavorites)
-        #expect(discover.selection == FixtureData.smolGGUF)
-    }
-
     @Test("Words and a format narrow the search")
     func filters() async {
         let discover = DiscoverStore(daemon: await startedDaemon())

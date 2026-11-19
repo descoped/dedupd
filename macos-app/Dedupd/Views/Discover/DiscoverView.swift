@@ -24,18 +24,11 @@ struct DiscoverView: View {
             .navigationSubtitle(subtitle)
             .searchable(text: $discover.text, placement: .toolbar, prompt: "Search, or paste a model's name or address")
             .onSubmit(of: .search) {
-                discover.showsFavorites = false
                 Task { await discover.search() }
             }
             .toolbar {
                 ToolbarItemGroup {
-                    Toggle(isOn: $discover.showsFavorites) {
-                        Label("Favorites", systemImage: discover.showsFavorites ? "star.fill" : "star")
-                    }
-                    .help("Show your favorite models in place of the search results")
-                    .accessibilityIdentifier("discover-favorites")
                     filters
-                        .disabled(discover.showsFavorites)
                 }
                 ToolbarSpacer(.fixed)
                 ToolbarItemGroup {
@@ -59,20 +52,14 @@ struct DiscoverView: View {
                 Task { await discover.search() }
             }
             .onChange(of: discover.text) { _, text in
-                // Clearing the field goes back to the list without a Return;
-                // not while the favorites are shown, whose selection it
-                // would drop.
-                if text.isEmpty, discover.hasSearched, !discover.showsFavorites {
+                // Clearing the field goes back to the list without a Return.
+                if text.isEmpty, discover.hasSearched {
                     Task { await discover.search() }
                 }
             }
     }
 
     private var subtitle: String {
-        if discover.showsFavorites {
-            let count = favorites.favorites.count
-            return "\(count) favorite\(count == 1 ? "" : "s")"
-        }
         if discover.isSearching {
             return "Searching…"
         }
@@ -110,8 +97,6 @@ struct DiscoverView: View {
     @ViewBuilder private var content: some View {
         if !daemon.isRunning {
             DaemonAwayView()
-        } else if discover.showsFavorites {
-            FavoritesList()
         } else if let failure = discover.failure {
             ContentUnavailableView {
                 Label("Hugging Face could not be searched", systemImage: "wifi.exclamationmark")
@@ -153,7 +138,7 @@ struct DiscoverView: View {
                 FavoriteMark(isFavorite: favorites.isFavorite(hit.id))
                     .frame(maxWidth: .infinity, alignment: .center)
             }
-            .width(16)
+            .width(18)
             TableColumn("Model") { hit in
                 ModelNameCell(
                     name: hit.name,
