@@ -4980,6 +4980,11 @@ public struct StoreCheck: Equatable, Hashable {
      */
     public var missing: [String]
     public var onlyInArchive: UInt64
+    /**
+     * Files that are not in the store while the archive disk is away, so
+     * nothing says whether it has them.
+     */
+    public var archiveAway: UInt64
     public var error: String?
 
     // Default memberwise initializers are never public by default, so we
@@ -4993,7 +4998,11 @@ public struct StoreCheck: Equatable, Hashable {
          */damaged: [String], 
         /**
          * sha256 of the files that are in neither the store nor the archive.
-         */missing: [String], onlyInArchive: UInt64, error: String?) {
+         */missing: [String], onlyInArchive: UInt64, 
+        /**
+         * Files that are not in the store while the archive disk is away, so
+         * nothing says whether it has them.
+         */archiveAway: UInt64, error: String?) {
         self.running = running
         self.startedAt = startedAt
         self.finishedAt = finishedAt
@@ -5002,6 +5011,7 @@ public struct StoreCheck: Equatable, Hashable {
         self.damaged = damaged
         self.missing = missing
         self.onlyInArchive = onlyInArchive
+        self.archiveAway = archiveAway
         self.error = error
     }
 
@@ -5029,6 +5039,7 @@ public struct FfiConverterTypeStoreCheck: FfiConverterRustBuffer {
                 damaged: FfiConverterSequenceString.read(from: &buf), 
                 missing: FfiConverterSequenceString.read(from: &buf), 
                 onlyInArchive: FfiConverterUInt64.read(from: &buf), 
+                archiveAway: FfiConverterUInt64.read(from: &buf), 
                 error: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -5042,6 +5053,7 @@ public struct FfiConverterTypeStoreCheck: FfiConverterRustBuffer {
         FfiConverterSequenceString.write(value.damaged, into: &buf)
         FfiConverterSequenceString.write(value.missing, into: &buf)
         FfiConverterUInt64.write(value.onlyInArchive, into: &buf)
+        FfiConverterUInt64.write(value.archiveAway, into: &buf)
         FfiConverterOptionString.write(value.error, into: &buf)
     }
 }

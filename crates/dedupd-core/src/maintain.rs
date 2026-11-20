@@ -128,6 +128,10 @@ pub struct VerifyReport {
     pub damaged: Vec<String>,
     /// Files the database lists that are in neither the store nor the archive.
     pub missing: Vec<String>,
+    /// Files that are not in the store while the archive disk is away, so
+    /// nothing says whether it has them. An archived or offloaded file is
+    /// one of these until the disk is attached again.
+    pub archive_away: usize,
     /// Files that are only on the archive disk.
     pub only_in_archive: usize,
     /// When the archive disk is checked: files that are only on the
@@ -168,6 +172,8 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
                                 .is_some_and(|a| a.blob_path(&blob.sha256).is_file())
                         {
                             r.only_in_archive += 1;
+                        } else if !archive && store.archive().is_some_and(|a| !a.attached()) {
+                            r.archive_away += 1;
                         } else {
                             r.missing.push(blob.sha256.clone());
                         }
@@ -492,7 +498,7 @@ impl Kept {
 fn ollama_use(dirs: &AppDirs, repo: &str) -> (Vec<String>, HashSet<String>) {
     let mut own = Vec::new();
     let mut elsewhere = HashSet::new();
-    for found in crate::sources::ollama::manifests(&dirs.ollama) {
+    for found in crate::sources::ollama::manifests_in_use(&dirs.ollama) {
         if found.repo == repo {
             let rel = match found.provider {
                 PROVIDER_HF => Path::new(crate::ollama::HOST).join(repo),
@@ -514,6 +520,9 @@ fn ollama_use(dirs: &AppDirs, repo: &str) -> (Vec<String>, HashSet<String>) {
             );
         }
     }
+    // A model Ollama pulled itself is in both trees, and was found twice.
+    own.sort();
+    own.dedup();
     (own, elsewhere)
 }
 

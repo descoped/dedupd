@@ -150,6 +150,8 @@ fn copy_in(store: &Store, archive: &Home, sha256: &str, replace: bool) -> Result
         fs::create_dir_all(dst.parent().expect("blob path has a parent"))?;
         let _ = fs::remove_file(&dst);
         fs::rename(&tmp, &dst)?;
+        // The name must be on the disk too before anything relies on it.
+        fs::File::open(dst.parent().expect("blob path has a parent"))?.sync_all()?;
         Ok(())
     })();
     if result.is_err() {
@@ -322,6 +324,19 @@ fn secure(store: &Store, archive: &Home, blob: &BlobRow) -> Result<bool> {
     // A copy that is there and bad is written again; one that is not there
     // may be on its way from the daemon's backup.
     copy_in(store, archive, &blob.sha256, there)?;
+    // The copy is the only one once the local file is removed, so it is
+    // read back from the archive disk itself: what was hashed on the way
+    // there is what the store held, not what the disk kept. The copy was
+    // written past the system's cache and is read past it.
+    let kept = crate::hash::hash_file_from_disk(&dst)
+        .with_context(|| format!("reading back {}", dst.display()))?
+        .sha256;
+    if kept != blob.sha256 {
+        bail!(
+            "the archive disk did not keep {} as it was written (it reads back as {kept}); nothing was removed",
+            blob.sha256
+        );
+    }
     Ok(true)
 }
 

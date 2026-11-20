@@ -12,7 +12,17 @@ final class StorageStore {
     private(set) var plan: Loaded<GcPlan> = .idle
     /// Also list files that could be moved off this Mac because the
     /// archive disk has them and no app uses them.
-    var includeOffload = false
+    /// A plan made for the other setting is taken off the screen at once,
+    /// so Clean Up can never remove what a stale list shows.
+    var includeOffload = false {
+        didSet {
+            guard includeOffload != oldValue else {
+                return
+            }
+            planGeneration += 1
+            plan = .loading
+        }
+    }
     /// The bytes the last clean-up freed.
     private(set) var freed: UInt64?
     private(set) var check: StoreCheck?
@@ -21,29 +31,51 @@ final class StorageStore {
     var confirming = false
 
     @ObservationIgnored private let daemon: DaemonStore
+    /// Counts the reloads and the plans asked for; an answer to an older
+    /// one is dropped, so it cannot replace a newer one.
+    @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var planGeneration = 0
 
     init(daemon: DaemonStore) {
         self.daemon = daemon
     }
 
     func reload() async {
+        generation += 1
+        let mine = generation
         let client = daemon.client
         let address = daemon.address
+        let found: Loaded<Locations>
         do {
-            locations = .ready(try await client.locations(at: address))
+            found = .ready(try await client.locations(at: address))
         } catch {
-            locations = .failed(describe(error))
+            found = .failed(describe(error))
         }
+        guard mine == generation else {
+            return
+        }
+        locations = found
         await loadPlan()
-        check = try? await client.storeCheck(at: address)
+        let checked = try? await client.storeCheck(at: address)
+        guard mine == generation else {
+            return
+        }
+        check = checked
     }
 
     func loadPlan() async {
+        planGeneration += 1
+        let mine = planGeneration
+        let found: Loaded<GcPlan>
         do {
-            plan = .ready(try await daemon.client.gcPlan(offload: includeOffload, at: daemon.address))
+            found = .ready(try await daemon.client.gcPlan(offload: includeOffload, at: daemon.address))
         } catch {
-            plan = .failed(describe(error))
+            found = .failed(describe(error))
         }
+        guard mine == planGeneration else {
+            return
+        }
+        plan = found
     }
 
     /// Whether the plan lists anything.
@@ -98,6 +130,7 @@ final class ServiceStore {
 
     @ObservationIgnored private let daemon: DaemonStore
     @ObservationIgnored private let control: any AgentControl
+    @ObservationIgnored private var generation = 0
 
     init(daemon: DaemonStore, control: any AgentControl) {
         self.daemon = daemon
@@ -105,18 +138,29 @@ final class ServiceStore {
     }
 
     func reload() async {
+        generation += 1
+        let mine = generation
         startsAtLogin = LoginItem.isEnabled
         await loadAgent()
+        guard mine == generation else {
+            return
+        }
         guard daemon.isRunning else {
             settings = .idle
             log = nil
             return
         }
+        let found: Loaded<DaemonSettings>
         do {
-            settings = .ready(try await daemon.client.settings(at: daemon.address))
+            found = .ready(try await daemon.client.settings(at: daemon.address))
         } catch {
-            settings = .failed(describe(error))
+            found = .failed(describe(error))
         }
+        // An answer to an older reload does not replace a newer one.
+        guard mine == generation else {
+            return
+        }
+        settings = found
         await loadLog()
     }
 

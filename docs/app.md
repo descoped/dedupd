@@ -90,6 +90,8 @@ list, which is kept in `~/.dedupd/activity.jsonl`.
 
 Where the files are, and how much space sharing saves. Clean up lists stored files that are no longer referenced
 and removes them only after the list has been confirmed. Check the store reads every stored file and compares it with its sha256.
+A file that is only on the archive disk is counted as such; while that disk is away it is counted as not looked for,
+not as missing.
 
 ![The Storage screen](images/storage.png)
 

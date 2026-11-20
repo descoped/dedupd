@@ -272,6 +272,21 @@ async fn offload_frees_local_space_and_the_file_comes_back() {
             .only_in_archive,
         1
     );
+    // With the archive disk away nothing says where the file is. It was
+    // not looked for, which is not the same as missing.
+    let trunk = fx.archive.root().parent().unwrap().to_path_buf();
+    let away = trunk.with_extension("away");
+    fs::rename(&trunk, &away).unwrap();
+    let report = maintain::verify(&fx.db, &fx.store, false, 1).unwrap();
+    assert_eq!(
+        (
+            report.missing.len(),
+            report.archive_away,
+            report.only_in_archive
+        ),
+        (0, 1, 0)
+    );
+    fs::rename(&away, &trunk).unwrap();
 
     assert!(fx.store.ensure_local(&sha).unwrap());
     assert_eq!(

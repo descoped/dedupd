@@ -329,6 +329,25 @@ struct MaintenanceStoreTests {
         #expect(storage.plan.value?.offload.count == 1)
     }
 
+    @Test("A plan made for the other setting leaves the screen at once and is never applied")
+    func stalePlan() async {
+        let storage = StorageStore(daemon: await startedDaemon())
+        storage.includeOffload = true
+        await storage.loadPlan()
+        #expect(storage.hasSomethingToClean)
+
+        // The switch is turned off: the list with the files to move away
+        // is gone before the new one has come, and Clean Up has nothing.
+        storage.includeOffload = false
+        #expect(storage.plan == .loading)
+        #expect(!storage.hasSomethingToClean)
+        await storage.clean()
+        #expect(storage.freed == nil)
+
+        await storage.loadPlan()
+        #expect(storage.plan.value?.offload.isEmpty == true)
+    }
+
     @Test("A clean-up removes what the plan lists and reports what it freed")
     func clean() async {
         let daemon = await startedDaemon()

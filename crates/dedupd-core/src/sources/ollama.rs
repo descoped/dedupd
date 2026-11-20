@@ -26,9 +26,24 @@ pub struct FoundManifest {
     pub body: String,
 }
 
-/// Every model manifest in Ollama's models folder.
+/// Every model manifest in Ollama's models folder, as its `manifests` tree
+/// lists them: the models dedupd adopts and places.
 pub fn manifests(models_dir: &Path) -> Vec<FoundManifest> {
-    let base = models_dir.join("manifests");
+    manifests_under(models_dir, "manifests")
+}
+
+/// Every manifest Ollama may read a model from: the `manifests` tree and the
+/// `manifests-v2` tree, whose entries are links to manifest files among the
+/// blobs. Ollama's own import writes only the second on a fresh folder, so
+/// what a model still needs is asked of both.
+pub fn manifests_in_use(models_dir: &Path) -> Vec<FoundManifest> {
+    let mut out = manifests_under(models_dir, "manifests");
+    out.extend(manifests_under(models_dir, "manifests-v2"));
+    out
+}
+
+fn manifests_under(models_dir: &Path, tree: &str) -> Vec<FoundManifest> {
+    let base = models_dir.join(tree);
     let mut out = Vec::new();
     for entry in WalkDir::new(&base)
         .min_depth(4)
