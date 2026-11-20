@@ -95,7 +95,10 @@ struct ServicesTests {
             let status = try await client.status(at: "a")
             let places = try await client.locations(at: "a")
             #expect(places.store.files == status.storeFiles && places.store.bytes == status.storeBytes)
-            #expect(places.store.sharedBytes == 0 && places.archive?.bytes == 0, "as the daemon counts them")
+            #expect(places.store.sharedBytes == 0, "as the daemon counts it")
+            // The archive disk holds every model whole, an archived one too.
+            #expect(places.archive?.models == UInt64(models.count))
+            #expect((places.archive?.bytes ?? 0) >= places.store.bytes)
             for place in places.apps {
                 let held = models.compactMap { model in model.apps.first { $0.app == place.app } }
                 #expect(place.files == held.map(\.files).reduce(0, +))

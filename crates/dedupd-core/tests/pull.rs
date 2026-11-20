@@ -269,7 +269,7 @@ async fn a_model_is_removed_from_an_app_and_placed_again() {
     assert!(q8.placed_in.is_empty());
     assert!(!q8.weights_stored);
     assert_eq!(detail.revisions[0].refs, ["main"]);
-    let where_ = library::locations(&e.db(), &e.store, &e.dirs).unwrap();
+    let where_ = library::locations(&e.db, &e.store, &e.dirs).unwrap();
     assert!(where_.apps.iter().all(|a| a.present && a.models == 1));
     assert!(where_.volume_free > 0 && where_.volume_total > where_.volume_free);
 
@@ -456,7 +456,17 @@ async fn a_model_is_archived_and_restored() {
     // Without the disk, and for a model dedupd does not have, nothing is planned.
     let refused = plan_of().unwrap_err().to_string();
     assert!(refused.contains("not attached"), "{refused}");
+    // A disk that is not attached is counted as holding nothing.
+    let on_archive = |e: &dedupd_core::engine::Engine| {
+        let place = library::locations(&e.db, &e.store, &e.dirs)
+            .unwrap()
+            .archive
+            .unwrap();
+        (place.present, place.files, place.bytes, place.models)
+    };
+    assert_eq!(on_archive(&e), (false, 0, 0, 0));
     fs::create_dir_all(&trunk).unwrap();
+    assert_eq!(on_archive(&e), (true, 0, 0, 0));
     assert!(archive::archive_plan(&e.db, &e.store, &e.dirs, "org/Nope").is_err());
 
     // The weights, the config, and the two small layers Ollama needs.
@@ -498,6 +508,18 @@ async fn a_model_is_archived_and_restored() {
     assert_eq!((report.freed, checked), (plan.bytes, plan.bytes));
     assert_eq!(report.deactivated.len(), 3);
     assert_eq!(fs::read(&bad).unwrap(), up.config);
+    // The archive disk is counted by what it holds: every file, and the
+    // model whole. The store holds none of them now.
+    assert_eq!(on_archive(&e), (true, 4, plan.bytes, 1));
+    let places = library::locations(&e.db, &e.store, &e.dirs).unwrap();
+    assert_eq!((places.store.files, places.store.bytes), (0, 0));
+    // A model with a file missing there is not counted as held.
+    let config = archive_home.blob_path(&sha256(&up.config));
+    let kept = fs::read(&config).unwrap();
+    fs::remove_file(&config).unwrap();
+    assert_eq!(on_archive(&e).3, 0);
+    assert_eq!(on_archive(&e).1, 3);
+    fs::write(&config, kept).unwrap();
     // In no app, and off the internal disk; the archive disk has it all.
     assert!(!e.dirs.bionic.join(REPO).exists());
     assert!(!e.dirs.hf_cache.join("models--org--Repo-GGUF").exists());

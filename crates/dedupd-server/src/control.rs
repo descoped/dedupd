@@ -417,7 +417,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
             }
         }
         (&Method::GET, ["locations"]) => answer(
-            blocking(move || library::locations(&engine.db(), &engine.store, &engine.dirs)).await,
+            blocking(move || library::locations(&engine.db, &engine.store, &engine.dirs)).await,
         ),
 
         (&Method::POST, ["check"]) => match body::<RepoBody>(call) {

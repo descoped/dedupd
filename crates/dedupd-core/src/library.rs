@@ -311,19 +311,64 @@ fn read_text(path: &Path) -> Option<String> {
     Some(String::from_utf8_lossy(&text).into_owned())
 }
 
-/// Where everything is: the store, the archive and each app's folder.
-pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
-    let (files, bytes) = crate::status::store_totals(db, store)?;
-    let repos = db.repo_count()?;
+/// What the archive disk holds of the files the database knows: how many,
+/// their size, and the models it holds every file of. Nothing when the disk
+/// is not attached.
+fn on_archive(
+    archive: &crate::paths::Home,
+    blobs: &[crate::db::BlobRow],
+    by_repo: &[(i64, String)],
+) -> (u64, u64, u64) {
+    if !archive.attached() {
+        return (0, 0, 0);
+    }
+    let held: std::collections::HashMap<&str, u64> = blobs
+        .iter()
+        .filter(|b| archive.blob_path(&b.sha256).is_file())
+        .map(|b| (b.sha256.as_str(), b.size))
+        .collect();
+    let mut whole: std::collections::BTreeMap<i64, bool> = std::collections::BTreeMap::new();
+    for (repo, sha256) in by_repo {
+        *whole.entry(*repo).or_insert(true) &= held.contains_key(sha256.as_str());
+    }
+    (
+        held.len() as u64,
+        held.values().sum(),
+        whole.values().filter(|all| **all).count() as u64,
+    )
+}
+
+/// Where everything is: the store, the archive and each app's folder. The
+/// database is read under its lock and the disks are asked after it is
+/// given back: the archive disk may be asleep and answer late.
+pub fn locations(db: &Mutex<Db>, store: &Store, dirs: &AppDirs) -> Result<Locations> {
+    let (blobs, by_repo, repos, app_totals) = {
+        let db = crate::db::lock(db);
+        let mut totals = Vec::new();
+        for app in App::ALL {
+            totals.push(db.app_totals(app)?);
+        }
+        (
+            db.all_blobs()?,
+            db.files_by_repo()?,
+            db.repo_count()?,
+            totals,
+        )
+    };
+    let here: Vec<u64> = blobs
+        .iter()
+        .filter(|b| store.contains(&b.sha256))
+        .map(|b| b.size)
+        .collect();
+    let (files, bytes) = (here.len() as u64, here.iter().sum());
     let (volume_total, volume_free) = store.volume()?;
     let mut apps = Vec::new();
-    for app in App::ALL {
+    for (app, totals) in App::ALL.into_iter().zip(app_totals) {
         let path = match app {
             App::Bionic => &dirs.bionic,
             App::Ollama => &dirs.ollama,
             App::Hf => &dirs.hf_cache,
         };
-        let totals = db.app_totals(app)?;
         apps.push(Location {
             kind: LocationKind::App,
             app: Some(app),
@@ -348,15 +393,18 @@ pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
             shared_bytes: 0,
             models: repos,
         },
-        archive: store.archive().map(|a| Location {
-            kind: LocationKind::Archive,
-            app: None,
-            path: a.root().to_string_lossy().into_owned(),
-            present: a.attached(),
-            files: 0,
-            bytes: 0,
-            shared_bytes: 0,
-            models: 0,
+        archive: store.archive().map(|a| {
+            let (files, bytes, models) = on_archive(a, &blobs, &by_repo);
+            Location {
+                kind: LocationKind::Archive,
+                app: None,
+                path: a.root().to_string_lossy().into_owned(),
+                present: a.attached(),
+                files,
+                bytes,
+                shared_bytes: 0,
+                models,
+            }
         }),
         apps,
     })
