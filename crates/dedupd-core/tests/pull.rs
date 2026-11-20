@@ -833,3 +833,135 @@ fn a_store_file_that_is_damaged_or_that_nothing_refers_to_is_not_recorded() {
     let changed = adopt::recognise_stored(&db, &store, &mut looked_at).unwrap();
     assert_eq!((changed.damaged, changed.unused), (1, 0));
 }
+
+fn branch(dirs: &AppDirs) -> std::path::PathBuf {
+    dedupd_core::place::hf_repo_dir(dirs, REPO).join("refs/main")
+}
+
+#[tokio::test]
+async fn a_branch_in_the_cache_is_moved_by_the_providers_answer_and_not_by_the_kept_copy() {
+    let up = upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let other = "b".repeat(40);
+
+    // The owner's own tools left the branch at another commit. The
+    // provider's answer of now moves it.
+    let e = engine(&home, &up.server.uri(), &dir.path().join("apps"), None);
+    fs::create_dir_all(branch(&e.dirs).parent().unwrap()).unwrap();
+    fs::write(branch(&e.dirs), &other).unwrap();
+    pull::pull(&e, &request(&[App::Hf], false), &Arc::default())
+        .await
+        .unwrap();
+    assert_eq!(fs::read_to_string(branch(&e.dirs)).unwrap(), COMMIT);
+    // Nothing is left beside it.
+    let beside: Vec<_> = fs::read_dir(branch(&e.dirs).parent().unwrap())
+        .unwrap()
+        .flatten()
+        .map(|f| f.file_name())
+        .collect();
+    assert_eq!(beside, ["main"]);
+
+    // Placed from the kept copy, the same branch stays where it is: the
+    // other commit may be the newer one.
+    let e = engine(&home, "http://127.0.0.1:1", &dir.path().join("apps2"), None);
+    fs::create_dir_all(branch(&e.dirs).parent().unwrap()).unwrap();
+    fs::write(branch(&e.dirs), &other).unwrap();
+    pull::pull(&e, &request(&[App::Hf], true), &Arc::default())
+        .await
+        .unwrap();
+    assert_eq!(fs::read_to_string(branch(&e.dirs)).unwrap(), other);
+    // Where there is no branch yet, the kept copy names it.
+    let e = engine(&home, "http://127.0.0.1:1", &dir.path().join("apps3"), None);
+    pull::pull(&e, &request(&[App::Hf], true), &Arc::default())
+        .await
+        .unwrap();
+    assert_eq!(fs::read_to_string(branch(&e.dirs)).unwrap(), COMMIT);
+}
+
+#[tokio::test]
+async fn a_branch_is_not_named_while_a_file_of_the_snapshot_is_missing() {
+    let up = upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let e = engine(&home, &up.server.uri(), &dir.path().join("apps"), None);
+    // Something else is where the weights would go.
+    let blob = dedupd_core::place::hf_repo_dir(&e.dirs, REPO)
+        .join("blobs")
+        .join(sha256(&up.weights));
+    fs::create_dir_all(blob.parent().unwrap()).unwrap();
+    fs::write(&blob, b"other bytes").unwrap();
+
+    let out = pull::pull(&e, &request(&[App::Hf], false), &Arc::default())
+        .await
+        .unwrap();
+    assert_eq!(out.placed[0].conflicts.len(), 1);
+    assert!(!out.skipped[0].temporary);
+    assert_eq!(fs::read(&blob).unwrap(), b"other bytes");
+    assert!(!branch(&e.dirs).exists());
+}
+
+#[tokio::test]
+async fn a_manifest_of_another_model_under_the_same_name_is_left_alone() {
+    let up = upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let e = engine(&home, &up.server.uri(), &dir.path().join("apps"), None);
+    let manifest = e
+        .dirs
+        .ollama
+        .join("manifests/hf.co")
+        .join(REPO)
+        .join("Q4_K_M");
+    // A model the owner made under the name: other weights.
+    let theirs = common::ollama_manifest(b"{}", b"their own weights", b"{{ .Prompt }}");
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(&manifest, &theirs).unwrap();
+
+    let out = pull::pull(&e, &request(&[App::Ollama], false), &Arc::default())
+        .await
+        .unwrap();
+    assert_eq!(fs::read_to_string(&manifest).unwrap(), theirs);
+    assert_eq!(out.placed[0].conflicts.len(), 1, "{:?}", out.placed);
+    assert!(out.placed[0].conflicts[0].contains("names another model"));
+    assert!(out.activated().is_empty());
+
+    // The same layers written another way are this model: replaced.
+    let spaced = up.manifest.replace("\"layers\":", "\"layers\": ");
+    assert_ne!(spaced, up.manifest);
+    fs::write(&manifest, &spaced).unwrap();
+    let out = pull::pull(&e, &request(&[App::Ollama], false), &Arc::default())
+        .await
+        .unwrap();
+    assert!(out.placed[0].conflicts.is_empty(), "{:?}", out.placed);
+    assert_eq!(fs::read_to_string(&manifest).unwrap(), up.manifest);
+}
+
+#[tokio::test]
+async fn one_apps_failure_does_not_stop_the_others() {
+    let up = upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let e = engine(&home, &up.server.uri(), &dir.path().join("apps"), None);
+    // Bionic's folder for the organisation cannot be made: a file is there.
+    let org = e.dirs.bionic.join(REPO.split('/').next().unwrap());
+    fs::create_dir_all(&e.dirs.bionic).unwrap();
+    fs::write(&org, b"in the way").unwrap();
+
+    let out = pull::pull(&e, &request(&App::ALL, false), &Arc::default())
+        .await
+        .unwrap();
+    assert_eq!(out.activated(), [App::Ollama, App::Hf]);
+    let skipped: Vec<_> = out.skipped.iter().map(|s| (s.app, s.temporary)).collect();
+    // Worth another try once the owner has looked.
+    assert_eq!(skipped, [(App::Bionic, true)]);
+    assert!(
+        out.skipped[0].reason.contains("creating"),
+        "{:?}",
+        out.skipped
+    );
+    assert_eq!(fs::read(&org).unwrap(), b"in the way");
+    // The history is told of all three.
+    let told = dedupd_core::activity::recent(&home, 10);
+    assert_eq!(told.len(), 3, "{told:?}");
+}

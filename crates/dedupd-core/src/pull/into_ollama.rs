@@ -1,12 +1,27 @@
 //! The Ollama side of a pull: the manifest Hugging Face's registry
 //! generates, and putting the model into Ollama.
 
-use super::*;
+use super::dest;
+use super::{PullRequest, ollama_mlx, profile};
+use crate::engine::{Engine, blocking};
+use crate::fetch::{Expect, Unwatched};
+use crate::hub::{HubError, Snapshot, TreeEntry, model_meta};
+use crate::ollama;
+use crate::place::{self, Item, Placed};
+use crate::profile::Installed;
+use crate::refusals::{Refusal, Refusals};
+use crate::select;
+use anyhow::{Context, Result, anyhow, bail};
+use dedupd_api::app::App;
+use dedupd_api::jobs::NotActivated;
+use dedupd_api::library::DecisionState;
+use std::path::Path;
+use std::sync::Arc;
 
 /// Get the manifest Hugging Face's registry generates for `repo:tag`, archive
 /// it, and make sure every layer it names is in the store. Returns the
 /// manifest with its body as the registry sent it.
-pub async fn ollama_manifest(
+async fn ollama_manifest(
     engine: &Arc<Engine>,
     repo_id: i64,
     repo: &str,
@@ -94,11 +109,20 @@ pub async fn ollama_manifest(
     for layer in manifest.all() {
         let sha = layer.sha256()?;
         let owned = sha.to_string();
-        if blocking(engine, move |engine| engine.store.ensure_local(&owned)).await? {
-            if engine.db().blob(sha)?.is_none() {
-                let size = std::fs::metadata(engine.store.blob_path(sha))?.len();
-                engine.db().upsert_blob(sha, size, None)?;
+        // In the store, or brought back from the archive disk; recorded
+        // when the database does not know it yet.
+        let local = blocking(engine, move |engine| {
+            if !engine.store.ensure_local(&owned)? {
+                return Ok(false);
             }
+            if engine.db().blob(&owned)?.is_none() {
+                let size = std::fs::metadata(engine.store.blob_path(&owned))?.len();
+                engine.db().upsert_blob(&owned, size, None)?;
+            }
+            Ok(true)
+        })
+        .await?;
+        if local {
             continue;
         }
         if offline {
@@ -145,17 +169,24 @@ pub(super) async fn place_into_ollama(
         .iter()
         .find(|i| i.rel_path == "config.json")
         .map(|i| i.sha256.clone());
-    let installed = Installed::detect(&engine.dirs);
-    let decision = profile::decide_for(
-        &engine.store,
-        &installed,
-        &Refusals::load(engine.store.home()),
-        weights.len(),
-        &model_meta(&info).formats,
-        config.as_deref(),
-    )
-    .of(App::Ollama)
-    .clone();
+    // The decision reads files (the apps' versions, the refusals kept,
+    // the model's config.json), so it is made off the async runtime.
+    let (ggufs, formats, asked) = (weights.len(), model_meta(&info).formats, config.clone());
+    let (installed, decision) = blocking(engine, move |engine| {
+        let installed = Installed::detect(&engine.dirs);
+        let decision = profile::decide_for(
+            &engine.store,
+            &installed,
+            &Refusals::load(engine.store.home()),
+            ggufs,
+            &formats,
+            asked.as_deref(),
+        )
+        .of(App::Ollama)
+        .clone();
+        Ok((installed, decision))
+    })
+    .await?;
     if decision.state != DecisionState::Ready {
         return Ok(Err(skip(decision.reason)));
     }
@@ -188,7 +219,11 @@ pub(super) async fn place_into_ollama(
                 lasting: true,
                 at: crate::now(),
             };
-            if let Err(e) = Refusals::record(engine.store.home(), refusal) {
+            let kept = blocking(engine, move |engine| {
+                Refusals::record(engine.store.home(), refusal)
+            })
+            .await;
+            if let Err(e) = kept {
                 eprintln!("dedupd: could not keep Ollama's answer: {e:#}");
             }
         }
@@ -230,11 +265,16 @@ pub(super) async fn place_into_ollama(
     };
     // Without a named quantization the tag is Hugging Face's choice, which
     // need not be the file the patterns selected.
-    let wanted = weights[0].lfs_sha256.as_deref();
+    // The profile gives Ollama a GGUF only when there is a weights file;
+    // that rule is in another file, so it is not leaned on here.
+    let Some(first) = weights.first() else {
+        return Ok(Err(skip("the selection has no weights file".into())));
+    };
+    let wanted = first.lfs_sha256.as_deref();
     if !manifest.all().any(|l| l.sha256().ok() == wanted) {
         return Ok(Err(skip(format!(
             "its tag {tag} is a different file than {}; name the quantization, as in {}:Q8_0",
-            weights[0].path, req.repo
+            first.path, req.repo
         ))));
     }
     let (repo, tag) = (req.repo.clone(), tag.to_string());

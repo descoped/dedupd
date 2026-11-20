@@ -81,6 +81,7 @@ impl Server {
         // Copies cut short by a stop part of the way, here and on the
         // archive disk.
         engine.store.clear_leftovers();
+        dedupd_core::ollama_mlx::clear_leftovers(&engine.dirs);
         let queue = Queue::open(engine.clone())?;
         let server = Arc::new(Self {
             engine,

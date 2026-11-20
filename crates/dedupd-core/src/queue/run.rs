@@ -1,6 +1,17 @@
 //! Running one job, and turning what stopped it into words for the owner.
 
-use super::*;
+use super::progress::JobWatch;
+use super::record::file_state;
+use super::{Job, Queue};
+use crate::db::PROVIDER_HF;
+use crate::fetch::{NoSpace, Unavailable, WrongContent};
+use crate::hub::HubError;
+use crate::now;
+use crate::pull::{self, Plan, PullRequest};
+use dedupd_api::app::App;
+use dedupd_api::jobs::{JobKind, JobState, PullResult};
+use std::sync::Arc;
+use std::time::Duration;
 
 /// Put what an earlier run of the job did into the outcome of a run that
 /// tried again: the apps in `took` it placed the model into, what it
@@ -26,6 +37,22 @@ fn carry_over(outcome: &mut PullResult, earlier: PullResult, took: &[App]) -> us
     known
 }
 
+/// Which apps a run asks, when the job ran before: a job tried again after
+/// some apps took the model and others could not be asked asks only those
+/// others. Returns the apps that keep their place in the outcome from the
+/// earlier run, and are not told about twice; none when every app is asked
+/// again (a job cut off while placing), where the new outcome is the whole
+/// answer.
+fn apps_to_keep(req: &mut PullRequest, earlier: Option<&PullResult>) -> Vec<App> {
+    let took = earlier.map(PullResult::activated).unwrap_or_default();
+    if req.apps.iter().any(|a| !took.contains(a)) {
+        req.apps.retain(|a| !took.contains(a));
+        took
+    } else {
+        Vec::new()
+    }
+}
+
 /// What stopped an attempt, by what to do about it.
 pub(super) enum Problem {
     Network(String),
@@ -39,6 +66,9 @@ pub(super) enum Problem {
 }
 
 impl Queue {
+    /// Run one job to its end, or to where it waits for the owner: work
+    /// out which apps to ask, settle the plan, fetch, place, and write the
+    /// outcome into the job.
     pub(super) async fn run(self: &Arc<Self>, job: &Arc<Job>) {
         let engine = &self.engine;
         let jobs = engine.governor.max_connections();
@@ -53,71 +83,10 @@ impl Queue {
                 }
             }
         };
-        // Tried again after some apps took the model and others could not
-        // be asked: only those others are asked now, and the apps that took
-        // it keep their place in the outcome and are not told about twice.
-        let mut took: Vec<App> = earlier
-            .as_ref()
-            .map(PullResult::activated)
-            .unwrap_or_default();
-        if req.apps.iter().any(|a| !took.contains(a)) {
-            req.apps.retain(|a| !took.contains(a));
-        } else {
-            // Every app is asked again (a job cut off while placing): the
-            // new outcome is the whole answer.
-            took.clear();
-        }
-
-        // Settle the revision and the files, waiting out a provider that is
-        // busy or cannot be reached.
-        let mut failures = 0u32;
-        let plan = loop {
-            self.set(job, JobState::Resolving, None);
-            let problem = match pull::plan(engine, &req, pinned.as_deref()).await {
-                Ok(plan) => break plan,
-                Err(e) => problem_of(&e, &req),
-            };
-            failures += 1;
-            match problem {
-                Problem::Owner { why, gone } => {
-                    if gone {
-                        let _ = engine.db().set_upstream(PROVIDER_HF, &req.repo, true);
-                    }
-                    return self.needs_owner(job, &req, why);
-                }
-                Problem::Busy(seconds) => {
-                    job.record().wait_until = Some(now() + seconds as i64);
-                    self.set(job, JobState::WaitingServer, Some(wait_text(seconds)));
-                    tokio::time::sleep(Duration::from_secs(seconds)).await;
-                }
-                Problem::Network(why) => {
-                    self.set(job, JobState::WaitingNetwork, Some(why));
-                    let pause = Duration::from_secs(2u64.pow(failures.min(5)).min(30));
-                    tokio::time::sleep(pause).await;
-                }
-            }
+        let took = apps_to_keep(&mut req, earlier.as_ref());
+        let Some(plan) = self.settle(job, &req, pinned.as_deref()).await else {
+            return;
         };
-        if !plan.from_archive {
-            let _ = engine.db().set_upstream(PROVIDER_HF, &req.repo, false);
-        }
-        {
-            let mut r = job.record();
-            r.commit = Some(plan.snap.commit.clone());
-            r.bytes_total = plan.bytes;
-            r.bytes_done = 0;
-            r.files = plan.entries.iter().map(file_state).collect();
-            let from = if plan.from_archive {
-                ", from the kept copy"
-            } else {
-                ""
-            };
-            r.note(format!(
-                "settled on {}@{}, {} files{from}",
-                req.revision,
-                &plan.snap.commit[..12.min(plan.snap.commit.len())],
-                plan.entries.len()
-            ));
-        }
         self.set(job, JobState::Downloading, None);
 
         let watch = Arc::new(JobWatch {
@@ -144,64 +113,155 @@ impl Queue {
         let files = items.len();
         match pull::place(engine, &req, &plan, items).await {
             Ok(placement) => {
-                // Every file is stored. An app that did not take the model
-                // for good (it cannot run it, files of its own in the way)
-                // would answer the same again, so the job is done; one that
-                // could not be asked just now (the provider out of reach, a
-                // full disk) waits for the owner to try again. The outcome
-                // says which apps took it and why the others did not.
-                let mut outcome = pull::outcome(&req, plan, files, downloaded, placement);
-                // What this run placed, before the earlier runs' are added.
-                let placed_any = !outcome.placed.is_empty();
-                // Trying again asked only the apps that had not taken the
-                // model; what the earlier run did stays part of the job.
-                let known = match earlier.filter(|_| !took.is_empty()) {
-                    Some(earlier) => carry_over(&mut outcome, earlier, &took),
-                    None => 0,
-                };
-                let retry: Vec<String> = outcome
-                    .skipped
-                    .iter()
-                    .filter(|s| s.temporary)
-                    .map(|s| format!("not activated in {}: {}", s.app.title(), s.reason))
-                    .collect();
-                {
-                    let mut r = job.record();
-                    r.bytes_done = r.bytes_total;
-                    for skipped in &outcome.skipped {
-                        r.note(format!(
-                            "not activated in {}: {}",
-                            skipped.app.title(),
-                            skipped.reason
-                        ));
-                    }
-                    for note in &outcome.notes[known..] {
-                        r.note(note.clone());
-                    }
-                    r.outcome = Some(outcome);
-                }
-                if !retry.is_empty() {
-                    // `place` has told the history already.
-                    self.set(job, JobState::NeedsAttention, Some(retry.join("; ")));
-                    // The apps that did take the model have new files, also
-                    // when another one makes the job wait for the owner.
-                    if placed_any {
-                        self.tell_placed();
-                    }
-                    return;
-                }
-                self.set(job, JobState::Done, None);
-                self.forget_old();
-                self.tell_placed();
+                let outcome = pull::outcome(&req, plan, files, downloaded, placement);
+                self.finish(job, outcome, earlier, &took);
             }
             Err(e) => self.needs_owner(job, &req, format!("{e:#}")),
         }
     }
 
+    /// Settle the revision and the files, waiting out a provider that is
+    /// busy or cannot be reached, and write the plan into the job. `None`
+    /// when the job now waits for the owner.
+    async fn settle(
+        self: &Arc<Self>,
+        job: &Arc<Job>,
+        req: &PullRequest,
+        pinned: Option<&str>,
+    ) -> Option<Plan> {
+        let engine = &self.engine;
+        let mut failures = 0u32;
+        let plan = loop {
+            self.set(job, JobState::Resolving, None);
+            let problem = match pull::plan(engine, req, pinned).await {
+                Ok(plan) => break plan,
+                Err(e) => problem_of(&e, req),
+            };
+            failures += 1;
+            match problem {
+                Problem::Owner { why, gone } => {
+                    if gone {
+                        self.note_upstream(req, true);
+                    }
+                    self.needs_owner(job, req, why);
+                    return None;
+                }
+                Problem::Busy(seconds) => {
+                    job.record().wait_until =
+                        Some(now().saturating_add(i64::try_from(seconds).unwrap_or(i64::MAX)));
+                    self.set(job, JobState::WaitingServer, Some(wait_text(seconds)));
+                    tokio::time::sleep(Duration::from_secs(seconds)).await;
+                }
+                Problem::Network(why) => {
+                    self.set(job, JobState::WaitingNetwork, Some(why));
+                    let pause = Duration::from_secs(2u64.pow(failures.min(5)).min(30));
+                    tokio::time::sleep(pause).await;
+                }
+            }
+        };
+        if !plan.from_archive {
+            self.note_upstream(req, false);
+        }
+        let mut r = job.record();
+        r.commit = Some(plan.snap.commit.clone());
+        r.bytes_total = plan.bytes;
+        r.bytes_done = 0;
+        r.files = plan.entries.iter().map(file_state).collect();
+        let from = if plan.from_archive {
+            ", from the kept copy"
+        } else {
+            ""
+        };
+        r.note(format!(
+            "settled on {}@{}, {} files{from}",
+            req.revision,
+            &plan.snap.commit[..12.min(plan.snap.commit.len())],
+            plan.entries.len()
+        ));
+        drop(r);
+        Some(plan)
+    }
+
+    /// Note in the library whether the provider still has the model. A
+    /// failure costs only that note, which the next check writes again;
+    /// the log says so.
+    fn note_upstream(&self, req: &PullRequest, gone: bool) {
+        if let Err(e) = self.engine.db().set_upstream(PROVIDER_HF, &req.repo, gone) {
+            eprintln!(
+                "dedupd: could not note what Hugging Face said about {}: {e:#}",
+                req.repo
+            );
+        }
+    }
+
+    /// Write the outcome of a run that placed into the job, and end the
+    /// job or have it wait for the owner.
+    ///
+    /// Every file is stored. An app that did not take the model for good
+    /// (it cannot run it, files of its own in the way) would answer the
+    /// same again, so the job is done; one that could not be asked just
+    /// now (the provider out of reach, a full disk) waits for the owner to
+    /// try again. The outcome says which apps took it and why the others
+    /// did not.
+    fn finish(
+        &self,
+        job: &Job,
+        mut outcome: PullResult,
+        earlier: Option<PullResult>,
+        took: &[App],
+    ) {
+        // What this run placed, before the earlier runs' are added.
+        let placed_any = !outcome.placed.is_empty();
+        // Trying again asked only the apps that had not taken the model;
+        // what the earlier run did stays part of the job.
+        let known = match earlier.filter(|_| !took.is_empty()) {
+            Some(earlier) => carry_over(&mut outcome, earlier, took),
+            None => 0,
+        };
+        let retry: Vec<String> = outcome
+            .skipped
+            .iter()
+            .filter(|s| s.temporary)
+            .map(|s| format!("not activated in {}: {}", s.app.title(), s.reason))
+            .collect();
+        {
+            let mut r = job.record();
+            r.bytes_done = r.bytes_total;
+            for skipped in &outcome.skipped {
+                r.note(format!(
+                    "not activated in {}: {}",
+                    skipped.app.title(),
+                    skipped.reason
+                ));
+            }
+            for note in &outcome.notes[known..] {
+                r.note(note.clone());
+            }
+            r.outcome = Some(outcome);
+        }
+        if !retry.is_empty() {
+            // `place` has told the history already.
+            self.set(job, JobState::NeedsAttention, Some(retry.join("; ")));
+            // The apps that did take the model have new files, also when
+            // another one makes the job wait for the owner.
+            if placed_any {
+                self.tell_placed();
+            }
+            return;
+        }
+        self.set(job, JobState::Done, None);
+        self.forget_old();
+        self.tell_placed();
+    }
+
     /// Tell whoever asked to hear that a job is done or a run put files
     /// into apps.
     fn tell_placed(&self) {
-        let call = self.on_placed.lock().expect("lock").clone();
+        let call = self
+            .on_placed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if let Some(call) = call {
             call();
         }

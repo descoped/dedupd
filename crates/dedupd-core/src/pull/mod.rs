@@ -3,20 +3,16 @@
 
 use crate::db::PROVIDER_HF;
 use crate::engine::{Engine, blocking};
-use crate::fetch::{Expect, Progress, Unavailable, Unwatched, Wait, Watch};
-use crate::hub::{HubError, Snapshot, TreeEntry, model_meta};
+use crate::fetch::{Progress, Unavailable, Wait, Watch};
+use crate::hub::{Snapshot, TreeEntry};
 use crate::names::parse_model;
-use crate::ollama;
 use crate::ollama_mlx;
-use crate::place::{self, Dest, Item, Placed};
-use crate::profile::{self, Installed};
-use crate::refusals::{Refusal, Refusals};
+use crate::place::{self, Dest, Item};
+use crate::profile;
 use crate::select::{self, Selection};
-use anyhow::{Context, Result, anyhow, bail};
+use anyhow::{Context, Result, bail};
 use dedupd_api::app::App;
 use dedupd_api::jobs::{NotActivated, PlacedApp, PullResult};
-use dedupd_api::library::DecisionState;
-use std::path::Path;
 use std::sync::atomic::Ordering;
 
 mod into_ollama;
@@ -264,6 +260,10 @@ pub async fn fetch(
             })
         });
     }
+    // The first failure is the one reported, and the other files are
+    // still fetched to their end, on purpose: what is downloaded is kept,
+    // so a second try after the owner has dealt with the one file has only
+    // that file left. (A caller that drops this future ends them all.)
     let mut first_error = None;
     while let Some(joined) = running.join_next().await {
         match joined? {
@@ -324,15 +324,15 @@ pub async fn place(
     let mut done = Placement::default();
     // Placement hashes and copies files, so it runs off the async runtime.
     let items = Arc::new(items);
+    let fresh = !plan.from_archive;
     for app in &req.apps {
         let (repo, commit, items) = (req.repo.clone(), snap.commit.clone(), items.clone());
         let result = match app {
-            App::Bionic => {
-                blocking(engine, move |engine| {
-                    place::place_bionic(&dest(engine, repo_id, &repo), &commit, &items)
-                })
-                .await?
-            }
+            App::Bionic => blocking(engine, move |engine| {
+                place::place_bionic(&dest(engine, repo_id, &repo), &commit, &items)
+            })
+            .await
+            .map(Ok),
             App::Hf => {
                 let ref_name = crate::hub::ref_name(&req.revision).map(str::to_string);
                 blocking(engine, move |engine| {
@@ -340,19 +340,34 @@ pub async fn place(
                         &dest(engine, repo_id, &repo),
                         &commit,
                         ref_name.as_deref(),
+                        fresh,
                         &items,
                     )
                 })
-                .await?
+                .await
+                .map(Ok)
             }
             App::Ollama => {
-                match place_into_ollama(engine, req, repo_id, snap, &plan.entries, &items).await? {
-                    Ok(result) => result,
-                    Err(skipped) => {
-                        done.skipped.push(skipped);
-                        continue;
-                    }
-                }
+                place_into_ollama(engine, req, repo_id, snap, &plan.entries, &items).await
+            }
+        };
+        let result = match result {
+            Ok(Ok(result)) => result,
+            Ok(Err(skipped)) => {
+                done.skipped.push(skipped);
+                continue;
+            }
+            // One app's failure is that app's: the others are still asked,
+            // and the history is told of all of them. Worth another try,
+            // unless the app's folder is on a volume nothing can be cloned
+            // to.
+            Err(e) => {
+                done.skipped.push(NotActivated {
+                    app: *app,
+                    reason: format!("{e:#}"),
+                    temporary: e.downcast_ref::<crate::clone::OtherVolume>().is_none(),
+                });
+                continue;
             }
         };
         if !result.conflicts.is_empty() {

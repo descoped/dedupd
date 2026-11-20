@@ -5,19 +5,14 @@
 //! has downloaded so far is in the store's temp folder. After a restart the
 //! jobs that were working are queued again and continue from there.
 
-use crate::db::PROVIDER_HF;
 use crate::engine::Engine;
-use crate::fetch::{Expect, NoSpace, Unavailable, Wait, WrongContent};
-use crate::hub::{HubError, TreeEntry};
+use crate::fetch::Expect;
 use crate::now;
-use crate::pull::{self, PullRequest, PullWatch};
-use anyhow::{Result, bail};
+use crate::pull::PullRequest;
+use anyhow::Result;
 use dedupd_api::app::App;
-use dedupd_api::jobs::{
-    Downloads, FileStage, Job as JobSummary, JobAction, JobDetail, JobEvent, JobFile, JobKind,
-    JobState, NotActivated, PullResult,
-};
-use serde::{Deserialize, Serialize};
+use dedupd_api::jobs::{Downloads, FileStage, JobAction, JobKind, JobState};
+use futures_util::FutureExt;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,9 +24,20 @@ mod progress;
 pub mod record;
 mod run;
 
-use progress::{JobWatch, Meter};
-use record::{JobRecord, expect_of, file_state};
-use run::wait_text;
+use progress::Meter;
+use record::{JobRecord, expect_of};
+
+/// Why the queue did not do what it was asked. The control API answers
+/// each kind with a status of its own; anything else the queue returns is
+/// a failure of the daemon.
+#[derive(Debug, thiserror::Error)]
+pub enum QueueError {
+    #[error("there is no download {0}")]
+    NoSuchJob(i64),
+    /// The job's state does not allow the action, in a sentence.
+    #[error("{0}")]
+    NotAllowed(String),
+}
 
 /// Jobs that work at the same time. The governor decides how many
 /// connections they share.
@@ -47,6 +53,10 @@ const PROGRESS_TICK_MS: u64 = 250;
 
 struct Job {
     record: Mutex<JobRecord>,
+    /// Held while the record is written to the database, so two saves of
+    /// one job land in the order they read the record: the row never goes
+    /// back to an older state.
+    saving: Mutex<()>,
     task: Mutex<Option<JoinHandle<()>>>,
     /// Set when the owner stops the job, so a task that is being ended does
     /// not write a state after the one the owner chose.
@@ -81,8 +91,11 @@ impl Drop for Settling {
 }
 
 impl Job {
+    /// The record, also after a task panicked while it held the lock: a
+    /// record is plain data and every change to it is whole in itself, so
+    /// what is there can be shown, and the job can be tried again.
     fn record(&self) -> std::sync::MutexGuard<'_, JobRecord> {
-        self.record.lock().expect("job lock")
+        self.record.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -95,9 +108,16 @@ pub struct Snapshot {
     pub jobs: Vec<JobRecord>,
 }
 
+/// The download queue: every job the daemon has, the tasks that run them,
+/// and what the owner can do to each. One per daemon, shared by `Arc`;
+/// every method can be called from any task. The owner's actions go
+/// through [`Queue::act`].
 pub struct Queue {
     engine: Arc<Engine>,
     jobs: Mutex<BTreeMap<i64, Arc<Job>>>,
+    /// Held while a job is looked for and, when there is none, added: two
+    /// equal requests at the same moment give one job.
+    adding: Mutex<()>,
     version: watch::Sender<u64>,
     /// When byte progress last woke the watchers, in milliseconds.
     ticked: AtomicU64,
@@ -145,6 +165,7 @@ impl Queue {
         Ok(Arc::new(Self {
             engine,
             jobs: Mutex::new(jobs),
+            adding: Mutex::new(()),
             version: watch::Sender::new(0),
             ticked: AtomicU64::new(0),
             started: Instant::now(),
@@ -158,46 +179,101 @@ impl Queue {
     /// model), and when a run put the model into at least one app and the
     /// job then waits for the owner because another app could not be asked.
     pub fn on_placed(&self, call: impl Fn() + Send + Sync + 'static) {
-        *self.on_placed.lock().expect("lock") = Some(Arc::new(call));
+        *self.on_placed.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(call));
+    }
+
+    /// The list of jobs, also after a task panicked while it held the
+    /// lock: the map is only added to and removed from, one step each.
+    fn list(&self) -> std::sync::MutexGuard<'_, BTreeMap<i64, Arc<Job>>> {
+        self.jobs.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// Start the jobs that are waiting for their turn.
     pub fn start(self: &Arc<Self>) {
-        let jobs = self.jobs.lock().expect("lock");
-        let mut working = jobs
-            .values()
-            .filter(|j| j.record().state.is_working())
-            .count();
-        for job in jobs.values() {
-            if working >= MAX_ACTIVE {
-                break;
+        let started: Vec<Arc<Job>> = {
+            let jobs = self.list();
+            let mut working = jobs
+                .values()
+                .filter(|j| j.record().state.is_working())
+                .count();
+            let mut started = Vec::new();
+            for job in jobs.values() {
+                if working >= MAX_ACTIVE {
+                    break;
+                }
+                if job.record().state == JobState::Queued {
+                    self.spawn(job);
+                    started.push(job.clone());
+                    working += 1;
+                }
             }
-            if job.record().state == JobState::Queued {
-                self.spawn(job);
-                working += 1;
-            }
-        }
+            started
+        };
+        // The database is written after the list is given back: `snapshot`
+        // needs the list for every line of the event stream.
+        self.started(&started);
     }
 
     /// Give a queued job its task. Only called with the `jobs` lock held
     /// and the job seen as queued under it, as `claim` also holds it: a job
-    /// is started once, and never while an owner's action stops it.
+    /// is started once, and never while an owner's action stops it. The
+    /// caller writes the new state down once the lock is given back
+    /// (`started`).
+    ///
+    /// The task owns the job to its end: when `run` panics, the job waits
+    /// for the owner with a sentence, the log names the job and the model,
+    /// and the next job gets its turn all the same.
     fn spawn(self: &Arc<Self>, job: &Arc<Job>) {
         job.stopped.store(false, Ordering::SeqCst);
-        self.set(job, JobState::Resolving, None);
+        {
+            let mut r = job.record();
+            r.state = JobState::Resolving;
+            r.detail = None;
+            r.wait_until = None;
+            r.note("resolving");
+        }
         let (queue, running) = (self.clone(), job.clone());
         let handle = tokio::spawn(async move {
-            queue.run(&running).await;
+            let ran = std::panic::AssertUnwindSafe(queue.run(&running))
+                .catch_unwind()
+                .await;
+            if let Err(panic) = ran {
+                let what = panic
+                    .downcast_ref::<&str>()
+                    .map(|text| (*text).to_string())
+                    .or_else(|| panic.downcast_ref::<String>().cloned())
+                    .unwrap_or_else(|| "no message".to_string());
+                let (id, model) = {
+                    let r = running.record();
+                    (r.id, r.model.clone())
+                };
+                eprintln!("dedupd: download {id} ({model}) stopped on a fault in dedupd: {what}");
+                queue.set(
+                    &running,
+                    JobState::NeedsAttention,
+                    Some("dedupd ran into a fault while working on this; try again".to_string()),
+                );
+            }
             queue.start();
         });
-        *job.task.lock().expect("lock") = Some(handle);
+        *job.task.lock().unwrap_or_else(|e| e.into_inner()) = Some(handle);
     }
 
-    /// Queue a pull of `model` (`org/repo[:quant][@revision]`).
+    /// Write down that these jobs were started, and tell the watchers.
+    fn started(&self, jobs: &[Arc<Job>]) {
+        for job in jobs {
+            self.save(job);
+        }
+        if !jobs.is_empty() {
+            self.changed();
+        }
+    }
+
     /// Queue a job, or name the one already queued for the same model,
     /// files, apps and source; that one is set going again when it was
     /// paused or waits for the owner. Returns its id and whether it was
-    /// there already.
+    /// there already. Looking and adding are one step: two equal requests
+    /// at the same moment get the same job.
     pub fn add_or_find(
         self: &Arc<Self>,
         model: &str,
@@ -206,6 +282,7 @@ impl Queue {
         offline: bool,
         kind: JobKind,
     ) -> Result<(i64, bool)> {
+        let _one = self.adding.lock().unwrap_or_else(|e| e.into_inner());
         let wanted: BTreeSet<App> = apps.iter().copied().collect();
         let same = self.snapshot().jobs.into_iter().find(|job| {
             !job.state.is_finished()
@@ -216,6 +293,9 @@ impl Queue {
         });
         if let Some(job) = same {
             if matches!(job.state, JobState::Paused | JobState::NeedsAttention) {
+                // It fails only when the job's state changed in between
+                // (the owner acted, or it started by itself): the job is
+                // there either way, and that is the answer.
                 let _ = self.resume(job.id);
             }
             return Ok((job.id, true));
@@ -223,6 +303,10 @@ impl Queue {
         Ok((self.add(model, include, apps, offline, kind)?, false))
     }
 
+    /// Queue a job for `model` (`org/repo[:quant][@revision]`), also when
+    /// an equal one is queued already, and return its id. The job is saved
+    /// before this returns and starts when its turn comes. Fails for a
+    /// name that is not a model's, or when the database cannot be written.
     pub fn add(
         self: &Arc<Self>,
         model: &str,
@@ -265,16 +349,16 @@ impl Queue {
         record.note("queued");
         let job = Arc::new(Job::new(record));
         self.save(&job);
-        self.jobs.lock().expect("lock").insert(id, job);
+        self.list().insert(id, job);
         self.changed();
         self.start();
         Ok(id)
     }
 
     fn job(&self, id: i64) -> Result<Arc<Job>> {
-        match self.jobs.lock().expect("lock").get(&id) {
+        match self.list().get(&id) {
             Some(job) => Ok(job.clone()),
-            None => bail!("there is no download {id}"),
+            None => Err(QueueError::NoSuchJob(id).into()),
         }
     }
 
@@ -284,14 +368,14 @@ impl Queue {
     /// for its turn is taken out of the turn here. `start` and `start_now`
     /// hold the same lock, so neither can start the job in between.
     fn claim(&self, id: i64, action: JobAction) -> Result<(Settling, Option<JoinHandle<()>>)> {
-        let jobs = self.jobs.lock().expect("lock");
+        let jobs = self.list();
         let Some(job) = jobs.get(&id).cloned() else {
-            bail!("there is no download {id}");
+            return Err(QueueError::NoSuchJob(id).into());
         };
         {
             let mut r = job.record();
             if !r.state.allows(action) {
-                bail!("{}", not_now(id, r.state, action));
+                return Err(QueueError::NotAllowed(not_now(id, r.state, action)).into());
             }
             // Under the record's lock, which `set` holds to look at the
             // mark: a task that is about to place sees it and ends.
@@ -301,7 +385,7 @@ impl Queue {
                 r.state = JobState::Paused;
             }
         }
-        let handle = job.task.lock().expect("lock").take();
+        let handle = job.task.lock().unwrap_or_else(|e| e.into_inner()).take();
         Ok((Settling(job), handle))
     }
 
@@ -347,12 +431,14 @@ impl Queue {
         let job = self.job(id)?;
         let state = job.record().state;
         if !actions.iter().any(|a| state.allows(*a)) {
-            bail!("{}", not_now(id, state, actions[0]));
+            return Err(QueueError::NotAllowed(not_now(id, state, actions[0])).into());
         }
         Ok(job)
     }
 
-    /// Stop a job; what it has downloaded is kept.
+    /// Stop a job; what it has downloaded is kept. (The daemon goes
+    /// through `act`; this and the actions below are public for the tests,
+    /// which call one without a task between.)
     pub async fn pause(self: &Arc<Self>, id: i64) -> Result<()> {
         let (job, handle) = self.claim(id, JobAction::Pause)?;
         self.stop(&job, handle).await;
@@ -381,12 +467,15 @@ impl Queue {
             // The check and the change under one lock.
             let mut r = job.record();
             if !(r.state.allows(JobAction::Resume) || r.state.allows(JobAction::Retry)) {
-                bail!("{}", not_now(id, r.state, JobAction::Resume));
+                return Err(QueueError::NotAllowed(not_now(id, r.state, JobAction::Resume)).into());
             }
             // A Pause or Cancel that has claimed the job (under this lock)
             // and has not written its last word yet goes first.
             if job.settling.load(Ordering::SeqCst) > 0 {
-                bail!("download {id} is being stopped; try again in a moment");
+                return Err(QueueError::NotAllowed(format!(
+                    "download {id} is being stopped; try again in a moment"
+                ))
+                .into());
             }
             r.state = JobState::Queued;
             r.detail = None;
@@ -401,15 +490,19 @@ impl Queue {
 
     /// Start a queued job now, even when others are working.
     pub fn start_now(self: &Arc<Self>, id: i64) -> Result<()> {
-        let jobs = self.jobs.lock().expect("lock");
-        let Some(job) = jobs.get(&id) else {
-            bail!("there is no download {id}");
+        let job = {
+            let jobs = self.list();
+            let Some(job) = jobs.get(&id) else {
+                return Err(QueueError::NoSuchJob(id).into());
+            };
+            let state = job.record().state;
+            if !state.allows(JobAction::Start) {
+                return Err(QueueError::NotAllowed(not_now(id, state, JobAction::Start)).into());
+            }
+            self.spawn(job);
+            job.clone()
         };
-        let state = job.record().state;
-        if !state.allows(JobAction::Start) {
-            bail!("{}", not_now(id, state, JobAction::Start));
-        }
-        self.spawn(job);
+        self.started(&[job]);
         Ok(())
     }
 
@@ -441,7 +534,7 @@ impl Queue {
 
     /// Whether another job that is not finished needs the same file.
     fn wanted_elsewhere(&self, id: i64, wanted: &Expect) -> bool {
-        let jobs = self.jobs.lock().expect("lock");
+        let jobs = self.list();
         jobs.iter().any(|(other, job)| {
             let r = job.record();
             *other != id
@@ -454,7 +547,7 @@ impl Queue {
     pub fn remove(&self, id: i64) -> Result<()> {
         self.allowing(id, &[JobAction::Remove])?;
         self.engine.db().delete_download(id)?;
-        self.jobs.lock().expect("lock").remove(&id);
+        self.list().remove(&id);
         self.changed();
         Ok(())
     }
@@ -462,7 +555,7 @@ impl Queue {
     /// Take every finished and cancelled job off the list.
     pub fn clear_finished(&self) -> Result<usize> {
         let ids: Vec<i64> = {
-            let jobs = self.jobs.lock().expect("lock");
+            let jobs = self.list();
             jobs.iter()
                 .filter(|(_, j)| j.record().state.is_finished())
                 .map(|(id, _)| *id)
@@ -479,10 +572,15 @@ impl Queue {
         self.version.subscribe()
     }
 
+    /// The queue at this moment: every job's record with its speed, the
+    /// governor's state and the speed of all jobs together. A copy; it
+    /// does not change as the queue goes on.
     pub fn snapshot(&self) -> Snapshot {
-        let jobs = self.jobs.lock().expect("lock");
+        // Before the list is taken: the governor has a lock of its own.
+        let governor = self.engine.governor.state();
+        let jobs = self.list();
         Snapshot {
-            governor: self.engine.governor.state(),
+            governor,
             speed: self.meter.rate(),
             jobs: jobs
                 .values()
@@ -509,13 +607,15 @@ impl Queue {
         }
     }
 
+    /// One job's record as it is now; `QueueError::NoSuchJob` when there
+    /// is none with this id.
     pub fn get(&self, id: i64) -> Result<JobRecord> {
         Ok(self.job(id)?.record().clone())
     }
 
     /// Bytes the jobs that are working want and have.
     pub fn totals(&self) -> (u64, u64) {
-        let jobs = self.jobs.lock().expect("lock");
+        let jobs = self.list();
         jobs.values().fold((0, 0), |(total, done), job| {
             let r = job.record();
             if r.state.is_working() {
@@ -558,15 +658,26 @@ impl Queue {
         }
     }
 
+    /// Write the job's record to its row. Called from whichever thread
+    /// changed the record, also a worker of the async runtime: the write is
+    /// one row in a database in WAL mode, behind a lock every other holder
+    /// takes for one statement at a time, so it is short. It is never made
+    /// while the queue's list is held.
     fn save(&self, job: &Job) {
+        let _in_turn = job.saving.lock().unwrap_or_else(|e| e.into_inner());
         let (id, state, text) = {
             let mut r = job.record();
             r.updated_at = now();
-            (
-                r.id,
-                r.state,
-                serde_json::to_string(&*r).unwrap_or_default(),
-            )
+            (r.id, r.state, serde_json::to_string(&*r))
+        };
+        // An empty text would be read as a job of another build at the
+        // next start, and the job removed: better the row as it was.
+        let text = match text {
+            Ok(text) => text,
+            Err(e) => {
+                eprintln!("dedupd: could not write download {id} down: {e}");
+                return;
+            }
         };
         if let Err(e) = self.engine.db().save_download(id, state.as_str(), &text) {
             eprintln!("dedupd: could not save download {id}: {e:#}");
@@ -611,7 +722,7 @@ impl Queue {
     /// Keep the list of finished jobs from growing without end.
     fn forget_old(&self) {
         let old: Vec<i64> = {
-            let jobs = self.jobs.lock().expect("lock");
+            let jobs = self.list();
             let finished: Vec<i64> = jobs
                 .iter()
                 .filter(|(_, j)| j.record().state.is_finished())
@@ -621,7 +732,12 @@ impl Queue {
             finished.into_iter().take(extra).collect()
         };
         for id in old {
-            let _ = self.remove(id);
+            // One the owner removed in between is gone already.
+            if let Err(e) = self.remove(id)
+                && !matches!(e.downcast_ref(), Some(QueueError::NoSuchJob(_)))
+            {
+                eprintln!("dedupd: could not take download {id} off the list: {e:#}");
+            }
         }
     }
 }
@@ -645,6 +761,7 @@ impl Job {
     fn new(record: JobRecord) -> Self {
         Self {
             record: Mutex::new(record),
+            saving: Mutex::new(()),
             task: Mutex::new(None),
             stopped: AtomicBool::new(false),
             settling: AtomicUsize::new(0),

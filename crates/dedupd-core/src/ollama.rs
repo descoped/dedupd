@@ -34,7 +34,8 @@ impl Layer {
 /// else.
 pub fn digest_hex(digest: &str) -> Option<&str> {
     let hex = digest.strip_prefix("sha256:")?;
-    (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hex)
+    // Lower case only, as the store and the database name a file.
+    crate::names::is_sha256(hex).then_some(hex)
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -59,6 +59,23 @@ pub fn clone_into_new_place(
     clone_then(src, dst, prepare, rename_new)
 }
 
+/// A folder that is on another volume than the store: nothing can be
+/// cloned into it, now or on a second try.
+#[derive(Debug)]
+pub struct OtherVolume(pub std::path::PathBuf);
+
+impl std::fmt::Display for OtherVolume {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{} is on a different volume from the store; clones need one APFS volume",
+            self.0.display()
+        )
+    }
+}
+
+impl std::error::Error for OtherVolume {}
+
 /// Whether placing failed because something was already at the destination.
 pub fn already_there(e: &anyhow::Error) -> bool {
     e.downcast_ref::<io::Error>()
@@ -134,7 +151,7 @@ pub fn clear_leftovers_beside(dst: &Path) {
 /// Rename `from` to `to`, failing when `to` exists: the check and the rename
 /// are one step, so nothing can appear in between and be replaced.
 #[cfg(target_os = "macos")]
-fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
     let from = CString::new(from.as_os_str().as_bytes())?;
@@ -149,7 +166,7 @@ fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     let c = |p: &Path| {
         std::ffi::CString::new(p.as_os_str().as_bytes())
@@ -176,7 +193,7 @@ fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn rename_new(_from: &Path, _to: &Path) -> io::Result<()> {
+pub(crate) fn rename_new(_from: &Path, _to: &Path) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "this system has no rename that keeps an existing file",

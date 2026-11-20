@@ -49,6 +49,10 @@ pub enum NotPlaced {
     Ollama(String),
     /// Something about the model's files.
     Model(String),
+    /// Ollama took the stand-in and wrote something this build of dedupd
+    /// does not know how to follow. Not kept: the answer is about dedupd
+    /// as much as about Ollama, and a later build asks again.
+    Unknown(String),
     /// Asking Ollama went wrong for a reason that is not about the model (a
     /// full disk, a crash). Not kept: the next activation asks again.
     Trouble(String),
@@ -57,7 +61,9 @@ pub enum NotPlaced {
 impl std::fmt::Display for NotPlaced {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Ollama(why) | Self::Model(why) | Self::Trouble(why) => f.write_str(why),
+            Self::Ollama(why) | Self::Model(why) | Self::Unknown(why) | Self::Trouble(why) => {
+                f.write_str(why)
+            }
         }
     }
 }
@@ -120,13 +126,26 @@ impl Ways {
         }
     }
 
+    /// Every bit width the model's layers are quantized with: its default
+    /// and those of the layers that differ.
+    pub fn bits(&self) -> Vec<u64> {
+        self.default
+            .iter()
+            .chain(self.per_layer.values())
+            .map(|way| way.bits)
+            .collect()
+    }
+
     fn of(&self, layer: &str) -> Option<&Way> {
         self.per_layer
             .get(layer)
             .or_else(|| {
+                // The longest key that ends the layer's path: of `mlp` and
+                // `0.mlp`, the second says more.
                 self.per_layer
                     .iter()
-                    .find(|(key, _)| layer.ends_with(&format!(".{key}")))
+                    .filter(|(key, _)| layer.ends_with(&format!(".{key}")))
+                    .max_by_key(|(key, _)| key.len())
                     .map(|(_, way)| way)
             })
             .or(self.default.as_ref())
@@ -268,16 +287,20 @@ const ASK_LIMIT: Duration = Duration::from_secs(120);
 
 impl Scratch {
     fn new(command: &Path, dir: &Path) -> Result<Self> {
-        fs::create_dir_all(dir.join("models"))?;
-        fs::create_dir_all(dir.join("home"))?;
-        // A port that is free: ask for any, note it, and give it back.
-        let port = TcpListener::bind(("127.0.0.1", 0))?.local_addr()?.port();
-        Ok(Self {
+        // Made first: whatever fails below, dropping it removes the folder.
+        let mut scratch = Self {
             command: command.to_path_buf(),
             dir: dir.to_path_buf(),
-            host: format!("127.0.0.1:{port}"),
+            host: String::new(),
             limit: ASK_LIMIT,
-        })
+        };
+        for folder in ["models", "home", "tmp"] {
+            fs::create_dir_all(dir.join(folder))?;
+        }
+        // A port that is free: ask for any, note it, and give it back.
+        let port = TcpListener::bind(("127.0.0.1", 0))?.local_addr()?.port();
+        scratch.host = format!("127.0.0.1:{port}");
+        Ok(scratch)
     }
 
     fn models(&self) -> PathBuf {
@@ -299,9 +322,15 @@ impl Scratch {
         let mut child = Command::new(&self.command)
             .args(["create", name, "-f"])
             .arg(&modelfile)
+            // Nothing of the daemon's or the owner's shell goes along: no
+            // other `OLLAMA_*` setting, no proxy, no token. Only where the
+            // tool may write, and the address nothing listens on.
+            .env_clear()
+            .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
             .env("OLLAMA_HOST", &self.host)
             .env("OLLAMA_MODELS", self.models())
             .env("HOME", self.dir.join("home"))
+            .env("TMPDIR", self.dir.join("tmp"))
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(fs::File::create(&said_path)?)
@@ -456,9 +485,11 @@ fn ask_ollama(
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
-    let dir = dest
-        .store
-        .tmp_path(&format!("ollama-asked-{}-{now}", std::process::id()));
+    let dir = dest.store.tmp_path(&format!(
+        "{}{}-{now}",
+        crate::store::ASKED_FOLDER,
+        std::process::id()
+    ));
     let scratch = Scratch::new(command, &dir)?;
     let mut manifest = None;
     let mut notes = BTreeMap::new();
@@ -481,8 +512,8 @@ fn ask_ollama(
         }
         for (name, _) in &sample.parts {
             if !written.contains_key(&ollama_name(name)) {
-                return Ok(Err(NotPlaced::Ollama(format!(
-                    "it names the model's layers in a way dedupd does not know yet (it wrote no {})",
+                return Ok(Err(NotPlaced::Unknown(format!(
+                    "Ollama names the model's layers in a way dedupd does not know yet (it wrote no {})",
                     ollama_name(name)
                 ))));
             }
@@ -525,50 +556,107 @@ fn ask_ollama(
 enum Standing {
     /// Every layer the manifest names is there and as it was recorded.
     Placed(usize),
-    /// A manifest is there that dedupd did not write.
+    /// A manifest is there that the database does not know as dedupd's,
+    /// naming these files. It is ours all the same when it names exactly
+    /// what this placement would write (the database was removed since):
+    /// `place` finds out, and writes nothing the manifest does not name.
+    Unknown(BTreeSet<String>),
+    /// A manifest is there that cannot be read or is none.
     Foreign,
     /// Nothing is there, or what is there is ours and no longer whole.
     Missing,
 }
 
 fn standing(dest: &Dest<'_>, manifest_path: &Path, sources: &BTreeSet<&str>) -> Result<Standing> {
-    let Ok(body) = fs::read_to_string(manifest_path) else {
-        return Ok(Standing::Missing);
+    let body = match fs::read_to_string(manifest_path) {
+        Ok(body) => body,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Standing::Missing),
+        // There and unreadable: not ours to replace.
+        Err(_) => return Ok(Standing::Foreign),
     };
     let Ok(manifest) = Manifest::parse(&body) else {
         return Ok(Standing::Foreign);
     };
-    let db = lock(dest.db);
-    let derived = db.derived_files()?;
-    let ours = manifest
-        .all()
-        .any(|l| l.sha256().is_ok_and(|sha| derived.contains(sha)));
-    if !ours {
-        return Ok(Standing::Foreign);
+    let mut named = BTreeSet::new();
+    for layer in manifest.all() {
+        // A digest that is none (upper case, another algorithm) is not
+        // something dedupd wrote.
+        let Ok(sha) = layer.sha256() else {
+            return Ok(Standing::Foreign);
+        };
+        named.insert(sha.to_string());
+    }
+    // The database is asked under its lock; the files are looked at after
+    // it is given back.
+    let (derived, known) = {
+        let db = lock(dest.db);
+        let derived = db.derived_files()?;
+        let mut known = Vec::with_capacity(named.len());
+        for sha in &named {
+            let path = dest.dirs.ollama.join(format!("blobs/sha256-{sha}"));
+            let row = db.placement(&path.to_string_lossy())?;
+            known.push((sha.as_str(), path, row));
+        }
+        (derived, known)
+    };
+    if !named.iter().any(|sha| derived.contains(sha)) {
+        return Ok(Standing::Unknown(named));
     }
     let mut from: BTreeSet<String> = BTreeSet::new();
-    let mut layers = 0;
-    for layer in manifest.all() {
-        let sha = layer.sha256()?;
-        let path = dest.dirs.ollama.join(format!("blobs/sha256-{sha}"));
-        let Some(known) = db.placement(&path.to_string_lossy())? else {
+    for (sha, path, row) in &known {
+        let Some(row) = row else {
             return Ok(Standing::Missing);
         };
-        if Fingerprint::of(&path).ok() != Some(known.fingerprint()) {
+        if Fingerprint::of(path).ok() != Some(row.fingerprint()) {
             return Ok(Standing::Missing);
         }
-        if derived.contains(sha) {
-            from.insert(known.sha256);
+        if derived.contains(*sha) {
+            from.insert(row.sha256.clone());
         }
-        layers += 1;
     }
     // The clones must be made from the weights files being placed now.
     let same = from.iter().map(String::as_str).eq(sources.iter().copied());
     Ok(if same {
-        Standing::Placed(layers)
+        Standing::Placed(manifest.all().count())
     } else {
         Standing::Missing
     })
+}
+
+/// Remove the work files a placement that stopped part of the way left in
+/// Ollama's `blobs` folder: each is a clone as long as a weights file, and
+/// nothing else names it. One whose process still runs is somebody's work
+/// and stays.
+pub fn clear_leftovers(dirs: &crate::place::AppDirs) {
+    let Ok(entries) = fs::read_dir(dirs.ollama.join("blobs")) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        if work_file_of(&name.to_string_lossy())
+            .is_some_and(|pid| !crate::paths::process_is_alive(pid))
+        {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// How a clone is named while it is made: this, the stored file's sha256,
+/// which of its clones it is, and a `run_tag`.
+const WORK_FILE: &str = ".dedupd-";
+
+/// The id of the process that made a work file, when `name` is one.
+fn work_file_of(name: &str) -> Option<u32> {
+    let mut parts = name.strip_prefix(WORK_FILE)?.split('-');
+    let (sha, n, pid, call) = (parts.next()?, parts.next()?, parts.next()?, parts.next()?);
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    (parts.next().is_none()
+        && crate::names::is_sha256(sha)
+        && digits(n)
+        && digits(pid)
+        && digits(call))
+    // A number too large for a process id is nobody's.
+    .then(|| pid.parse().unwrap_or(0))
 }
 
 /// Put an MLX model into Ollama: the settings Ollama gives for it as
@@ -620,20 +708,27 @@ pub fn place(
 
     let manifest_path = ollama_manifest_path(dest.dirs, dest.repo, tag);
     let sources: BTreeSet<&str> = weights.iter().map(|i| i.sha256.as_str()).collect();
-    match standing(dest, &manifest_path, &sources)? {
+    let not_ours = || {
+        format!(
+            "{} exists and was not written by dedupd",
+            manifest_path.display()
+        )
+    };
+    // The files a manifest the database does not know names: nothing else
+    // is written while it stands.
+    let named = match standing(dest, &manifest_path, &sources)? {
         Standing::Placed(layers) => {
             out.present = layers;
             return Ok(Ok(out));
         }
         Standing::Foreign => {
-            out.conflicts.push(format!(
-                "{} exists and was not written by dedupd",
-                manifest_path.display()
-            ));
+            out.conflicts.push(not_ours());
             return Ok(Ok(out));
         }
-        Standing::Missing => {}
-    }
+        Standing::Unknown(named) => Some(named),
+        Standing::Missing => None,
+    };
+    clear_leftovers(dest.dirs);
 
     let mut files = Vec::with_capacity(weights.len());
     for item in &weights {
@@ -692,6 +787,10 @@ pub fn place(
             .blob(sha)?
             .with_context(|| format!("the layer {sha} is not in the store"))?
             .size;
+        if named.as_ref().is_some_and(|named| !named.contains(sha)) {
+            out.conflicts.push(not_ours());
+            return Ok(Ok(out));
+        }
         let rel = format!("blobs/sha256-{sha}");
         let target = Target {
             app: App::Ollama,
@@ -711,10 +810,7 @@ pub fn place(
     let mut layers = Vec::new();
     for ((item, (source, _)), groups) in weights.iter().zip(&files).zip(split) {
         if !crate::clone::same_volume(&blobs, source)? {
-            bail!(
-                "{} is on a different volume from the store; clones need one APFS volume",
-                blobs.display()
-            );
+            return Err(crate::clone::OtherVolume(blobs.clone()).into());
         }
         for (n, (way, wanted)) in groups.into_iter().enumerate() {
             let note = match &way {
@@ -729,19 +825,52 @@ pub fn place(
             // A name of its own for this run: another placement of the same
             // file (a job continued while an earlier one still works, the
             // command line beside the daemon) does not use it.
-            let work = blobs.join(format!(".dedupd-{}-{n}-{}", item.sha256, run_tag()));
+            let work = blobs.join(format!("{WORK_FILE}{}-{n}-{}", item.sha256, run_tag()));
             safetensors::rewritten_clone(source, &work, note, &wanted, &ollama_name)
                 .with_context(|| format!("making Ollama's clone of {}", item.rel_path))?;
-            let hashes = hash_file(&work, false)?;
-            let rel = format!("blobs/sha256-{}", hashes.sha256);
-            let placed = dest.dirs.ollama.join(&rel);
-            if placed.is_file() {
-                fs::remove_file(&work)?;
-                out.present += 1;
-            } else {
-                fs::rename(&work, &placed)?;
-                out.cloned += 1;
+            // From here the work file goes, whatever happens: into place,
+            // or away.
+            let settled = (|| -> Result<Option<(crate::hash::FileHashes, String, PathBuf)>> {
+                let hashes = hash_file(&work, false)?;
+                if named.as_ref().is_some_and(|n| !n.contains(&hashes.sha256)) {
+                    return Ok(None);
+                }
+                let rel = format!("blobs/sha256-{}", hashes.sha256);
+                let placed = dest.dirs.ollama.join(&rel);
+                // A rename that fails when something is there: what
+                // appears at the name while dedupd works is never replaced.
+                match crate::clone::rename_new(&work, &placed) {
+                    Ok(()) => out.cloned += 1,
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        // The name is the sha256 of the bytes; a file of
+                        // another length there is not this clone.
+                        let same = fs::metadata(&placed)
+                            .is_ok_and(|there| there.is_file() && there.len() == hashes.size);
+                        if !same {
+                            out.conflicts.push(format!(
+                                "{} exists with different content",
+                                placed.display()
+                            ));
+                            return Ok(None);
+                        }
+                        fs::remove_file(&work)?;
+                        out.present += 1;
+                    }
+                    Err(e) => {
+                        return Err(e).with_context(|| format!("placing {}", placed.display()));
+                    }
+                }
+                Ok(Some((hashes, rel, placed)))
+            })();
+            if !matches!(settled, Ok(Some(_))) {
+                let _ = fs::remove_file(&work);
             }
+            let Some((hashes, rel, placed)) = settled? else {
+                if out.conflicts.is_empty() {
+                    out.conflicts.push(not_ours());
+                }
+                return Ok(Ok(out));
+            };
             let fingerprint = Fingerprint::of(&placed)?;
             lock(dest.db).upsert_placement(&NewPlacement {
                 app: App::Ollama.as_str(),
@@ -771,6 +900,20 @@ pub fn place(
     let mut manifest = answer.manifest;
     layers.extend(kept);
     manifest["layers"] = Value::Array(layers);
+    // A manifest the database did not know named every file made here:
+    // it is this model as dedupd places it, and is written again as such
+    // only when it also names nothing more.
+    if let Some(named) = &named {
+        let ours: BTreeSet<String> = layers_of(&manifest)
+            .iter()
+            .chain(manifest.get("config"))
+            .filter_map(|l| digest_hex(digest_of(l)).map(str::to_string))
+            .collect();
+        if ours != *named {
+            out.conflicts.push(not_ours());
+            return Ok(Ok(out));
+        }
+    }
     let parent = manifest_path.parent().expect("manifest has a parent");
     fs::create_dir_all(parent)?;
     let tmp = parent.join(format!(".{tag}.dedupd-tmp-{}", run_tag()));

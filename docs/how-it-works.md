@@ -66,6 +66,12 @@ Tools that sum file sizes, such as `du`, count a clone at its full size. The fre
 | Bionic and LM Studio | The files under `models/{org}/{repo}/` |
 | Hugging Face cache | `models--org--repo/` with `blobs/`, `snapshots/{commit}/` and `refs/main` |
 
+A placement does not replace what an application already has. A file with other content is left alone and reported.
+So is an Ollama manifest under the same name that belongs to another model. In the Hugging Face cache, the branch
+file is written last and only when every file was placed; a branch that names another commit is moved by a new
+answer from the source, and left alone when the model is placed from the kept copy. When one application cannot be
+given a model, the others are still given it, and the job says which took it and why the other did not.
+
 ## How models enter the store
 
 **Explicit download.** `dedupd pull org/repo --for ollama,bionic`, or Download in the app. The daemon downloads

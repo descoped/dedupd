@@ -1,6 +1,14 @@
 //! The progress of a running job: its rate, and what the fetcher reports.
 
-use super::*;
+use super::run::wait_text;
+use super::{Job, Queue};
+use crate::fetch::Wait;
+use crate::now;
+use crate::pull::PullWatch;
+use dedupd_api::jobs::{FileStage, JobState};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// A rate measured from a running count.
 pub(super) struct Meter {
@@ -22,7 +30,7 @@ impl Meter {
 
     /// Bytes per second since the last look that was at least a second ago.
     pub(super) fn rate(&self) -> u64 {
-        let mut sample = self.sample.lock().expect("lock");
+        let mut sample = self.sample.lock().unwrap_or_else(|e| e.into_inner());
         let elapsed = sample.0.elapsed();
         if elapsed >= Duration::from_secs(1) {
             let count = self.count.load(Ordering::Relaxed);

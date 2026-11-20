@@ -1,6 +1,17 @@
 //! What a job is, as the database keeps it and the owner sees it.
 
-use super::*;
+use super::MAX_EVENTS;
+use crate::fetch::Expect;
+use crate::hub::TreeEntry;
+use crate::now;
+use crate::pull::PullRequest;
+use anyhow::Result;
+use dedupd_api::app::App;
+use dedupd_api::jobs::{
+    FileStage, Job as JobSummary, JobDetail, JobEvent, JobFile, JobKind, JobState, NotActivated,
+    PullResult,
+};
+use serde::{Deserialize, Serialize};
 
 /// Where a file of a job comes from, as the fetcher knows it.
 pub(super) fn expect_of(file: &JobFile) -> Expect {
@@ -188,6 +199,7 @@ pub(super) fn file_state(entry: &TreeEntry) -> JobFile {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use dedupd_api::jobs::JobAction;
 
     /// A finished job as the database keeps it, with the given outcome.
     fn finished(outcome: serde_json::Value) -> JobRecord {

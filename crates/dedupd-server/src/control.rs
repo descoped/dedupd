@@ -22,6 +22,7 @@ use dedupd_core::config::Config;
 use dedupd_core::db::NotInLibrary;
 use dedupd_core::hub::HubClient;
 use dedupd_core::profile::{self, Installed};
+use dedupd_core::queue::QueueError;
 use dedupd_core::{Home, activity, archive, library, maintain, status};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -167,7 +168,16 @@ async fn download_action(server: &Arc<Server>, id: &str, action: &str) -> Respon
     };
     match server.queue.act(id, action).await {
         Ok(()) => ok(JobRef { id }),
-        Err(e) => error(StatusCode::CONFLICT, e),
+        // No such job, a job whose state does not allow this, and a
+        // failure of the daemon are three different answers.
+        Err(e) => {
+            let status = match e.downcast_ref::<QueueError>() {
+                Some(QueueError::NoSuchJob(_)) => StatusCode::NOT_FOUND,
+                Some(QueueError::NotAllowed(_)) => StatusCode::CONFLICT,
+                None => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            error(status, e)
+        }
     }
 }
 
