@@ -30,7 +30,7 @@ actor FixtureDaemonClient: DaemonClient {
     var models = FixtureData.models
     /// The owner removed the orphans, or the local copies the archive has.
     private var cleaned = false
-    private var offloaded = false
+    var offloaded = false
     /// The last archive or restore, as the daemon would tell it.
     var moving: ModelMove?
     var library: UInt64 = 1
@@ -150,7 +150,7 @@ actor FixtureDaemonClient: DaemonClient {
 
     func status(at address: String) async throws -> DaemonStatus {
         try await answering(address)
-        return FixtureData.status(jobs: jobs, library: models, cleaned: cleaned)
+        return FixtureData.status(jobs: jobs, library: models, cleaned: cleaned, offloaded: offloaded)
     }
 
     func scan(at address: String) async throws -> ScanResult {
@@ -191,12 +191,12 @@ actor FixtureDaemonClient: DaemonClient {
 
     func model(_ repo: String, at address: String) async throws -> ModelDetail {
         try await answering(address)
-        return FixtureData.detail(of: try held(repo))
+        return FixtureData.detail(of: try held(repo), offloaded: offloaded)
     }
 
     func locations(at address: String) async throws -> Locations {
         try await answering(address)
-        return FixtureData.locations(of: models, cleaned: cleaned)
+        return FixtureData.locations(of: models, cleaned: cleaned, offloaded: offloaded)
     }
 
     // MARK: - Hugging Face
@@ -221,7 +221,8 @@ actor FixtureDaemonClient: DaemonClient {
             throw ClientError.Failed(message: "\(repo) was not found on Hugging Face")
         }
         return FixtureData.hubModel(
-            repo, downloading: jobs.contains { $0.repo == repo && $0.state.isActive }, library: models
+            repo, downloading: jobs.contains { $0.repo == repo && $0.state.isActive }, library: models,
+            offloaded: offloaded
         )
     }
 
@@ -229,13 +230,13 @@ actor FixtureDaemonClient: DaemonClient {
 
     func gcPlan(offload: Bool, at address: String) async throws -> GcPlan {
         try await answering(address)
-        return FixtureData.gcPlan(offload: offload, cleaned: cleaned, offloaded: offloaded)
+        return FixtureData.gcPlan(offload: offload, library: models, cleaned: cleaned, offloaded: offloaded)
     }
 
     /// Removes what the owner agreed to; the next plan no longer lists it.
     func gcApply(orphans: [String], offload: [String], at address: String) async throws -> GcPlan {
         try await answering(address)
-        let plan = FixtureData.gcPlan(offload: true, cleaned: cleaned, offloaded: offloaded)
+        let plan = FixtureData.gcPlan(offload: true, library: models, cleaned: cleaned, offloaded: offloaded)
         let gone = plan.orphans.filter { orphans.contains($0.sha256) }
         let away = plan.offload.filter { offload.contains($0.sha256) }
         cleaned = cleaned || !gone.isEmpty
@@ -254,7 +255,7 @@ actor FixtureDaemonClient: DaemonClient {
 
     func storeCheck(at address: String) async throws -> StoreCheck {
         try await answering(address)
-        return FixtureData.storeCheck(of: models, cleaned: cleaned)
+        return FixtureData.storeCheck(of: models, cleaned: cleaned, offloaded: offloaded)
     }
 
     // MARK: - The daemon itself

@@ -23,6 +23,7 @@ extension FixtureDaemonClient {
             )
         }
         // Its records go; its files stay in the store until a clean-up.
+        wholeAgain(repo)
         models.removeAll { $0.repo == repo }
         library += 1
         changed()
@@ -58,12 +59,13 @@ extension FixtureDaemonClient {
     func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan {
         try await answering(address)
         let model = try held(repo)
+        let left = leaving(model)
         return ArchivePlan(
             repo: repo,
             archive: FixtureData.archiveFolder,
             deactivate: model.apps.map { DeactivateStep(app: $0.app, files: $0.files, bytes: $0.bytes, keep: []) },
-            files: model.isArchived ? 0 : model.storedFiles,
-            bytes: model.isArchived ? 0 : model.storedBytes,
+            files: left.files,
+            bytes: left.bytes,
             copyFiles: 0,
             copyBytes: 0,
             keep: []
@@ -75,16 +77,45 @@ extension FixtureDaemonClient {
     func archive(_ repo: String, at address: String) async throws {
         try await answering(address)
         let model = try held(repo)
-        let (files, bytes) = model.isArchived ? (0, 0) : (model.storedFiles, model.storedBytes)
+        try free(repo)
+        let (files, bytes) = leaving(model)
         note(.init(
             action: .archive, repo: repo, app: nil, ok: true,
             text: "Moved to the archive disk: \(FixtureData.counted(files)), \(ByteFormat.string(bytes)) freed on this Mac"
         ))
         moved(kind: .archive, repo: repo, files: files, bytes: bytes)
+        wholeAgain(repo)
         change(repo) { model in
             model.apps = []
             model.ollamaTags = []
             model.archivedAt = FixtureData.now
+        }
+    }
+
+    /// What archiving a model takes off the internal disk: what the store
+    /// holds of it now.
+    private func leaving(_ model: LibraryModel) -> (files: UInt64, bytes: UInt64) {
+        if model.isArchived {
+            return (0, 0)
+        }
+        let away = FixtureData.weightsAway(model, offloaded: offloaded)
+        return (model.storedFiles - (away ? 1 : 0), model.storedBytes - (away ? FixtureData.offloadBytes : 0))
+    }
+
+    /// The daemon starts no archive or restore of a model that has a job
+    /// in the queue that is not finished.
+    private func free(_ repo: String) throws {
+        if jobs.contains(where: { $0.repo == repo && !$0.state.isFinished }) {
+            throw ClientError.Failed(message: FixtureData.busy(repo))
+        }
+    }
+
+    /// A model that is archived, restored, activated or forgotten no
+    /// longer has weights a clean-up moved away: they are all gone, or all
+    /// back.
+    func wholeAgain(_ repo: String) {
+        if repo == FixtureData.smolMLX {
+            offloaded = false
         }
     }
 
@@ -95,6 +126,7 @@ extension FixtureDaemonClient {
         guard model.isArchived else {
             throw ClientError.Failed(message: "\(repo) is not archived")
         }
+        try free(repo)
         note(.init(
             action: .restore, repo: repo, app: nil, ok: true,
             text: "Brought back from the archive disk: \(FixtureData.counted(model.storedFiles)), "

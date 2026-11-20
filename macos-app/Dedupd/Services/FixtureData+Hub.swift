@@ -67,11 +67,15 @@ extension FixtureData {
 
     /// A repository as the provider has it, with what this Mac has of it
     /// from the library the daemon holds now.
-    static func hubModel(_ repo: String, downloading: Bool = false, library: [LibraryModel] = models) -> HubModel {
+    static func hubModel(
+        _ repo: String, downloading: Bool = false, library: [LibraryModel] = models, offloaded: Bool = false
+    ) -> HubModel {
         let hit = (hits + moreHits).first { $0.id == repo }
         let local = library.first { $0.repo == repo }
         // In the store, not only on the archive disk.
         let inStore = local.map { !$0.isArchived } ?? false
+        // Its weights too: a clean-up may have moved those off this Mac.
+        let weights = inStore && !(local.map { weightsAway($0, offloaded: offloaded) } ?? false)
         let meta = local?.meta ?? hit?.meta ?? self.meta(repo, formats: ["gguf"], parameters: 134_515_008)
         let name = repo.split(separator: "/").last.map(String.init) ?? repo
         let isGGUF = meta.formats.contains("gguf")
@@ -103,14 +107,15 @@ extension FixtureData {
             variants = [
                 Variant(
                     kind: .files, format: judged.format, name: "all files", spec: repo, files: 8, bytes: bytes,
-                    storedBytes: inStore ? bytes : 0, weightsStored: inStore, usableBy: judged.usableBy,
+                    storedBytes: weights ? bytes : (inStore ? bytes - offloadBytes : 0), weightsStored: weights,
+                    usableBy: judged.usableBy,
                     placedIn: local?.appNames ?? [], decisions: judged.decisions
                 ),
             ]
             files = [
                 HubFile(
                     path: "model.safetensors", size: bytes - 4_000_000, sha256: sha("model.safetensors"), lfs: true,
-                    stored: inStore
+                    stored: weights
                 ),
                 HubFile(path: "tokenizer.json", size: 3_990_000, sha256: nil, lfs: false, stored: inStore),
                 HubFile(path: "config.json", size: 1200, sha256: nil, lfs: false, stored: inStore),
@@ -297,10 +302,29 @@ extension FixtureData {
         app == .huggingFace ? "the Hugging Face cache" : app.title
     }
 
+    /// A job's state in a sentence. Case by case, as `JobState::as_str`
+    /// names them, with its `_` as a space: a renamed case then fails to
+    /// build instead of reading wrong.
+    static func stateWords(_ state: JobState) -> String {
+        switch state {
+        case .queued: "queued"
+        case .resolving: "resolving"
+        case .downloading: "downloading"
+        case .verifying: "verifying"
+        case .placing: "placing"
+        case .done: "done"
+        case .paused: "paused"
+        case .waitingServer: "waiting server"
+        case .waitingNetwork: "waiting network"
+        case .needsAttention: "needs attention"
+        case .cancelled: "cancelled"
+        }
+    }
+
     /// The queue's refusal of an action a job's state does not allow, in
     /// the daemon's words (`not_now` in the core's queue).
     static func notNow(_ id: Int64, _ state: JobState, _ action: JobAction) -> String {
-        let named = "\(state)".reduce(into: "") { $0 += $1.isUppercase ? " \($1.lowercased())" : "\($1)" }
+        let named = stateWords(state)
         let done = switch action {
         case .pause: "paused"
         case .resume, .retry: "continued"
@@ -309,6 +333,13 @@ extension FixtureData {
         case .remove: "removed"
         }
         return "download \(id) is \(named); it cannot be \(done) now"
+    }
+
+    /// The refusal of an archive or restore while the model has a job that
+    /// is not finished (`archive::busy` in the core).
+    static func busy(_ repo: String) -> String {
+        "\(repo) has a download or activation that is not finished (also when it is paused or "
+            + "needs attention); let it finish or cancel it first"
     }
 
     /// "1 file", "8 files": how the daemon counts in a sentence.

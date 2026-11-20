@@ -55,6 +55,7 @@ extension FixtureDaemonClient {
         }
         // The model is now in the apps that took it; activating an archived
         // model brings its files back first.
+        wholeAgain(repo)
         change(repo) { model in
             model.archivedAt = nil
             for app in job.activated where !model.apps.contains(where: { $0.app == app }) {

@@ -20,12 +20,30 @@ enum FixtureData {
 
     /// What the internal disk's store holds of a library: every model that
     /// is not archived, and the orphans while they are there.
-    static func stored(of library: [LibraryModel], cleaned: Bool) -> (files: UInt64, bytes: UInt64) {
+    static func stored(of library: [LibraryModel], cleaned: Bool, offloaded: Bool = false) -> (files: UInt64, bytes: UInt64) {
         let here = library.filter { !$0.isArchived }
+        // A weights file whose local copy went in a clean-up is not counted:
+        // the daemon counts what the store holds.
+        let away = here.contains { weightsAway($0, offloaded: offloaded) }
         return (
-            here.map(\.storedFiles).reduce(0, +) + (cleaned ? 0 : orphanFiles),
-            here.map(\.storedBytes).reduce(0, +) + (cleaned ? 0 : orphanBytes)
+            here.map(\.storedFiles).reduce(0, +) + (cleaned ? 0 : orphanFiles) - (away ? 1 : 0),
+            here.map(\.storedBytes).reduce(0, +) + (cleaned ? 0 : orphanBytes) - (away ? offloadBytes : 0)
         )
+    }
+
+    /// The one file a clean-up can move off this Mac: the weights of the
+    /// model no app has, which the archive disk holds too.
+    static let offloadBytes: UInt64 = 79_210_000
+
+    /// Whether a clean-up may offer that file: its model is in the store
+    /// and in no app.
+    static func canOffload(_ model: LibraryModel) -> Bool {
+        model.repo == smolMLX && !model.isArchived && model.apps.isEmpty
+    }
+
+    /// Whether a model's weights left the internal disk in a clean-up.
+    static func weightsAway(_ model: LibraryModel, offloaded: Bool) -> Bool {
+        offloaded && model.repo == smolMLX && !model.isArchived
     }
 
     /// What one app holds of a library.
@@ -45,9 +63,11 @@ enum FixtureData {
 
     /// The status of a daemon that holds this library. Every figure is
     /// added up from the models, as the real daemon adds up its records.
-    static func status(jobs: [Job] = [], library: [LibraryModel] = models, cleaned: Bool = false) -> DaemonStatus {
+    static func status(
+        jobs: [Job] = [], library: [LibraryModel] = models, cleaned: Bool = false, offloaded: Bool = false
+    ) -> DaemonStatus {
         let active = jobs.filter { $0.state.isActive }
-        let store = stored(of: library, cleaned: cleaned)
+        let store = stored(of: library, cleaned: cleaned, offloaded: offloaded)
         // By the app's name, as the daemon lists them; an app with nothing
         // is not listed.
         let apps: [AppUsage] = [ModelApp.bionic, .huggingFace, .ollama].compactMap { app in
@@ -265,15 +285,16 @@ extension FixtureData {
     /// One of the fixed models in full, as it is before anything is done
     /// to it.
     static func detail(_ repo: String) -> ModelDetail? {
-        models.first { $0.repo == repo }.map(detail(of:))
+        models.first { $0.repo == repo }.map { detail(of: $0) }
     }
 
     /// A model in full, as the daemon holds it now: its files are where the
     /// model's own figures say (in the store unless it is archived, in the
     /// apps it lists).
-    static func detail(of model: LibraryModel) -> ModelDetail {
+    static func detail(of model: LibraryModel, offloaded: Bool = false) -> ModelDetail {
         let repo = model.repo
         let here = !model.isArchived
+        let away = weightsAway(model, offloaded: offloaded)
         let isGGUF = model.meta.formats.contains("gguf")
         let files: [RevisionFile] = isGGUF
             ? ggufFiles.map { name, size in
@@ -295,7 +316,7 @@ extension FixtureData {
                     sha256: sha(name),
                     gitOid: String(sha(name).prefix(40)),
                     lfs: name == "model.safetensors",
-                    stored: here,
+                    stored: here && !(away && name == "model.safetensors"),
                     archived: true,
                     apps: model.appNames
                 )
@@ -326,18 +347,20 @@ extension FixtureData {
                 ),
             ],
             placements: placements,
-            variants: variants(of: model),
+            variants: variants(of: model, offloaded: offloaded),
             infoJson: #"{"id":"\#(repo)","pipeline_tag":"text-generation","private":false,"gated":false}"#,
             readme: readme
         )
     }
 
-    private static func variants(of model: LibraryModel) -> [Variant] {
+    private static func variants(of model: LibraryModel, offloaded: Bool) -> [Variant] {
         let judged = judged(model.repo, formats: model.meta.formats, stored: true)
         // An archived model has nothing in the store: the daemon then says
         // no bytes are stored and the weights are not there.
-        let here = !model.isArchived
-        let stored = here ? model.storedBytes : 0
+        // One whose weights went in a clean-up keeps its small files only.
+        let away = weightsAway(model, offloaded: offloaded)
+        let here = !model.isArchived && !away
+        let stored = model.isArchived ? 0 : model.storedBytes - (away ? offloadBytes : 0)
         if model.meta.formats.contains("gguf") {
             return [
                 Variant(
@@ -398,73 +421,6 @@ extension FixtureData {
     static func sha(_ name: String) -> String {
         let seed = name.utf8.reduce(UInt64(1469598103934665603)) { ($0 ^ UInt64($1)) &* 1099511628211 }
         return String(repeating: String(seed, radix: 16), count: 4).prefix(64).padding(toLength: 64, withPad: "0", startingAt: 0)
-    }
-
-    // MARK: - Storage
-
-    /// The places of the fixed library, before anything is done to it.
-    static var locations: Locations { locations(of: models, cleaned: false) }
-
-    /// Where a library's files are, counted as the daemon counts them: the
-    /// store by what it holds, each app by its own files, and the archive
-    /// by its folder alone (the daemon does not count what is on it).
-    static func locations(of library: [LibraryModel], cleaned: Bool) -> Locations {
-        let store = stored(of: library, cleaned: cleaned)
-        return Locations(
-            volumeTotal: 994_660_000_000,
-            volumeFree: 412_300_000_000,
-            store: Location(
-                kind: .store, app: nil, path: "/Users/example/.dedupd/store", present: true, files: store.files,
-                bytes: store.bytes, sharedBytes: 0, models: UInt64(library.count)
-            ),
-            archive: Location(
-                kind: .archive, app: nil, path: archiveFolder, present: true, files: 0, bytes: 0, sharedBytes: 0,
-                models: 0
-            ),
-            apps: ModelApp.allCases.map { app in
-                let held = usage(of: app, in: library)
-                return Location(
-                    kind: .app, app: app, path: folder(of: app), present: true, files: held.files, bytes: held.bytes,
-                    sharedBytes: held.bytes, models: held.models
-                )
-            }
-        )
-    }
-
-    /// What a clean-up would remove. Once the owner has cleaned up, the
-    /// orphans are gone; once the local copies went, they are not listed.
-    static func gcPlan(offload: Bool, cleaned: Bool = false, offloaded: Bool = false, freed: UInt64? = nil) -> GcPlan {
-        let orphans = cleaned
-            ? []
-            : [
-                StoredFile(sha256: sha("orphan-one"), size: 4_920_000_000, gitOid: nil, knownAs: nil),
-                StoredFile(sha256: sha("orphan-two"), size: 1840, gitOid: String(sha("orphan-two").prefix(40)), knownAs: nil),
-            ]
-        let away = offload && !offloaded
-            ? [
-                StoredFile(
-                    sha256: sha("model.safetensors"), size: 79_210_000, gitOid: nil,
-                    knownAs: "\(smolMLX): model.safetensors"
-                ),
-            ]
-            : []
-        return GcPlan(
-            orphans: orphans,
-            offload: away,
-            orphanBytes: orphans.map(\.size).reduce(0, +),
-            offloadBytes: away.map(\.size).reduce(0, +),
-            freed: freed
-        )
-    }
-
-    /// The last check of the store: every file it holds was read and is
-    /// intact.
-    static func storeCheck(of library: [LibraryModel] = models, cleaned: Bool = false) -> StoreCheck {
-        let store = stored(of: library, cleaned: cleaned)
-        return StoreCheck(
-            running: false, startedAt: 1_793_899_000, finishedAt: 1_793_900_000, checked: store.files,
-            bytes: store.bytes, damaged: [], missing: [], onlyInArchive: 0, archiveAway: 0, error: nil
-        )
     }
 
     // MARK: - Daemon

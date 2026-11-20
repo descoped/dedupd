@@ -159,6 +159,59 @@ struct ServicesTests {
         try await agree()
     }
 
+    @Test("A clean-up that moves a model's weights off this Mac changes the store and the model")
+    func cannedOffload() async throws {
+        let client = FixtureDaemonClient(scenario: .running)
+        let before = try await client.status(at: "a")
+        let plan = try await client.gcPlan(offload: true, at: "a")
+        #expect(plan.offload.map(\.size) == [FixtureData.offloadBytes])
+        let done = try await client.gcApply(orphans: [], offload: plan.offload.map(\.sha256), at: "a")
+        #expect(done.freed == FixtureData.offloadBytes)
+
+        // The store holds one file less, in every answer about it.
+        let status = try await client.status(at: "a")
+        #expect(status.storeFiles == before.storeFiles - 1)
+        #expect(status.storeBytes == before.storeBytes - FixtureData.offloadBytes)
+        let places = try await client.locations(at: "a")
+        #expect((places.store.files, places.store.bytes) == (status.storeFiles, status.storeBytes))
+        let check = try await client.storeCheck(at: "a")
+        #expect((check.checked, check.bytes) == (status.storeFiles, status.storeBytes))
+
+        // The model's weights are not in the store, and are not offered again.
+        let detail = try await client.model(FixtureData.smolMLX, at: "a")
+        #expect(detail.variants.allSatisfy { !$0.weightsStored })
+        #expect(detail.revisions.first?.files.filter { !$0.stored }.map(\.path) == ["model.safetensors"])
+        #expect(try await client.hubModel(FixtureData.smolMLX, at: "a").variants.allSatisfy { !$0.weightsStored })
+        #expect(try await client.gcPlan(offload: true, at: "a").offload.isEmpty)
+
+        // Archiving it moves only what was left; then nothing can be offered.
+        try await client.archive(FixtureData.smolMLX, at: "a")
+        #expect(try await client.activity(at: "a").first?.text == "Moved to the archive disk: 7 files, 10.00 KB freed on this Mac")
+        #expect(try await client.gcPlan(offload: true, at: "a").offload.isEmpty)
+        try await client.restore(FixtureData.smolMLX, at: "a")
+        #expect(try await client.model(FixtureData.smolMLX, at: "a").variants.allSatisfy(\.weightsStored))
+        #expect(try await client.status(at: "a").storeBytes == before.storeBytes)
+    }
+
+    @Test("The canned daemon starts no archive or restore of a model with a job that is not finished")
+    func cannedMoveWaitsForTheQueue() async throws {
+        let client = FixtureDaemonClient(scenario: .downloading)
+        let busy = try #require(FixtureData.jobs.first { !$0.state.isFinished })
+        do {
+            try await client.archive(busy.repo, at: "a")
+            Issue.record("a model that is being downloaded was archived")
+        } catch {
+            #expect(describe(error) == FixtureData.busy(busy.repo))
+        }
+    }
+
+    @Test("The queue's refusal names every state as the daemon does")
+    func cannedRefusalWords() {
+        #expect(FixtureData.notNow(7, .needsAttention, .start)
+            == "download 7 is needs attention; it cannot be started ahead of the queue now")
+        #expect(FixtureData.notNow(7, .waitingServer, .retry) == "download 7 is waiting server; it cannot be continued now")
+    }
+
     @Test("The canned history agrees with the canned library")
     func cannedHistory() {
         for entry in FixtureData.activity where entry.action == .activate {
