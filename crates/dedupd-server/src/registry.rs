@@ -60,13 +60,23 @@ fn relay_or_unreachable(
 
 /// `/v2/{name}/manifests/{tag}` and `/v2/{name}/blobs/{digest}`.
 pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Response {
+    // The name and the tag go into the provider's address and into the
+    // database, so they are a model's name and a tag, or nothing is asked.
+    let named = |name: &[&str]| {
+        let name = name.join("/");
+        dedupd_core::names::is_repo_name(&name).then_some(name)
+    };
     match rest {
-        [name @ .., "manifests", tag] if !name.is_empty() => {
-            manifest(server, call, &name.join("/"), tag).await
-        }
-        [name @ .., "blobs", digest] if !name.is_empty() => {
-            blob(server, call, &name.join("/"), digest).await
-        }
+        [name @ .., "manifests", tag] => match named(name) {
+            Some(name) if dedupd_core::names::is_tag(tag) => {
+                manifest(server, call, &name, tag).await
+            }
+            _ => plain(StatusCode::NOT_FOUND, "that is not a model and a tag"),
+        },
+        [name @ .., "blobs", digest] => match named(name) {
+            Some(name) => blob(server, call, &name, digest).await,
+            None => plain(StatusCode::NOT_FOUND, "that is not a model's name"),
+        },
         _ => plain(StatusCode::NOT_FOUND, "not a registry path dedupd serves"),
     }
 }
@@ -111,15 +121,27 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
             return unreachable("the manifest was cut short");
         };
         if Manifest::parse(&body).is_ok() {
-            let first = {
-                let db = server.engine.db();
-                if let Ok(id) = db.upsert_repo(PROVIDER_HF, name) {
-                    let _ = db.save_manifest(id, tag, &user_agent, &media_type, &body);
-                }
-                matches!(db.archived(PROVIDER_HF, name, "main"), Ok(None))
-            };
-            if first {
-                keep_model_info(server, name, call.header(header::AUTHORIZATION));
+            let kept = (
+                name.to_string(),
+                tag.to_string(),
+                user_agent.clone(),
+                media_type.clone(),
+                body.clone(),
+            );
+            let first = server
+                .off(move |e| -> anyhow::Result<bool> {
+                    let (name, tag, user_agent, media_type, body) = kept;
+                    let db = e.db();
+                    let id = db.upsert_repo(PROVIDER_HF, &name)?;
+                    db.save_manifest(id, &tag, &user_agent, &media_type, &body)?;
+                    Ok(db.archived(PROVIDER_HF, &name, "main")?.is_none())
+                })
+                .await;
+            match first {
+                Ok(true) => keep_model_info(server, name, call.header(header::AUTHORIZATION)),
+                Ok(false) => {}
+                // Hugging Face makes this manifest; it exists nowhere else.
+                Err(e) => eprintln!("dedupd: the manifest of {name}:{tag} was not kept: {e:#}"),
             }
         }
         return manifest_response(call, &media_type, body);
@@ -132,14 +154,24 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
     // repository that no longer exists when the request has no token, so a
     // 401 or 403 for an open model means "gone", not "not for you". The
     // rule is `Server::known_open`, the same for both front ends.
-    let archived = {
-        let open = server.known_open(name);
-        let db = server.engine.db();
-        db.repo_id(PROVIDER_HF, name)
-            .ok()
-            .flatten()
-            .filter(|_| open)
-            .and_then(|id| db.manifest(id, tag, Some(&user_agent)).ok().flatten())
+    let archived = if server.known_open(name).await {
+        let asked = (name.to_string(), tag.to_string(), user_agent);
+        server
+            .off(move |e| {
+                let (name, tag, user_agent) = asked;
+                let db = e.db();
+                match db.repo_id(PROVIDER_HF, &name)? {
+                    Some(id) => db.manifest(id, &tag, Some(&user_agent)),
+                    None => Ok(None),
+                }
+            })
+            .await
+            .unwrap_or_else(|e| {
+                eprintln!("dedupd: reading the kept manifest of {name}:{tag}: {e:#}");
+                None
+            })
+    } else {
+        None
     };
     match archived {
         Some((media_type, body)) => manifest_response(call, &media_type, body),
@@ -158,15 +190,29 @@ fn keep_model_info(server: &Arc<Server>, name: &str, auth: Option<&str>) {
     if !dedupd_core::names::is_repo_name(name) {
         return;
     }
-    let (server, name) = (server.clone(), name.to_string());
+    let (asking, name) = (server.clone(), name.to_string());
     let auth = auth.map(str::to_string);
-    tokio::spawn(async move {
-        let hub = &server.engine.hub;
-        if let Ok(snap) = hub.snapshot_as(&name, "main", auth.as_deref()).await {
-            let _ = server
-                .engine
-                .db()
-                .archive_snapshot(PROVIDER_HF, &name, "main", &snap);
+    server.background(async move {
+        // Until it is kept the model counts as restricted, and the next
+        // manifest asks again: said in the log, and nothing more to do.
+        let snap = match asking
+            .engine
+            .hub
+            .snapshot_as(&name, "main", auth.as_deref())
+            .await
+        {
+            Ok(snap) => snap,
+            Err(e) => {
+                eprintln!("dedupd: the info of {name} was not read: {e}");
+                return;
+            }
+        };
+        let repo = name.clone();
+        let kept = asking
+            .off(move |e| e.db().archive_snapshot(PROVIDER_HF, &repo, "main", &snap))
+            .await;
+        if let Err(e) = kept {
+            eprintln!("dedupd: the info of {name} was not kept: {e:#}");
         }
     });
 }
@@ -178,8 +224,11 @@ async fn blob(server: &Arc<Server>, call: &Call, name: &str, digest: &str) -> Re
         return plain(StatusCode::BAD_REQUEST, "only sha256 digests are served");
     };
     if call.is_head() {
-        let known = server.engine.db().blob(sha).ok().flatten();
-        return match known.filter(|_| open_to_all(server, name, sha)) {
+        let known = match stored(server, sha).await {
+            Some(blob) if open_to_all(server, name, sha).await => Some(blob),
+            _ => None,
+        };
+        return match known {
             Some(b) => Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_LENGTH, b.size)
@@ -235,7 +284,11 @@ pub(crate) async fn blob_direct(server: &Arc<Server>, call: &Call, digest: &str)
     let Some(sha) = dedupd_core::ollama::digest_hex(digest) else {
         return plain(StatusCode::BAD_REQUEST, "only sha256 digests are served");
     };
+    // Without a name the layer is served only when it is stored and open.
     let name = call.query_params("repo").next().unwrap_or("");
+    if !name.is_empty() && !dedupd_core::names::is_repo_name(name) {
+        return plain(StatusCode::NOT_FOUND, "that is not a model's name");
+    }
     send_blob(server, call, name, sha).await
 }
 
@@ -243,14 +296,35 @@ pub(crate) async fn blob_direct(server: &Arc<Server>, call: &Call, digest: &str)
 /// info of the model the client names says it is open, and that model is
 /// known to hold the layer. A model with no info kept, and a layer asked for
 /// under another model's name, count as restricted.
-fn open_to_all(server: &Server, name: &str, sha: &str) -> bool {
-    let open = server.known_open(name);
-    let db = server.engine.db();
-    open && db
-        .repo_id(PROVIDER_HF, name)
-        .ok()
-        .flatten()
-        .is_some_and(|id| db.repo_refers_to(id, sha).unwrap_or(false))
+async fn open_to_all(server: &Server, name: &str, sha: &str) -> bool {
+    if !server.known_open(name).await {
+        return false;
+    }
+    let asked = (name.to_string(), sha.to_string());
+    let refers = server
+        .off(move |e| {
+            let db = e.db();
+            match db.repo_id(PROVIDER_HF, &asked.0)? {
+                Some(id) => db.repo_refers_to(id, &asked.1),
+                None => Ok(false),
+            }
+        })
+        .await;
+    // What cannot be read does not say the layer is open.
+    refers.unwrap_or_else(|e| {
+        eprintln!("dedupd: looking up layer {sha} of {name}: {e:#}");
+        false
+    })
+}
+
+/// The stored file with this sha256, as the database knows it.
+async fn stored(server: &Server, sha: &str) -> Option<dedupd_core::db::BlobRow> {
+    let asked = sha.to_string();
+    let found = server.off(move |e| e.db().blob(&asked)).await;
+    found.unwrap_or_else(|e| {
+        eprintln!("dedupd: looking for {sha} in the store: {e:#}");
+        None
+    })
 }
 
 /// For a layer that is not open to all: ask the Hub whether it may be had,
@@ -261,7 +335,7 @@ fn open_to_all(server: &Server, name: &str, sha: &str) -> bool {
 /// the download and says nothing more about who may have the layer. A yes
 /// stands for a minute.
 async fn refused(server: &Arc<Server>, call: &Call, name: &str, sha: &str) -> Option<Response> {
-    if open_to_all(server, name, sha) || server.permits.holds(call, name, sha) {
+    if open_to_all(server, name, sha).await || server.permits.holds(call, name, sha) {
         return None;
     }
     if !dedupd_core::names::is_repo_name(name) {
@@ -289,7 +363,7 @@ async fn send_blob(server: &Arc<Server>, call: &Call, name: &str, sha: &str) -> 
     let extra = [("docker-content-digest", format!("sha256:{sha}"))];
     // A gated or private model's layer is the Hub's to hand out: its sha256
     // is no secret, so holding the bytes is not reason enough to serve them.
-    let held = server.engine.db().blob(sha).ok().flatten().is_some();
+    let held = stored(server, sha).await.is_some();
     if held && let Some(no) = refused(server, call, name, sha).await {
         return no;
     }

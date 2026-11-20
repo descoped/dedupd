@@ -5,8 +5,8 @@
 //! they use the daemon's token, share its rate limits, and can say what is
 //! already here.
 
-use crate::answer::{error, hub_error, ok};
-use crate::{Call, Server, plain};
+use crate::answer::{blocking, error, hub_error, ok};
+use crate::{Call, Server, held, plain};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
 use dedupd_api::app::App;
@@ -121,7 +121,7 @@ fn downloading(server: &Server) -> Vec<String> {
 async fn search(server: &Arc<Server>, call: &Call) -> Response {
     let query = search_query(call);
     let cached = {
-        let mut kept = server.searches.lock().expect("lock");
+        let mut kept = held(&server.searches);
         kept.retain(|_, (at, _)| at.elapsed() < SEARCH_TTL);
         kept.get(&query).map(|(_, answer)| answer.clone())
     };
@@ -154,7 +154,7 @@ async fn search(server: &Arc<Server>, call: &Call) -> Response {
                 Err(e) => return hub_error(HubError::from(e)),
             };
             let answer = Found { models, next };
-            let mut kept = server.searches.lock().expect("lock");
+            let mut kept = held(&server.searches);
             if kept.len() >= SEARCH_KEPT {
                 kept.clear();
             }
@@ -164,9 +164,12 @@ async fn search(server: &Arc<Server>, call: &Call) -> Response {
     };
     // What is here changes while a search answer is kept, so it is added
     // each time.
-    let here = match library::presence(&server.engine.db()) {
-        Ok(here) => here,
-        Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
+    let here = {
+        let engine = server.engine.clone();
+        match blocking(move || library::presence(&engine.db())).await {
+            Ok(here) => here,
+            Err(e) => return error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
+        }
     };
     let busy = downloading(server);
     ok(SearchPage {
@@ -207,7 +210,8 @@ fn siblings(info: &Value) -> Vec<TreeEntry> {
 }
 
 /// Other repositories made from the same base model: the same model in
-/// other formats and quantizations.
+/// other formats and quantizations. An optional part of the page: any
+/// failure gives none.
 async fn related(server: &Arc<Server>, repo: &str, meta: &ModelMeta) -> Vec<SearchHit> {
     let base = meta.base_model.as_deref().unwrap_or(repo);
     let mut query = format!(
@@ -227,7 +231,12 @@ async fn related(server: &Arc<Server>, repo: &str, meta: &ModelMeta) -> Vec<Sear
     let Ok(models) = resp.json::<Vec<Value>>().await else {
         return Vec::new();
     };
-    let here = library::presence(&server.engine.db()).unwrap_or_default();
+    // Optional on the page: when it cannot be read, the related models
+    // are shown without what is here.
+    let engine = server.engine.clone();
+    let here = blocking(move || library::presence(&engine.db()))
+        .await
+        .unwrap_or_default();
     let busy = downloading(server);
     models
         .iter()
@@ -236,6 +245,8 @@ async fn related(server: &Arc<Server>, repo: &str, meta: &ModelMeta) -> Vec<Sear
         .collect()
 }
 
+/// The model's README from the provider. An optional part of the page: any
+/// failure gives none, and the stored one is shown when there is one.
 async fn readme(
     server: &Arc<Server>,
     repo: &str,
@@ -264,6 +275,16 @@ async fn readme(
         .ok()
 }
 
+/// Note whether the provider still has the model. The Library shows it;
+/// a failure to write it down is logged and the page is answered anyway.
+async fn note_upstream(server: &Arc<Server>, repo: &str, gone: bool) {
+    let (engine, name) = (server.engine.clone(), repo.to_string());
+    let noted = blocking(move || engine.db().set_upstream(PROVIDER_HF, &name, gone)).await;
+    if let Err(e) = noted {
+        eprintln!("dedupd: could not note what the provider said about {repo}: {e:#}");
+    }
+}
+
 async fn model(server: &Arc<Server>, repo: &str) -> Response {
     let engine = &server.engine;
     let path = format!("/api/models/{}?blobs=true", encode_path(repo));
@@ -271,32 +292,50 @@ async fn model(server: &Arc<Server>, repo: &str) -> Response {
         Ok(resp) => resp.text().await.map_err(HubError::from),
         Err(e) => Err(e),
     };
-    let (info_json, files, commit, from_archive) = match live {
-        Ok(text) => {
-            let info: Value = serde_json::from_str(&text).unwrap_or_default();
+    // An answer that is not JSON is the provider failing, not a model with
+    // no commit and no files.
+    let live = live.and_then(|text| match serde_json::from_str::<Value>(&text) {
+        Ok(info) => Ok((text, info)),
+        Err(e) => Err(HubError::Malformed(format!("the info of {repo}: {e}"))),
+    });
+    let (info_json, info, files, commit, from_archive) = match live {
+        Ok((text, info)) => {
             let commit = info.get("sha").and_then(|v| v.as_str()).map(str::to_string);
-            let _ = engine.db().set_upstream(PROVIDER_HF, repo, false);
-            (text, siblings(&info), commit, false)
+            note_upstream(server, repo, false).await;
+            let files = siblings(&info);
+            (text, info, files, commit, false)
         }
         Err(why) => {
             if matches!(why, HubError::NotAvailable { .. }) {
-                let _ = engine.db().set_upstream(PROVIDER_HF, repo, true);
+                note_upstream(server, repo, true).await;
             }
             // What is archived answers when the provider cannot.
             let snapshot = {
-                let db = engine.db();
-                db.repo_id(PROVIDER_HF, repo)
-                    .ok()
-                    .flatten()
-                    .and_then(|id| db.archived_snapshot(id, "main").ok().flatten())
+                let (engine, repo) = (engine.clone(), repo.to_string());
+                blocking(move || {
+                    let db = engine.db();
+                    let Some(id) = db.repo_id(PROVIDER_HF, &repo)? else {
+                        return Ok(None);
+                    };
+                    db.archived_snapshot(id, "main")
+                })
+                .await
             };
             match snapshot {
-                Some(s) => (s.info_json, s.entries, Some(s.commit), true),
-                None => return hub_error(why),
+                Ok(Some(s)) => {
+                    // Kept as the provider gave it; one that cannot be read
+                    // shows the model without its details.
+                    let info = serde_json::from_str(&s.info_json).unwrap_or_default();
+                    (s.info_json, info, s.entries, Some(s.commit), true)
+                }
+                Ok(None) => return hub_error(why),
+                Err(e) => {
+                    eprintln!("dedupd: the kept copy of {repo} could not be read: {e:#}");
+                    return hub_error(why);
+                }
             }
         }
     };
-    let info: Value = serde_json::from_str(&info_json).unwrap_or_default();
     let meta = model_meta(&info);
 
     let (related, readme) = match (&commit, from_archive) {
@@ -307,12 +346,17 @@ async fn model(server: &Arc<Server>, repo: &str) -> Response {
         _ => (Vec::new(), None),
     };
     let local = {
-        let db = &engine.db;
-        let installed = Installed::detect(&engine.dirs);
-        let variants =
-            library::local_variants(db, &engine.store, repo, &files, &meta.formats, &installed);
-        let detail = library::model(db, &engine.store, repo, &installed);
-        variants.and_then(|v| Ok((v, detail?)))
+        let (engine, repo) = (engine.clone(), repo.to_string());
+        let (files, formats) = (files.clone(), meta.formats.clone());
+        blocking(move || {
+            let db = &engine.db;
+            let installed = Installed::detect(&engine.dirs);
+            let variants =
+                library::local_variants(db, &engine.store, &repo, &files, &formats, &installed)?;
+            let detail = library::model(db, &engine.store, &repo, &installed)?;
+            Ok((variants, detail))
+        })
+        .await
     };
     let (variants, detail) = match local {
         Ok(local) => local,

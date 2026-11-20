@@ -3,7 +3,7 @@
 //! large model, so it runs in the background, one at a time, and the event
 //! stream says how far it is.
 
-use crate::Server;
+use crate::{Server, epoch, held};
 use dedupd_api::activity::ActivityAction;
 use dedupd_api::moves::{ModelMove, MoveKind};
 use dedupd_core::{activity, archive};
@@ -16,13 +16,6 @@ fn bytes(server: &Server, kind: MoveKind, repo: &str) -> anyhow::Result<u64> {
         MoveKind::Archive => archive::archive_plan(&e.db, &e.store, &e.dirs, repo)?.bytes,
         MoveKind::Restore => archive::restore_plan(&e.db, &e.store, repo)?.bytes,
     })
-}
-
-fn epoch() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
 }
 
 /// Why another move cannot start while `now` runs.
@@ -87,10 +80,12 @@ async fn begin(server: &Arc<Server>, kind: MoveKind, repo: String) -> Result<(),
             .map_err(|e| e.to_string())?
             .map_err(|e| format!("{e:#}"))?
     };
-    let _starting = server.starting.lock().expect("lock");
+    let _starting = held(&server.starting);
     // The same rule archive_apply and restore keep, asked first so the
     // owner hears it at once rather than as a failed move. A job added
     // after this waits for the move: the queue asks `moving` first.
+    // One short question to the database, on this thread because the lock
+    // above must cover it and the start below.
     if server
         .engine
         .db()

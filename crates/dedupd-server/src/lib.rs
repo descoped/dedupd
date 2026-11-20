@@ -29,15 +29,32 @@ use std::time::Instant;
 use tokio::sync::watch;
 use tokio_util::sync::CancellationToken;
 
+/// Seconds since the epoch, the one clock for what the daemon writes down.
+pub(crate) fn epoch() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+}
+
+/// Take a lock, also after a task panicked while it held it. Every lock of
+/// this crate guards a value that is whole after each step taken under it
+/// (a map that is added to or removed from, a flag, a report that is
+/// replaced), so what is there is still good; a daemon that refused every
+/// later request over one fault would be the worse answer.
+pub(crate) fn held<T>(lock: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    lock.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
 pub struct Server {
     pub engine: Arc<Engine>,
     pub config: Config,
     pub home: Home,
-    /// Branch and tag names resolved recently, so a burst of requests for one
-    /// model asks upstream once.
-    commits: Mutex<HashMap<(String, String), (String, Instant)>>,
+    /// Branch and tag names resolved recently, and the asking under way, so
+    /// a burst of requests for one model asks upstream once.
+    pub(crate) refs: hubapi::Refs,
     /// Large files being put together from what clients download through us.
-    assemblies: Mutex<HashMap<String, Arc<files::Assembly>>>,
+    pub(crate) assemblies: files::Assemblies,
     /// The downloads the daemon is doing or has been asked to do.
     pub queue: Arc<Queue>,
     /// What the background pass remembers between rounds.
@@ -87,8 +104,8 @@ impl Server {
             engine,
             config,
             home,
-            commits: Mutex::new(HashMap::new()),
-            assemblies: Mutex::new(HashMap::new()),
+            refs: Default::default(),
+            assemblies: Default::default(),
             queue,
             passes: daemon::PassState::default(),
             check: Mutex::new(dedupd_api::daemon::StoreCheck::default()),
@@ -96,10 +113,7 @@ impl Server {
             starting: Mutex::new(()),
             library: watch::Sender::new(0),
             searches: Mutex::new(HashMap::new()),
-            started_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs() as i64)
-                .unwrap_or(0),
+            started_at: epoch(),
             favorites: Default::default(),
             permits: Default::default(),
             shutdown: CancellationToken::new(),
@@ -116,7 +130,10 @@ impl Server {
             if let Some(server) = weak.upgrade() {
                 server.touch();
                 tokio::spawn(async move {
-                    let _ = daemon::pass(&server).await;
+                    match daemon::pass(&server).await {
+                        Ok(done) => daemon::say(&server, &done.errors),
+                        Err(e) => eprintln!("dedupd: the pass after a download failed: {e:#}"),
+                    }
                 });
             }
         });
@@ -149,7 +166,45 @@ impl Server {
     /// Hub said yes to lately, so the next request asks upstream again.
     pub fn forget_refs(&self) {
         self.permits.clear();
-        self.commits.lock().expect("lock").clear();
+        self.refs.clear();
+    }
+
+    /// Drop the assemblies no part has written to for `idle`, with their
+    /// files. Returns how many went.
+    pub fn drop_idle_assemblies(&self, idle: std::time::Duration) -> usize {
+        self.assemblies.drop_idle(idle)
+    }
+
+    /// How many files are being put together now.
+    pub fn assemblies_open(&self) -> usize {
+        self.assemblies.open()
+    }
+
+    /// Do work that waits for the database or reads files, off the threads
+    /// that answer requests: the database is one connection behind a lock
+    /// that a queue job, the background pass or a backup can hold for a
+    /// while. A panic in the work is the caller's, as if it ran here.
+    pub(crate) async fn off<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&Engine) -> T + Send + 'static,
+    ) -> T {
+        let engine = self.engine.clone();
+        match tokio::task::spawn_blocking(move || work(&engine)).await {
+            Ok(done) => done,
+            Err(e) => std::panic::resume_unwind(e.into_panic()),
+        }
+    }
+
+    /// Start work nobody waits for. It ends with the daemon, and says in
+    /// the log itself what it could not do.
+    pub(crate) fn background(&self, work: impl Future<Output = ()> + Send + 'static) {
+        let stopping = self.shutdown.clone();
+        tokio::spawn(async move {
+            tokio::select! {
+                () = stopping.cancelled() => {}
+                () = work => {}
+            }
+        });
     }
 }
 
@@ -159,8 +214,9 @@ impl Server {
     /// private. A model with no info kept, or info that cannot be read,
     /// counts as restricted, since nothing says this client may have it.
     /// The one rule for every front end.
-    pub(crate) fn known_open(&self, repo: &str) -> bool {
+    pub(crate) async fn known_open(&self, repo: &str) -> bool {
         self.archived(repo, "main")
+            .await
             .is_some_and(|snap| !hubapi::restricted(&snap.info_json))
     }
 }
@@ -169,6 +225,11 @@ pub fn router(server: Arc<Server>) -> Router {
     Router::new().fallback(handle).with_state(server)
 }
 
+/// How long answers under way get to finish once the daemon was told to
+/// stop. A model being downloaded through the daemon can take an hour; the
+/// client asks for the rest again, from the daemon that starts next.
+const LAST_ANSWERS: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Serve until the listener fails or `shutdown` resolves.
 pub async fn serve(
     server: Arc<Server>,
@@ -176,17 +237,23 @@ pub async fn serve(
     shutdown: impl Future<Output = ()> + Send + 'static,
 ) -> anyhow::Result<()> {
     let stopping = server.shutdown.clone();
-    axum::serve(listener, router(server))
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                _ = shutdown => {}
-                _ = stopping.cancelled() => {}
-            }
-            // The event streams end here; without that the server would
-            // wait for them for ever.
-            stopping.cancel();
-        })
-        .await?;
+    let told = server.shutdown.clone();
+    let serving = axum::serve(listener, router(server)).with_graceful_shutdown(async move {
+        tokio::select! {
+            _ = shutdown => {}
+            _ = stopping.cancelled() => {}
+        }
+        // The event streams end here; without that the server would
+        // wait for them for ever.
+        stopping.cancel();
+    });
+    tokio::select! {
+        served = serving => served?,
+        () = async {
+            told.cancelled().await;
+            tokio::time::sleep(LAST_ANSWERS).await;
+        } => eprintln!("dedupd: stopping with answers still under way"),
+    }
     Ok(())
 }
 
@@ -259,9 +326,27 @@ pub(crate) fn json(status: StatusCode, value: &serde_json::Value) -> Response {
 
 async fn handle(State(server): State<Arc<Server>>, req: Request) -> Response {
     let (parts, body) = req.into_parts();
-    let body = match axum::body::to_bytes(body, 16 * 1024 * 1024).await {
+    let body = match axum::body::to_bytes(body, BODY_LIMIT).await {
         Ok(b) => b,
-        Err(_) => return plain(StatusCode::PAYLOAD_TOO_LARGE, "request body too large"),
+        Err(e) => {
+            // Too long, or cut off on the way: two different answers.
+            let too_long = std::error::Error::source(&e)
+                .is_some_and(|inner| inner.is::<http_body_util::LengthLimitError>());
+            return if too_long {
+                plain(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    format!(
+                        "dedupd takes a request body of up to {} MiB",
+                        BODY_LIMIT / (1024 * 1024)
+                    ),
+                )
+            } else {
+                plain(
+                    StatusCode::BAD_REQUEST,
+                    "the request body did not arrive whole",
+                )
+            };
+        }
     };
     let host = parts
         .headers
@@ -293,6 +378,14 @@ async fn handle(State(server): State<Arc<Server>>, req: Request) -> Response {
     }
 
     let segments: Vec<&str> = call.path.split('/').filter(|s| !s.is_empty()).collect();
+    // The path becomes an address on the provider, where `..` would climb
+    // to another one, sent with dedupd's token. No client writes one.
+    if segments.iter().any(|s| is_dot_segment(s)) {
+        return plain(StatusCode::BAD_REQUEST, "a path with . or .. is not served");
+    }
+    // A name that is not a model's gets nothing of dedupd's: no kept copy,
+    // no token.
+    let model = dedupd_core::names::is_model_name;
     match segments.as_slice() {
         ["dedupd", "v1", "hub", rest @ ..] => discover::handle(&server, &call, rest).await,
         ["dedupd", "v1", rest @ ..] => control::handle(&server, &call, rest).await,
@@ -301,14 +394,27 @@ async fn handle(State(server): State<Arc<Server>>, req: Request) -> Response {
         ["v2", rest @ ..] => registry::handle(&server, &call, rest).await,
         ["api", "models", rest @ ..] => hubapi::api(&server, &call, rest).await,
         ["datasets" | "spaces" | "api", ..] => proxy::pass_through_as_client(&server, &call).await,
-        [a, "resolve", rev, file @ ..] if !file.is_empty() => {
-            hubapi::resolve(&server, &call, a, rev, &file.join("/")).await
-        }
-        [a, b, "resolve", rev, file @ ..] if !file.is_empty() => {
+        // `org/name` is tried first, as for the API's paths: a repository
+        // can be named like the word (`org/resolve`).
+        [a, b, "resolve", rev, file @ ..] if !file.is_empty() && model(&format!("{a}/{b}")) => {
             hubapi::resolve(&server, &call, &format!("{a}/{b}"), rev, &file.join("/")).await
+        }
+        [a, "resolve", rev, file @ ..] if !file.is_empty() && model(a) => {
+            hubapi::resolve(&server, &call, a, rev, &file.join("/")).await
         }
         _ => proxy::pass_through_as_client(&server, &call).await,
     }
+}
+
+/// The longest request body that is read. Every body is read whole before
+/// it is passed on, so an upload larger than this cannot go through dedupd.
+const BODY_LIMIT: usize = 16 * 1024 * 1024;
+
+/// Whether a path segment is `.` or `..`, also written with `%2e`: the
+/// address parser the provider is asked through reads those the same.
+fn is_dot_segment(segment: &str) -> bool {
+    let plain = segment.to_ascii_lowercase().replace("%2e", ".");
+    plain == "." || plain == ".."
 }
 
 /// Whether a request's `Host` names this daemon: a loopback name, or the

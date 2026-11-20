@@ -3,8 +3,8 @@
 //! Everything the app shows comes from here, and everything it does goes
 //! through here: the daemon owns the store, the database and the downloads.
 
-use crate::answer::{Refused, answer, blocking, body, error, failure, internal, ok};
-use crate::{Call, Server, daemon, favorites, moves, plain};
+use crate::answer::{Refused, answer, blocking, body, error, failure, internal, ok, refusal};
+use crate::{Call, Server, daemon, favorites, held, moves, plain};
 use axum::body::{Body, Bytes};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
@@ -78,7 +78,7 @@ fn status_answer(server: &Server) -> anyhow::Result<DaemonStatus> {
             token_source: HubClient::token_source(),
             max_connections: governor.max_connections,
             speed_limit: governor.speed_limit,
-            checking: server.check.lock().expect("lock").running,
+            checking: held(&server.check).running,
             last_check_at: daemon::last_check(server),
         },
     })
@@ -123,11 +123,20 @@ fn events(server: &Arc<Server>) -> Response {
         let event = DaemonEvent {
             seq: feed.seq,
             library,
-            checking: feed.server.check.lock().expect("lock").running,
+            checking: held(&feed.server.check).running,
             moving,
             downloads: feed.server.queue.downloads(),
         };
-        let mut line = serde_json::to_string(&event).unwrap_or_default();
+        // An event is plain data. Should it ever not be written, the stream
+        // ends and the reader asks again: an empty line would read as a
+        // daemon of another build.
+        let mut line = match serde_json::to_string(&event) {
+            Ok(line) => line,
+            Err(e) => {
+                eprintln!("dedupd: an event could not be written as JSON: {e}");
+                return None;
+            }
+        };
         line.push('\n');
         Some((Ok::<_, std::convert::Infallible>(Bytes::from(line)), feed))
     });
@@ -142,8 +151,16 @@ fn events(server: &Arc<Server>) -> Response {
 /// Queue a download, or name the one already queued for the same thing.
 /// Refused while the model is being archived or restored: the job would
 /// fetch or place the files the move is taking away or bringing back.
+///
+/// Called on the thread that answers: the lock must cover the look at the
+/// move and the add, and the add is one row written to the database.
 fn enqueue(server: &Arc<Server>, body: PullBody) -> Result<(i64, bool), Refused> {
-    let _starting = server.starting.lock().expect("lock");
+    // What is not a model's name is the caller's mistake; anything the
+    // queue fails at after that is the daemon's.
+    if let Err(e) = dedupd_core::names::parse_model(&body.model) {
+        return Err(Box::new(error(StatusCode::BAD_REQUEST, format!("{e:#}"))));
+    }
+    let _starting = held(&server.starting);
     if let Some(why) = moves::refuses_job(server.moving.borrow().as_ref(), &body.model) {
         return Err(Box::new(error(StatusCode::CONFLICT, why)));
     }
@@ -156,7 +173,7 @@ fn enqueue(server: &Arc<Server>, body: PullBody) -> Result<(i64, bool), Refused>
             body.offline,
             body.kind,
         )
-        .map_err(|e| Box::new(error(StatusCode::BAD_REQUEST, e)))
+        .map_err(|e| Box::new(internal(format!("{e:#}"))))
 }
 
 async fn download_action(server: &Arc<Server>, id: &str, action: &str) -> Response {
@@ -237,7 +254,7 @@ async fn move_model(server: &Arc<Server>, kind: MoveKind, body: MoveBody) -> Res
         })
     })
     .await;
-    planned.unwrap_or_else(|e| error(StatusCode::CONFLICT, format!("{e:#}")))
+    planned.unwrap_or_else(|e| refusal(&e))
 }
 
 /// The settings as they are in the config file, with the defaults filled
@@ -295,7 +312,8 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
     match (&call.method, rest) {
         (&Method::GET, ["status"]) => {
             favorites::refresh_token(server);
-            answer(status_answer(server))
+            let server = server.clone();
+            answer(blocking(move || status_answer(&server)).await)
         }
         (&Method::POST, ["pull"]) => {
             let body: PullBody = match body(call) {
@@ -419,7 +437,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 });
                 match forgotten.await {
                     Ok(()) => ok(RepoBody { repo }),
-                    Err(e) => error(StatusCode::CONFLICT, format!("{e:#}")),
+                    Err(e) => refusal(&e),
                 }
             }
             Err(refused) => *refused,
@@ -469,26 +487,38 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
             }
             Err(refused) => *refused,
         },
-        (&Method::GET, ["verify"]) => ok(server.check.lock().expect("lock").clone()),
+        (&Method::GET, ["verify"]) => ok(held(&server.check).clone()),
         (&Method::POST, ["verify"]) => {
             tokio::spawn(daemon::check_store(server.clone()));
             ok(Started { started: true })
         }
 
-        (&Method::GET, ["config"]) => answer(config_answer(server)),
+        (&Method::GET, ["config"]) => {
+            let server = server.clone();
+            answer(blocking(move || config_answer(&server)).await)
+        }
         (&Method::PUT, ["config"]) => {
             let changes: BTreeMap<Setting, Value> = match body(call) {
                 Ok(b) => b,
                 Err(refused) => return *refused,
             };
-            match Config::update(&server.home, &changes) {
-                Ok(config) => {
-                    engine
-                        .governor
-                        .configure(config.max_connections(), config.speed_limit());
-                    answer(config_answer(server))
-                }
-                Err(e) => error(StatusCode::BAD_REQUEST, format!("{e:#}")),
+            let server = server.clone();
+            let written = blocking(move || {
+                let config = match Config::update(&server.home, &changes) {
+                    Ok(config) => config,
+                    Err(e) => return Ok(Err(e)),
+                };
+                engine
+                    .governor
+                    .configure(config.max_connections(), config.speed_limit());
+                config_answer(&server).map(Ok)
+            })
+            .await;
+            match written {
+                Ok(Ok(settings)) => ok(settings),
+                // A value the setting does not take.
+                Ok(Err(e)) => error(StatusCode::BAD_REQUEST, format!("{e:#}")),
+                Err(e) => internal(format!("{e:#}")),
             }
         }
         (&Method::GET, ["activity"]) => {
@@ -509,17 +539,18 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
         }
         (&Method::GET, ["favorites"]) => {
             favorites::refresh_token(server);
-            ok(favorites::current(server))
+            let server = server.clone();
+            answer(blocking(move || Ok(favorites::current(&server))).await)
         }
         (&Method::POST, ["favorites"]) => match body::<FavoriteBody>(call) {
             Ok(b) if !dedupd_core::names::is_repo_name(&b.repo) => error(
                 StatusCode::BAD_REQUEST,
                 format!("{:?} is not a model's name", b.repo),
             ),
-            Ok(b) => match favorites::set(server, &b.repo, b.favorite) {
-                Ok(list) => ok(list),
-                Err(e) => error(StatusCode::INTERNAL_SERVER_ERROR, format!("{e:#}")),
-            },
+            Ok(b) => {
+                let server = server.clone();
+                answer(blocking(move || favorites::set(&server, &b.repo, b.favorite)).await)
+            }
             Err(refused) => *refused,
         },
         (&Method::POST, ["favorites", "sync"]) => match favorites::sync(server, true).await {
@@ -532,9 +563,22 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(200usize)
                 .min(5000);
-            answer(log_tail(server, lines))
+            let server = server.clone();
+            answer(blocking(move || log_tail(&server, lines)).await)
         }
         (&Method::POST, ["restart"]) => {
+            // A move is not continued after a restart as a download is: it
+            // would be cut off where it stands, with nothing to say so.
+            if let Some(now) = server.moving.borrow().as_ref().filter(|m| m.running) {
+                return error(
+                    StatusCode::CONFLICT,
+                    format!(
+                        "dedupd is working on {} ({}); restart when that has finished",
+                        now.repo,
+                        now.kind.as_str()
+                    ),
+                );
+            }
             let server = server.clone();
             tokio::spawn(async move {
                 // Let this answer leave first.

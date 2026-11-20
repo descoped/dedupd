@@ -55,6 +55,19 @@ pub fn is_revision(revision: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c))
 }
 
+/// Whether the text is a quantization or a registry tag (`Q4_K_M`,
+/// `latest`): one word of up to 64 letters, digits, `-`, `_` and `.`, with
+/// no `..` in it. A tag from a request is checked with this before it goes
+/// into an address or the database.
+pub fn is_tag(tag: &str) -> bool {
+    !tag.is_empty()
+        && tag.len() <= 64
+        && !tag.contains("..")
+        && tag
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+}
+
 /// Whether the text is a sha256 as dedupd names files by it: 64 lower-case
 /// hex digits. A hash from outside (the provider's listing, a request) is
 /// checked with this before it names a file.
@@ -95,13 +108,7 @@ pub fn parse_model(spec: &str) -> Result<(String, Option<String>, String)> {
         Some((r, q)) => (r, Some(q.to_string())),
         None => (rest, None),
     };
-    let quant_ok = quant.as_deref().is_none_or(|q| {
-        !q.is_empty()
-            && q.len() <= 64
-            && !q.contains("..")
-            && q.chars()
-                .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
-    });
+    let quant_ok = quant.as_deref().is_none_or(is_tag);
     if !is_repo_name(repo) || !quant_ok || !is_revision(&revision) {
         bail!("{spec} is not a model name; use org/repo, org/repo:Q4_K_M or org/repo@revision");
     }
