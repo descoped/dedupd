@@ -132,7 +132,9 @@ speed_limit = 0
 ```
 
 For gated repositories dedupd uses the same Hugging Face token as other tools: `HF_TOKEN`, or the token file written
-by `hf auth login`.
+by `hf auth login`. A client that reads a model through the daemon without a token of its own is served with that
+token. Other requests to Hugging Face through the daemon (the account, datasets, spaces, uploads) need the client's
+own token.
 
 ## Running against a scratch home
 

@@ -271,7 +271,7 @@ impl Fetcher {
     pub fn get(&self, url: &str) -> reqwest::RequestBuilder {
         let mut req = self.http.get(url);
         if let Some(t) = self.token.get()
-            && url.starts_with(&self.endpoint)
+            && crate::token::goes_to(&self.endpoint, url)
         {
             req = req.bearer_auth(t);
         }
@@ -623,7 +623,7 @@ impl Fetcher {
     async fn open(&self, url: &str, range: Option<&str>) -> Result<reqwest::Response, Failure> {
         let mut url = reqwest::Url::parse(url).map_err(|e| Failure::Fatal(e.into()))?;
         for _ in 0..8 {
-            let ours = url.as_str().starts_with(&self.endpoint);
+            let ours = crate::token::goes_to(&self.endpoint, url.as_str());
             let mut req = self.http_no_redirect.get(url.clone());
             if let Some(t) = self.token.get()
                 && ours

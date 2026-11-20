@@ -1,6 +1,6 @@
 //! The Ollama registry API, for `ollama pull --insecure 127.0.0.1:PORT/org/repo:tag`.
 
-use crate::proxy::{unreachable, upstream};
+use crate::proxy::{unreachable, upstream, upstream_unfollowed};
 use crate::{Call, Server, files, plain};
 use axum::body::Body;
 use axum::http::{StatusCode, header};
@@ -8,7 +8,42 @@ use axum::response::Response;
 use dedupd_core::db::PROVIDER_HF;
 use dedupd_core::ollama::{MANIFEST_TYPE, Manifest};
 use sha2::{Digest, Sha256};
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+/// How long the Hub's yes for a layer is taken as still standing. Ollama
+/// downloads one layer as many parts in a row; each is a request here.
+const PERMIT_FOR: Duration = Duration::from_secs(60);
+
+/// The layers the Hub said yes to lately, by the model named, the layer and
+/// the `Authorization` it was asked with.
+#[derive(Default)]
+pub(crate) struct Permits(Mutex<HashMap<(String, String, String), Instant>>);
+
+impl Permits {
+    fn key(call: &Call, name: &str, sha: &str) -> (String, String, String) {
+        let auth = call.header(header::AUTHORIZATION).unwrap_or("");
+        (name.to_string(), sha.to_string(), auth.to_string())
+    }
+
+    fn holds(&self, call: &Call, name: &str, sha: &str) -> bool {
+        let map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        map.get(&Self::key(call, name, sha))
+            .is_some_and(|at| at.elapsed() < PERMIT_FOR)
+    }
+
+    fn note(&self, call: &Call, name: &str, sha: &str) {
+        let mut map = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        map.retain(|_, at| at.elapsed() < PERMIT_FOR);
+        map.insert(Self::key(call, name, sha), Instant::now());
+    }
+
+    /// Forget every yes, so the next request asks the Hub again.
+    pub(crate) fn clear(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+}
 
 /// Relay a registry answer. The token challenge is removed: it names
 /// Hugging Face as the place to get a token, and Ollama refuses a challenge
@@ -150,7 +185,7 @@ async fn blob(server: &Arc<Server>, call: &Call, name: &str, digest: &str) -> Re
     };
     if call.is_head() {
         let known = server.engine.db().blob(sha).ok().flatten();
-        return match known {
+        return match known.filter(|_| open_to_all(server, name, sha)) {
             Some(b) => Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_LENGTH, b.size)
@@ -210,8 +245,64 @@ pub(crate) async fn blob_direct(server: &Arc<Server>, call: &Call, digest: &str)
     send_blob(server, call, name, sha).await
 }
 
+/// Whether a stored layer may be answered without asking the Hub: the kept
+/// info of the model the client names says it is open, and that model is
+/// known to hold the layer. A model with no info kept, and a layer asked for
+/// under another model's name, count as restricted.
+fn open_to_all(server: &Server, name: &str, sha: &str) -> bool {
+    let db = server.engine.db();
+    let open = db
+        .archived(PROVIDER_HF, name, "main")
+        .ok()
+        .flatten()
+        .is_some_and(|(_, snap)| !crate::hubapi::restricted(&snap.info_json));
+    open && db
+        .repo_id(PROVIDER_HF, name)
+        .ok()
+        .flatten()
+        .is_some_and(|id| db.repo_refers_to(id, sha).unwrap_or(false))
+}
+
+/// For a layer that is not open to all: ask the Hub whether it may be had,
+/// with the client's own `Authorization`, or with dedupd's token when the
+/// client has none (as for every read of a model). `Some` is the answer
+/// that says no. The Hub's own answer decides: it is a redirect to the
+/// download server, which is not followed, since that address is made for
+/// the download and says nothing more about who may have the layer. A yes
+/// stands for a minute.
+async fn refused(server: &Arc<Server>, call: &Call, name: &str, sha: &str) -> Option<Response> {
+    if open_to_all(server, name, sha) || server.permits.holds(call, name, sha) {
+        return None;
+    }
+    if !dedupd_core::names::is_repo_name(name) {
+        return Some(plain(
+            StatusCode::NOT_FOUND,
+            "that layer is not served without its model's name",
+        ));
+    }
+    let ask = Call {
+        method: axum::http::Method::HEAD,
+        body: Default::default(),
+        ..call.clone()
+    };
+    let url = server.engine.fetcher.registry_blob_url(name, sha);
+    match upstream_unfollowed(server, &ask, &url).await {
+        Ok(resp) if resp.status().is_success() || resp.status().is_redirection() => {
+            server.permits.note(call, name, sha);
+            None
+        }
+        other => Some(relay_or_unreachable(server, call, other)),
+    }
+}
+
 async fn send_blob(server: &Arc<Server>, call: &Call, name: &str, sha: &str) -> Response {
     let extra = [("docker-content-digest", format!("sha256:{sha}"))];
+    // A gated or private model's layer is the Hub's to hand out: its sha256
+    // is no secret, so holding the bytes is not reason enough to serve them.
+    let held = server.engine.db().blob(sha).ok().flatten().is_some();
+    if held && let Some(no) = refused(server, call, name, sha).await {
+        return no;
+    }
     if let Some(served) = files::serve_stored(server, call, sha, None, &extra).await {
         return served;
     }

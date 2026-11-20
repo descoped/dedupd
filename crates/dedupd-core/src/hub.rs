@@ -256,7 +256,7 @@ impl HubClient {
     ) -> Result<reqwest::Response, HubError> {
         // The token goes to the configured endpoint only, never anywhere a
         // response might point.
-        if !url.starts_with(&self.endpoint) {
+        if !crate::token::goes_to(&self.endpoint, url) {
             return Err(HubError::Malformed(format!(
                 "refusing to follow a link away from {}: {url}",
                 self.endpoint
@@ -596,6 +596,32 @@ mod tests {
             .respond_with(
                 ResponseTemplate::new(200)
                     .insert_header("link", r#"<https://elsewhere.example/x>; rel="next""#)
+                    .set_body_json(json!([])),
+            )
+            .mount(&server)
+            .await;
+        let hub = HubClient::new(server.uri(), Some("secret".into())).unwrap();
+        assert!(matches!(
+            hub.snapshot("org/repo", "main").await,
+            Err(HubError::Malformed(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn refuses_a_next_link_on_a_host_that_only_begins_like_the_endpoint() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/models/org/repo/revision/main"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"sha": COMMIT})))
+            .mount(&server)
+            .await;
+        // `http://127.0.0.1:1234` and `http://127.0.0.1:12345` share a prefix.
+        let lookalike = format!("{}5/x", server.uri());
+        Mock::given(method("GET"))
+            .and(path(format!("/api/models/org/repo/tree/{COMMIT}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("link", format!(r#"<{lookalike}>; rel="next""#).as_str())
                     .set_body_json(json!([])),
             )
             .mount(&server)
