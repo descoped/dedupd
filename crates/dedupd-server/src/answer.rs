@@ -35,9 +35,6 @@ pub(crate) fn answer<T: serde::Serialize>(result: anyhow::Result<T>) -> Response
     }
 }
 
-/// A failure, with the status its kind calls for: a model the library
-/// does not have is 404, the provider's failures are its own, anything
-/// else is the daemon's.
 /// A refusal of something the owner asked for (a plan that cannot be made,
 /// a model that cannot be forgotten now): 404 for a model the library does
 /// not have, 409 for anything else, which the core says in a sentence.
@@ -50,6 +47,9 @@ pub(crate) fn refusal(e: &anyhow::Error) -> Response {
     error(status, format!("{e:#}"))
 }
 
+/// A failure, with the status its kind calls for: a model the library
+/// does not have is 404, the provider's failures are its own, anything
+/// else is the daemon's.
 pub(crate) fn failure(e: anyhow::Error) -> Response {
     if e.is::<NotInLibrary>() {
         return error(StatusCode::NOT_FOUND, e);

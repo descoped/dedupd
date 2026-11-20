@@ -134,6 +134,25 @@ fn what_removes_lists_first_and_removes_only_with_apply() {
 }
 
 #[test]
+fn asking_what_forget_would_drop_passes_over_an_app_file_that_is_gone() {
+    let s = Scratch::new();
+    let model = s
+        .dir
+        .path()
+        .join("apps/bionic")
+        .join(REPO)
+        .join("model.gguf");
+    std::fs::create_dir_all(model.parent().unwrap()).unwrap();
+    std::fs::write(&model, vec![6u8; 70_000]).unwrap();
+    s.ok(&["adopt", "--offline"]);
+    // The owner removed the file by hand; no pass has noticed yet.
+    std::fs::remove_file(&model).unwrap();
+    let said = s.ok(&["forget", REPO]);
+    assert!(said.contains("Nothing was changed"), "{said}");
+    s.ok(&["forget", REPO, "--apply"]);
+}
+
+#[test]
 fn an_address_off_this_mac_and_a_label_that_is_none_are_refused() {
     let s = Scratch::new();
     let (ok, said) = s.run(&["serve", "--listen", "0.0.0.0:1"]);
