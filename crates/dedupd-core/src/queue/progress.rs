@@ -1,6 +1,14 @@
 //! The progress of a running job: its rate, and what the fetcher reports.
 
-use super::*;
+use super::run::wait_text;
+use super::{Job, Queue};
+use crate::fetch::Wait;
+use crate::now;
+use crate::pull::PullWatch;
+use dedupd_api::jobs::{FileStage, JobState};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 /// A rate measured from a running count.
 pub(super) struct Meter {

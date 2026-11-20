@@ -9,8 +9,8 @@ use dedupd_api::app::App;
 use dedupd_api::jobs::{FileStage, JobAction, JobKind, JobState};
 use dedupd_core::Home;
 use dedupd_core::engine::Engine;
-use dedupd_core::queue::Queue;
 use dedupd_core::queue::record::JobRecord;
+use dedupd_core::queue::{Queue, QueueError};
 use serde_json::json;
 use std::fs;
 use std::path::Path;
@@ -668,4 +668,172 @@ async fn trying_again_asks_only_the_apps_that_did_not_take_the_model() {
         .filter(|e| e.app == Some(App::Bionic))
         .count();
     assert_eq!(told, 1);
+}
+
+/// A Hub that answers nothing but "try later": a job stays at work, waiting
+/// for the network, for as long as a test needs.
+async fn away() -> MockServer {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::path_regex(".*"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&server)
+        .await;
+    server
+}
+
+fn scene_at(server: &MockServer) -> Scene {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let engine = engine(&home, &server.uri(), &dir.path().join("apps"), None);
+    let queue = Queue::open(engine.clone()).unwrap();
+    Scene {
+        _dir: dir,
+        home,
+        engine,
+        queue,
+    }
+}
+
+fn add_model(queue: &Arc<Queue>, model: &str) -> i64 {
+    queue
+        .add(model, vec![], vec![App::Bionic], false, JobKind::Download)
+        .unwrap()
+}
+
+/// Wait until the job's state is one of `states`.
+async fn in_state(queue: &Arc<Queue>, id: i64, states: &[JobState]) -> JobState {
+    for _ in 0..1500 {
+        let state = queue.get(id).unwrap().state;
+        if states.contains(&state) {
+            return state;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!(
+        "download {id} is {:?}, not one of {states:?}",
+        queue.get(id).unwrap().state
+    );
+}
+
+const AT_WORK: [JobState; 2] = [JobState::Resolving, JobState::WaitingNetwork];
+
+#[tokio::test]
+async fn three_jobs_work_at_once_and_the_next_starts_when_one_ends() {
+    let server = away().await;
+    let s = scene_at(&server);
+    let ids: Vec<i64> = ["org/a", "org/b", "org/c", "org/d", "org/e"]
+        .iter()
+        .map(|model| add_model(&s.queue, model))
+        .collect();
+    for id in &ids[..3] {
+        in_state(&s.queue, *id, &AT_WORK).await;
+    }
+    assert_eq!(s.queue.get(ids[3]).unwrap().state, JobState::Queued);
+    assert_eq!(s.queue.get(ids[4]).unwrap().state, JobState::Queued);
+
+    // One ends: the next in line gets its turn, and only that one.
+    s.queue.act(ids[0], JobAction::Cancel).await.unwrap();
+    in_state(&s.queue, ids[3], &AT_WORK).await;
+    assert_eq!(s.queue.get(ids[4]).unwrap().state, JobState::Queued);
+
+    // The owner starts the last one ahead of the queue.
+    s.queue.act(ids[4], JobAction::Start).await.unwrap();
+    in_state(&s.queue, ids[4], &AT_WORK).await;
+    // A restart finds its new state written down, not "queued".
+    let saved = s.engine.db().downloads().unwrap();
+    let row = &saved.iter().find(|(id, _)| *id == ids[4]).unwrap().1;
+    assert!(!row.contains("\"state\":\"queued\""), "{row}");
+    for id in &ids[1..] {
+        s.queue.act(*id, JobAction::Cancel).await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_job_that_waits_for_its_turn_can_be_paused_and_cancelled() {
+    let server = away().await;
+    let s = scene_at(&server);
+    let ids: Vec<i64> = ["org/a", "org/b", "org/c", "org/d", "org/e"]
+        .iter()
+        .map(|model| add_model(&s.queue, model))
+        .collect();
+    in_state(&s.queue, ids[2], &AT_WORK).await;
+
+    s.queue.act(ids[3], JobAction::Pause).await.unwrap();
+    assert_eq!(s.queue.get(ids[3]).unwrap().state, JobState::Paused);
+    s.queue.act(ids[4], JobAction::Cancel).await.unwrap();
+    assert_eq!(s.queue.get(ids[4]).unwrap().state, JobState::Cancelled);
+    // A paused job does not take the turn of one that ends.
+    s.queue.act(ids[0], JobAction::Cancel).await.unwrap();
+    assert_eq!(s.queue.get(ids[3]).unwrap().state, JobState::Paused);
+    for id in [ids[1], ids[2], ids[3]] {
+        s.queue.act(id, JobAction::Cancel).await.unwrap();
+    }
+    assert!(leftovers(&s.home).is_empty(), "{:?}", leftovers(&s.home));
+}
+
+#[tokio::test]
+async fn the_queue_says_which_kind_of_no_it_is() {
+    let server = away().await;
+    let s = scene_at(&server);
+    let kind = |e: anyhow::Error| match e.downcast::<QueueError>() {
+        Ok(QueueError::NoSuchJob(id)) => format!("none {id}"),
+        Ok(QueueError::NotAllowed(why)) => format!("no: {why}"),
+        Err(other) => format!("failure: {other:#}"),
+    };
+    assert_eq!(
+        kind(s.queue.act(41, JobAction::Pause).await.unwrap_err()),
+        "none 41"
+    );
+    assert_eq!(kind(s.queue.get(41).unwrap_err()), "none 41");
+    let id = add_model(&s.queue, "org/a");
+    in_state(&s.queue, id, &AT_WORK).await;
+    let said = kind(s.queue.act(id, JobAction::Remove).await.unwrap_err());
+    assert!(
+        said.starts_with("no: ") && said.ends_with("it cannot be removed now"),
+        "{said}"
+    );
+    s.queue.act(id, JobAction::Cancel).await.unwrap();
+    s.queue.act(id, JobAction::Remove).await.unwrap();
+    assert_eq!(kind(s.queue.get(id).unwrap_err()), format!("none {id}"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn equal_requests_at_the_same_moment_are_one_job() {
+    let server = away().await;
+    let s = scene_at(&server);
+    let ask = |queue: Arc<Queue>| {
+        tokio::task::spawn_blocking(move || {
+            queue
+                .add_or_find("org/a", vec![], vec![App::Bionic], false, JobKind::Download)
+                .unwrap()
+        })
+    };
+    let asked: Vec<_> = (0..12).map(|_| ask(s.queue.clone())).collect();
+    let mut answers = Vec::new();
+    for one in asked {
+        answers.push(one.await.unwrap());
+    }
+    let id = answers[0].0;
+    assert!(answers.iter().all(|(found, _)| *found == id), "{answers:?}");
+    assert_eq!(answers.iter().filter(|(_, there)| !there).count(), 1);
+    assert_eq!(s.queue.snapshot().jobs.len(), 1);
+
+    // Other apps are another job; a paused one is set going again.
+    let other = s
+        .queue
+        .add_or_find("org/a", vec![], vec![App::Hf], false, JobKind::Download)
+        .unwrap();
+    assert!(other.0 != id && !other.1);
+    in_state(&s.queue, id, &AT_WORK).await;
+    s.queue.act(id, JobAction::Pause).await.unwrap();
+    assert_eq!(s.queue.get(id).unwrap().state, JobState::Paused);
+    let again = s
+        .queue
+        .add_or_find("org/a", vec![], vec![App::Bionic], false, JobKind::Download)
+        .unwrap();
+    assert_eq!(again, (id, true));
+    assert_ne!(s.queue.get(id).unwrap().state, JobState::Paused);
+    for job in [id, other.0] {
+        s.queue.act(job, JobAction::Cancel).await.unwrap();
+    }
 }
