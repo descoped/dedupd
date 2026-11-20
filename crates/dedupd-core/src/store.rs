@@ -220,7 +220,17 @@ impl Store {
             .flatten()
         {
             let name = entry.file_name();
-            let Some(pid) = leftover_copy_of(&name.to_string_lossy()) else {
+            let name = name.to_string_lossy();
+            // A folder Ollama was asked in, whose process stopped before
+            // it could remove it.
+            if let Some(pid) = asked_folder_of(&name) {
+                if !crate::paths::process_is_alive(pid) && fs::remove_dir_all(entry.path()).is_ok()
+                {
+                    removed += 1;
+                }
+                continue;
+            }
+            let Some(pid) = leftover_copy_of(&name) else {
                 continue;
             };
             if crate::paths::process_is_alive(pid) {
@@ -253,7 +263,7 @@ impl Store {
             for entry in fs::read_dir(prefix.path()).into_iter().flatten().flatten() {
                 let name = entry.file_name().to_string_lossy().into_owned();
                 let is_file = entry.file_type().is_ok_and(|t| t.is_file());
-                if is_file && is_sha256_hex(&name) && name.starts_with(&prefix_name) {
+                if is_file && crate::names::is_sha256(&name) && name.starts_with(&prefix_name) {
                     out.push(name);
                 }
             }
@@ -340,6 +350,18 @@ pub(crate) fn db_copy_name(pid: u32) -> String {
     format!("dedupd.sqlite.{pid}.backup")
 }
 
+/// How a folder Ollama is asked about a model in is named: this, the id
+/// of the process and a time (`ollama_mlx`).
+pub(crate) const ASKED_FOLDER: &str = "ollama-asked-";
+
+/// The id of the process that made such a folder, when `name` is one.
+fn asked_folder_of(name: &str) -> Option<u32> {
+    let (pid, time) = name.strip_prefix(ASKED_FOLDER)?.split_once('-')?;
+    let digits = |text: &str| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+    // A number too large for a process id is nobody's.
+    (digits(pid) && digits(time)).then(|| pid.parse().unwrap_or(0))
+}
+
 /// The id of the process that made a half-made copy, when `name` is one.
 fn leftover_copy_of(name: &str) -> Option<u32> {
     if let Some(pid) = name
@@ -357,11 +379,6 @@ fn leftover_copy_of(name: &str) -> Option<u32> {
         && pid.bytes().all(|b| b.is_ascii_digit());
     // A number too large for a process id is nobody's.
     named_so.then(|| pid.parse().unwrap_or(0))
-}
-
-/// 64 lowercase hex digits: how the store names a file.
-fn is_sha256_hex(name: &str) -> bool {
-    name.len() == 64 && name.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
 #[cfg(all(test, target_os = "macos"))]
@@ -409,6 +426,9 @@ mod tests {
         assert!(!is_leftover_copy(&format!("{sha}.part")));
         assert!(!is_leftover_copy(&format!("{sha}.asm")));
         assert!(!is_leftover_copy("ollama-asked-1-2"));
+        assert_eq!(asked_folder_of("ollama-asked-12-345"), Some(12));
+        assert_eq!(asked_folder_of("ollama-asked-12"), None);
+        assert_eq!(asked_folder_of("ollama-asked-x-1"), None);
         assert!(!is_leftover_copy(&format!("{}.123", "a".repeat(63))));
     }
 

@@ -191,7 +191,10 @@ fn plan(
     rename: &dyn Fn(&str) -> String,
 ) -> Result<Plan> {
     let data_length = old.data_length();
-    for moved in 0..=old.tensors.len() {
+    // Every round writes the whole index again, so the rounds are counted:
+    // real files find room in a few, and one with very many tiny tensors
+    // at its start would keep a thread busy for a very long time.
+    for moved in 0..=old.tensors.len().min(PLAN_ROUNDS) {
         let room = match moved {
             0 => 0,
             n => old.tensors[n - 1].1.data_offsets[1],
@@ -224,8 +227,14 @@ fn plan(
             return Ok(Plan { index, room, moved });
         }
     }
-    bail!("the new index is longer than the whole file")
+    bail!(
+        "the new index finds no room, also with the first {} tensors written again",
+        old.tensors.len().min(PLAN_ROUNDS)
+    )
 }
+
+/// The most tensors `plan` gives up before it says there is no room.
+const PLAN_ROUNDS: usize = 512;
 
 /// The most a clone may cost in tensors written again to make room for a
 /// longer index. A file whose first tensor is larger is not given a

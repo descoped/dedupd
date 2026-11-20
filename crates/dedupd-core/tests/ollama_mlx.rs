@@ -372,6 +372,48 @@ async fn an_mlx_model_is_placed_into_ollama_as_clones_with_a_rewritten_index() {
     assert_eq!(offline.notes, Vec::<String>::new());
     assert_eq!(fs::read_to_string(&manifest_path).unwrap(), body);
     assert!(layers.iter().all(|(_, blob)| blob.is_file()));
+
+    // A new home with the same app folders, as after the database was
+    // removed: nothing says the manifest is dedupd's. It names exactly
+    // what this placement makes, so it is taken as ours and recorded.
+    let home = Home::new(dir.path().join("second-home"));
+    let mut e = engine(&home, &up.server.uri(), &dir.path().join("apps"), None);
+    Arc::get_mut(&mut e).unwrap().dirs.apps = PathBuf::from("/Applications");
+    let again = pull::pull(&e, &request(false), &Arc::default())
+        .await
+        .unwrap();
+    assert_eq!(again.notes, Vec::<String>::new());
+    assert!(again.placed[0].conflicts.is_empty(), "{:?}", again.placed);
+    assert_eq!(again.placed[0].cloned, 0);
+    assert_eq!(fs::read_to_string(&manifest_path).unwrap(), body);
+    assert_eq!(e.db().derived_files().unwrap().len(), 3);
+    let work: Vec<_> = fs::read_dir(e.dirs.ollama.join("blobs"))
+        .unwrap()
+        .flatten()
+        .filter(|f| f.file_name().to_string_lossy().starts_with('.'))
+        .collect();
+    assert!(work.is_empty(), "{work:?}");
+
+    // Another model's manifest under the same name stays as it is.
+    let other = body.replacen("sha256:", "sha256:0", 1);
+    let other = other.replacen(
+        &other[other.find("sha256:0").unwrap() + 7..][..65],
+        &"0".repeat(64),
+        1,
+    );
+    fs::write(&manifest_path, &other).unwrap();
+    let home = Home::new(dir.path().join("third-home"));
+    let mut e = engine(&home, &up.server.uri(), &dir.path().join("apps"), None);
+    Arc::get_mut(&mut e).unwrap().dirs.apps = PathBuf::from("/Applications");
+    let refused = pull::pull(&e, &request(false), &Arc::default())
+        .await
+        .unwrap();
+    assert!(
+        refused.placed[0].conflicts[0].contains("was not written by dedupd"),
+        "{:?}",
+        refused.placed
+    );
+    assert_eq!(fs::read_to_string(&manifest_path).unwrap(), other);
 }
 
 #[tokio::test]
@@ -501,4 +543,169 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
     let entries = dedupd_core::activity::recent(&home, 10);
     assert_eq!(entries.len(), 2);
     assert!(entries.iter().all(|e| !e.ok && e.text == plain));
+}
+
+/// A 4-bit model put into the store by hand, and a command that stands in
+/// for Ollama's tool: a shell script with this body.
+fn stored_model(
+    dir: &Path,
+    script: &str,
+) -> (
+    Arc<dedupd_core::engine::Engine>,
+    Home,
+    Vec<dedupd_core::place::Item>,
+    PathBuf,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    let home = Home::new(dir.join("home"));
+    let e = engine(&home, "http://127.0.0.1:9", &dir.join("apps"), None);
+    let weights = weights_file(dir, &layer("model.layers.0.proj", 4, 1));
+    let config = serde_json::to_vec(&json!({
+        "architectures": ["Qwen3_5ForConditionalGeneration"],
+        "model_type": "qwen3_5",
+        "quantization": {"group_size": 64, "bits": 4, "mode": "affine"},
+    }))
+    .unwrap();
+    let mut items = Vec::new();
+    for (name, body) in [("config.json", &config), ("model.safetensors", &weights)] {
+        let sha = sha256(body);
+        let tmp = e.store.tmp_path(name);
+        fs::write(&tmp, body).unwrap();
+        e.store.add_tmp(&tmp, &sha).unwrap();
+        e.db().upsert_blob(&sha, body.len() as u64, None).unwrap();
+        items.push(dedupd_core::place::Item {
+            rel_path: name.to_string(),
+            etag: sha.clone(),
+            sha256: sha,
+            size: body.len() as u64,
+        });
+    }
+    let command = dir.join("stand-in-for-ollama");
+    fs::write(&command, format!("#!/bin/sh\n{script}\n")).unwrap();
+    fs::set_permissions(&command, fs::Permissions::from_mode(0o755)).unwrap();
+    (e, home, items, command)
+}
+
+/// Place the stored model with the stand-in command.
+fn place_with(
+    e: &dedupd_core::engine::Engine,
+    items: &[dedupd_core::place::Item],
+    command: &Path,
+) -> anyhow::Result<Result<dedupd_core::place::Placed, ollama_mlx::NotPlaced>> {
+    let repo_id = e.db().upsert_repo(PROVIDER_HF, REPO).unwrap();
+    let dest = dedupd_core::place::Dest {
+        db: &e.db,
+        store: &e.store,
+        dirs: &e.dirs,
+        repo_id,
+        repo: REPO,
+    };
+    ollama_mlx::place(&dest, command, "latest", items)
+}
+
+/// Nothing was written into Ollama's folder, and nothing is left of the
+/// asking.
+fn nothing_is_left(e: &dedupd_core::engine::Engine, home: &Home) {
+    assert!(!e.dirs.ollama.join("manifests").exists());
+    assert!(e.db().placements().unwrap().is_empty());
+    let left: Vec<_> = fs::read_dir(home.tmp_dir()).unwrap().flatten().collect();
+    assert!(left.is_empty(), "{left:?}");
+}
+
+#[test]
+fn a_tool_that_fails_for_another_reason_than_the_model_is_trouble_and_is_told_little() {
+    let dir = tempfile::tempdir().unwrap();
+    // It says which settings it was started with, and fails.
+    let (e, home, items, command) = stored_model(
+        dir.path(),
+        "echo \"Error: no space left on device: $(env | cut -d= -f1 | sort | tr '\\n' ' ')\" >&2; exit 1",
+    );
+    let Err(ollama_mlx::NotPlaced::Trouble(why)) = place_with(&e, &items, &command).unwrap() else {
+        panic!("not trouble");
+    };
+    assert!(why.contains("no space left on device"), "{why}");
+    // Its folders and the address nothing listens on, and nothing of the
+    // process that asked: these tests run with cargo's settings around them.
+    for given in ["HOME", "OLLAMA_HOST", "OLLAMA_MODELS", "PATH", "TMPDIR"] {
+        assert!(
+            why.contains(&format!(" {given} ")),
+            "{given} is missing: {why}"
+        );
+    }
+    assert!(!why.contains("CARGO"), "{why}");
+    nothing_is_left(&e, &home);
+}
+
+#[test]
+fn a_tool_that_writes_no_manifest_is_a_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let (e, home, items, command) = stored_model(dir.path(), "exit 0");
+    let failed = place_with(&e, &items, &command).unwrap_err();
+    assert!(
+        failed.to_string().contains("wrote no manifest"),
+        "{failed:#}"
+    );
+    nothing_is_left(&e, &home);
+}
+
+#[test]
+fn an_answer_dedupd_cannot_follow_is_said_and_is_no_refusal_of_ollamas() {
+    let dir = tempfile::tempdir().unwrap();
+    // A manifest with no weights in it, written where Ollama writes one.
+    let (e, home, items, command) = stored_model(
+        dir.path(),
+        "at=\"$OLLAMA_MODELS/manifests/registry.ollama.ai/library/$2\"; mkdir -p \"$at\"; \\\n\
+         echo '{\"config\":{\"digest\":\"sha256:x\"},\"layers\":[]}' > \"$at/latest\"",
+    );
+    let Err(why) = place_with(&e, &items, &command).unwrap() else {
+        panic!("placed");
+    };
+    // Not `Ollama`, which is kept against Ollama's version: a later build
+    // of dedupd may know the names.
+    assert!(matches!(why, ollama_mlx::NotPlaced::Unknown(_)), "{why:?}");
+    assert!(
+        why.to_string().contains("dedupd does not know yet"),
+        "{why}"
+    );
+    nothing_is_left(&e, &home);
+}
+
+#[test]
+fn a_manifest_that_is_there_and_is_none_is_left_alone() {
+    let dir = tempfile::tempdir().unwrap();
+    // The tool is not asked at all.
+    let (e, _home, items, command) = stored_model(dir.path(), "exit 1");
+    let manifest = e
+        .dirs
+        .ollama
+        .join("manifests/hf.co")
+        .join(REPO)
+        .join("latest");
+    fs::create_dir_all(manifest.parent().unwrap()).unwrap();
+    fs::write(&manifest, "not a manifest").unwrap();
+    let placed = place_with(&e, &items, &command).unwrap().unwrap();
+    assert_eq!(placed.conflicts.len(), 1, "{:?}", placed.conflicts);
+    assert!(placed.conflicts[0].contains("was not written by dedupd"));
+    assert_eq!(fs::read_to_string(&manifest).unwrap(), "not a manifest");
+    assert!(!e.dirs.ollama.join("blobs").exists());
+}
+
+#[test]
+fn a_work_file_a_stopped_process_left_in_ollamas_folder_is_removed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (e, _home, _items, _command) = stored_model(dir.path(), "exit 1");
+    let blobs = e.dirs.ollama.join("blobs");
+    fs::create_dir_all(&blobs).unwrap();
+    let sha = "a".repeat(64);
+    // An id no process has, this process's own, and Ollama's own files.
+    let gone = blobs.join(format!(".dedupd-{sha}-0-4000000007-3"));
+    let ours = blobs.join(format!(".dedupd-{sha}-0-{}-3", std::process::id()));
+    let layer = blobs.join(format!("sha256-{sha}"));
+    let partial = blobs.join(format!("sha256-{sha}-partial"));
+    for path in [&gone, &ours, &layer, &partial] {
+        fs::write(path, b"x").unwrap();
+    }
+    ollama_mlx::clear_leftovers(&e.dirs);
+    assert!(!gone.exists());
+    assert!(ours.exists() && layer.exists() && partial.exists());
 }
