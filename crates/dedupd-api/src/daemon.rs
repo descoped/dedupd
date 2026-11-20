@@ -46,6 +46,7 @@ pub struct Repository {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct DaemonInfo {
     pub pid: u32,
+    /// Seconds since the epoch.
     pub started_at: i64,
     pub listen: String,
     pub executable: Option<String>,
@@ -168,6 +169,21 @@ pub enum Setting {
     SpeedLimit,
 }
 
+crate::all_variants!(
+    Setting: Listen,
+    HfEndpoint,
+    Archive,
+    BionicModels,
+    OllamaModels,
+    HfCache,
+    Reclaim,
+    SetEnv,
+    VerifyDays,
+    ScanInterval,
+    MaxConnections,
+    SpeedLimit,
+);
+
 impl Setting {
     /// The name in `config.toml`.
     pub const fn as_str(self) -> &'static str {
@@ -283,5 +299,6 @@ mod tests {
     fn a_setting_is_named_as_in_the_config_file() {
         let read: Setting = serde_json::from_str("\"max_connections\"").unwrap();
         assert_eq!(read.as_str(), "max_connections");
+        crate::same_words(&Setting::ALL, Setting::as_str);
     }
 }

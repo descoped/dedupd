@@ -10,12 +10,12 @@ use dedupd_api::activity::{ActivityEntry, ActivityList};
 use dedupd_api::app::{App, AppInfo, AppList};
 use dedupd_api::daemon::{
     DEFAULT_ADDRESS, DaemonSettings, DaemonStatus, Failure, LogTail, ScanResult, SettingChange,
-    StoreCheck,
+    Started, StoreCheck,
 };
 use dedupd_api::favorites::{FavoriteBody, Favorites};
 use dedupd_api::hub::{HubModel, SearchPage, SearchQuery};
 use dedupd_api::jobs::{
-    Cleared, Downloads, Enqueued, JobAction, JobDetail, JobKind, PullBody, PullResult,
+    Cleared, Downloads, Enqueued, JobAction, JobDetail, JobKind, JobRef, PullBody, PullResult,
 };
 use dedupd_api::library::{
     LibraryModel, Locations, ModelDetail, ModelList, RepoBody, UpstreamCheck,
@@ -53,6 +53,70 @@ pub enum ClientError {
     /// The answer was not what this client understands.
     #[error("unexpected answer from the daemon: {message}")]
     Protocol { message: String },
+    /// The address is not `host:port`, so nothing was asked.
+    #[error("{address} is not an address of the form host:port, such as 127.0.0.1:8642")]
+    BadAddress { address: String },
+}
+
+/// The sentence for an error, as the command line prints it. The app shows
+/// the same words, so they are written once.
+#[uniffi::export]
+pub fn error_message(error: ClientError) -> String {
+    error.to_string()
+}
+
+/// Whether `address` is where a daemon can be: `host:port`, with no
+/// scheme, no path and no name before the host. The one check for an
+/// address a person typed; every call makes it before it asks.
+#[uniffi::export]
+pub fn address_is_valid(address: String) -> bool {
+    checked(&address).is_ok()
+}
+
+fn checked(address: &str) -> Result<&str, ClientError> {
+    let bad = || ClientError::BadAddress {
+        address: address.to_string(),
+    };
+    let (host, port) = address.rsplit_once(':').ok_or_else(bad)?;
+    let name = |host: &str| {
+        !host.is_empty()
+            && host.len() <= 253
+            && host
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
+    };
+    let v6 = |host: &str| {
+        host.strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .is_some_and(|h| h.parse::<std::net::Ipv6Addr>().is_ok())
+    };
+    let port_ok = !port.is_empty()
+        && port.bytes().all(|b| b.is_ascii_digit())
+        && port.parse::<u16>().is_ok_and(|p| p != 0);
+    if (name(host) || v6(host)) && port_ok {
+        Ok(address)
+    } else {
+        Err(bad())
+    }
+}
+
+/// What a failed call means: a time limit is one sentence wherever it ran
+/// out, nothing listening is "not running", and an answer that is not
+/// HTTP, or too long, is an answer this client does not understand.
+fn failed(address: &str, e: ureq::Error) -> ClientError {
+    match e {
+        ureq::Error::Timeout(_) => ClientError::Failed {
+            message: "the daemon did not answer in time".into(),
+        },
+        ureq::Error::Io(_) | ureq::Error::ConnectionFailed | ureq::Error::HostNotFound => {
+            ClientError::NotRunning {
+                address: address.to_string(),
+            }
+        }
+        other => ClientError::Protocol {
+            message: other.to_string(),
+        },
+    }
 }
 
 pub(crate) fn agent(timeout: Option<Duration>) -> ureq::Agent {
@@ -72,21 +136,12 @@ fn finish<T: DeserializeOwned>(
     address: &str,
     sent: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
 ) -> Result<T, ClientError> {
-    let mut resp = sent.map_err(|e| match e {
-        ureq::Error::Timeout(_) => ClientError::Failed {
-            message: "the daemon did not answer in time".into(),
-        },
-        _ => ClientError::NotRunning {
-            address: address.to_string(),
-        },
-    })?;
+    let mut resp = sent.map_err(|e| failed(address, e))?;
     let status = resp.status().as_u16();
     let text = resp
         .body_mut()
         .read_to_string()
-        .map_err(|e| ClientError::Protocol {
-            message: e.to_string(),
-        })?;
+        .map_err(|e| failed(address, e))?;
     if !(200..300).contains(&status) {
         let message = serde_json::from_str::<Failure>(&text)
             .map(|e| e.error)
@@ -102,8 +157,9 @@ fn parse<T: DeserializeOwned>(text: &str) -> Result<T, ClientError> {
     })
 }
 
-pub(crate) fn url(address: &str, path: &str) -> String {
-    format!("http://{address}/dedupd/v1/{path}")
+/// The address of a control API call, for an address that is one.
+pub(crate) fn url(address: &str, path: &str) -> Result<String, ClientError> {
+    Ok(format!("http://{}/dedupd/v1/{path}", checked(address)?))
 }
 
 fn get<T: DeserializeOwned>(
@@ -111,7 +167,10 @@ fn get<T: DeserializeOwned>(
     path: &str,
     timeout: Duration,
 ) -> Result<T, ClientError> {
-    finish(address, agent(Some(timeout)).get(url(address, path)).call())
+    finish(
+        address,
+        agent(Some(timeout)).get(url(address, path)?).call(),
+    )
 }
 
 fn post<T: DeserializeOwned>(
@@ -121,7 +180,7 @@ fn post<T: DeserializeOwned>(
     timeout: Duration,
 ) -> Result<T, ClientError> {
     let sent = agent(Some(timeout))
-        .post(url(address, path))
+        .post(url(address, path)?)
         .send_json(body);
     finish(address, sent)
 }
@@ -164,7 +223,7 @@ pub fn pull(
     kind: JobKind,
 ) -> Result<PullResult, ClientError> {
     let body = pull_body(model, apps, include, offline, kind);
-    let sent = agent(None).post(url(&address, "pull")).send_json(&body);
+    let sent = agent(None).post(url(&address, "pull")?).send_json(&body);
     finish(&address, sent)
 }
 
@@ -172,7 +231,7 @@ pub fn pull(
 /// next pass.
 #[uniffi::export]
 pub fn scan(address: String) -> Result<ScanResult, ClientError> {
-    let sent = agent(None).post(url(&address, "scan")).send_empty();
+    let sent = agent(None).post(url(&address, "scan")?).send_empty();
     finish(&address, sent)
 }
 
@@ -309,7 +368,7 @@ pub fn enqueue(
 #[uniffi::export]
 pub fn download_action(address: String, id: i64, action: JobAction) -> Result<(), ClientError> {
     let path = format!("downloads/{id}/{}", action.as_str());
-    post::<serde_json::Value>(&address, &path, &serde_json::json!({}), QUICK).map(|_| ())
+    post::<JobRef>(&address, &path, &serde_json::json!({}), QUICK).map(|_| ())
 }
 
 /// Drop the finished and cancelled jobs from the list. Returns how many
@@ -329,7 +388,7 @@ pub fn check_upstream(address: String, repo: String) -> Result<UpstreamCheck, Cl
 /// Refused while an app still has files of it.
 #[uniffi::export]
 pub fn forget(address: String, repo: String) -> Result<(), ClientError> {
-    post::<serde_json::Value>(&address, "forget", &RepoBody { repo }, QUICK).map(|_| ())
+    post::<RepoBody>(&address, "forget", &RepoBody { repo }, QUICK).map(|_| ())
 }
 
 /// What taking `repo` out of `app` would delete; with `apply`, delete it.
@@ -367,7 +426,7 @@ pub fn archive_plan(address: String, repo: String) -> Result<ArchivePlan, Client
 #[uniffi::export]
 pub fn archive_model(address: String, repo: String) -> Result<(), ClientError> {
     let body = MoveBody { repo, apply: true };
-    post::<serde_json::Value>(&address, "archive", &body, PATIENT).map(|_| ())
+    post::<Started>(&address, "archive", &body, PATIENT).map(|_| ())
 }
 
 /// What restoring `repo` would copy back from the archive disk.
@@ -382,7 +441,7 @@ pub fn restore_plan(address: String, repo: String) -> Result<RestorePlan, Client
 #[uniffi::export]
 pub fn restore_model(address: String, repo: String) -> Result<(), ClientError> {
     let body = MoveBody { repo, apply: true };
-    post::<serde_json::Value>(&address, "restore", &body, PATIENT).map(|_| ())
+    post::<Started>(&address, "restore", &body, PATIENT).map(|_| ())
 }
 
 /// The archive or restore that is running, or the last one; `None` when
@@ -415,7 +474,7 @@ pub fn gc_apply(
 /// as hashing everything takes.
 #[uniffi::export]
 pub fn start_store_check(address: String) -> Result<(), ClientError> {
-    post::<serde_json::Value>(&address, "verify", &serde_json::json!({}), QUICK).map(|_| ())
+    post::<Started>(&address, "verify", &serde_json::json!({}), QUICK).map(|_| ())
 }
 
 /// The running check, or what the last one found.
@@ -439,7 +498,7 @@ pub fn update_settings(
 ) -> Result<DaemonSettings, ClientError> {
     let body: BTreeMap<_, _> = changes.into_iter().map(|c| (c.key, c.value)).collect();
     let sent = agent(Some(QUICK))
-        .put(url(&address, "config"))
+        .put(url(&address, "config")?)
         .send_json(&body);
     finish(&address, sent)
 }
@@ -453,5 +512,5 @@ pub fn log_tail(address: String, lines: u32) -> Result<LogTail, ClientError> {
 /// Have the daemon stop and start again, which makes it read its settings.
 #[uniffi::export]
 pub fn restart(address: String) -> Result<(), ClientError> {
-    post::<serde_json::Value>(&address, "restart", &serde_json::json!({}), QUICK).map(|_| ())
+    post::<Started>(&address, "restart", &serde_json::json!({}), QUICK).map(|_| ())
 }

@@ -13,6 +13,7 @@ struct SettingsView: View {
     /// half-typed address.
     @State private var addressDraft = ""
     @FocusState private var addressFocused: Bool
+    @State private var addressRefused = false
 
     var body: some View {
         @Bindable var settings = settings
@@ -36,6 +37,12 @@ struct SettingsView: View {
                     }
                     .onDisappear(perform: applyAddress)
                     .accessibilityIdentifier("settings-address")
+                if addressRefused {
+                    Text("That is not an address. Write it as host:port, for example \(settings.defaultAddress).")
+                        .font(.caption)
+                        .foregroundStyle(.orange)
+                        .accessibilityIdentifier("settings-address-refused")
+                }
                 Text("Leave empty for \(settings.defaultAddress). Change it only if the daemon listens somewhere else.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -94,7 +101,11 @@ struct SettingsView: View {
     /// Take the typed address into use. Following starts again through the
     /// change of `settings.address`.
     private func applyAddress() {
-        if settings.customAddress != addressDraft {
+        let typed = addressDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        // The client's own rule for an address; one that does not pass is
+        // not taken into use, and the field says why.
+        addressRefused = !typed.isEmpty && !addressIsValid(address: typed)
+        if !addressRefused, settings.customAddress != addressDraft {
             settings.customAddress = addressDraft
         }
     }

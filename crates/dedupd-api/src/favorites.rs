@@ -51,7 +51,7 @@ pub struct Favorites {
 
 /// Mark a model as a favorite, or no longer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+#[serde(deny_unknown_fields)]
 pub struct FavoriteBody {
     pub repo: String,
     pub favorite: bool,

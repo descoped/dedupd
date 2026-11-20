@@ -17,9 +17,9 @@ pub enum App {
     Hf,
 }
 
-impl App {
-    pub const ALL: [App; 3] = [App::Bionic, App::Ollama, App::Hf];
+crate::all_variants!(App: Bionic, Ollama, Hf);
 
+impl App {
     /// The app's short name, as the control API and the database write it.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -81,10 +81,13 @@ pub struct UnknownApp(pub String);
 
 impl std::fmt::Display for UnknownApp {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let names: Vec<&str> = App::ALL.iter().map(|app| app.as_str()).collect();
+        let (last, first) = names.split_last().expect("there are apps");
         write!(
             f,
-            "unknown app {}; use bionic, ollama or hf (also: mlx, llama.cpp)",
-            self.0
+            "unknown app {}; use {} or {last} (also: mlx, llama.cpp)",
+            self.0,
+            first.join(", ")
         )
     }
 }
@@ -117,6 +120,9 @@ mod tests {
             assert_eq!(json, format!("\"{}\"", app.as_str()));
         }
         assert_eq!("LM-Studio".parse::<App>(), Ok(App::Bionic));
-        assert!("gimp".parse::<App>().is_err());
+        assert_eq!(
+            "gimp".parse::<App>().unwrap_err().to_string(),
+            "unknown app gimp; use bionic, ollama or hf (also: mlx, llama.cpp)"
+        );
     }
 }

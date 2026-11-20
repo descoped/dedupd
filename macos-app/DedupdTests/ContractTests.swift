@@ -150,8 +150,20 @@ struct ContractTests {
         #expect(plan.deactivate.map(\.app) == [.bionic, .huggingFace])
         #expect((plan.files, plan.bytes, plan.copyFiles) == (2, 300_008, 0))
         #expect(plan.keep.isEmpty)
-        try await client.archive("org/Repo-GGUF", at: server.address)
-        try await client.restore("org/Repo-GGUF", at: server.address)
+
+        // Asked to do it, the daemon answers that it has started.
+        let started = Data(#"{"started":true}"#.utf8)
+        let doing = try await Self.daemon([
+            "POST /dedupd/v1/archive": .init(body: started),
+            "POST /dedupd/v1/restore": .init(body: started),
+        ])
+        defer { doing.stop() }
+        try await client.archive("org/Repo-GGUF", at: doing.address)
+        try await client.restore("org/Repo-GGUF", at: doing.address)
+        // An answer of another shape is not taken for a start.
+        await #expect(throws: ClientError.self) {
+            try await client.archive("org/Repo-GGUF", at: server.address)
+        }
 
         let address = server.address
         let back = try await Self.blocking { try DedupdClient.restorePlan(address: address, repo: "org/Repo-GGUF") }
