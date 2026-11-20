@@ -316,7 +316,13 @@ impl HubClient {
                 "{repo}@{revision} is not a model and a revision"
             )));
         }
-        let info_url = format!("{}/api/models/{repo}/revision/{revision}", self.endpoint);
+        // One segment of the address, as the provider's own client writes
+        // it: `refs/pr/3` goes as `refs%2Fpr%2F3`.
+        let info_url = format!(
+            "{}/api/models/{repo}/revision/{}",
+            self.endpoint,
+            dedupd_api::url::encode_component(revision)
+        );
         let info_json = self.get(&info_url, repo, auth).await?.text().await?;
         let info: serde_json::Value = serde_json::from_str(&info_json)
             .map_err(|e| HubError::Malformed(format!("model info: {e}")))?;

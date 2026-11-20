@@ -447,6 +447,55 @@ async fn the_hub_info_is_read_with_the_clients_own_token() {
 }
 
 #[tokio::test]
+async fn a_revision_with_a_slash_is_kept_and_answered_when_the_hub_is_away() {
+    let fx = fixture().await;
+    // As `huggingface_hub` writes `refs/pr/3` into the address, and as the
+    // daemon asks the provider for it.
+    let asked = format!("/api/models/{REPO}/revision/refs%2Fpr%2F3");
+    Mock::given(method("GET"))
+        .and(path(asked.as_str()))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "sha": COMMIT, "id": REPO, "gated": false, "private": false,
+        })))
+        .mount(&fx.upstream)
+        .await;
+    let get = || async {
+        let resp = fx
+            .http
+            .get(format!("{}{asked}", fx.base))
+            .send()
+            .await
+            .unwrap();
+        (resp.status().as_u16(), resp.json::<Value>().await.ok())
+    };
+    let (status, info) = get().await;
+    assert_eq!(status, 200);
+    assert_eq!(info.unwrap()["sha"], COMMIT);
+    // Kept, a moment after the answer, under its own name and not under
+    // the address's spelling of it.
+    let kept = || {
+        fx.server
+            .engine
+            .db()
+            .archived(dedupd_core::db::PROVIDER_HF, REPO, "refs/pr/3")
+            .unwrap()
+            .is_some()
+    };
+    for _ in 0..500 {
+        if kept() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    assert!(kept(), "the revision was not kept");
+
+    upstream_down(&fx).await;
+    let (status, info) = get().await;
+    assert_eq!(status, 200);
+    assert_eq!(info.unwrap()["sha"], COMMIT);
+}
+
+#[tokio::test]
 async fn hub_client_download_sequence_then_offline() {
     let fx = fixture().await;
     let weights_sha = sha256(&fx.weights);

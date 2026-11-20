@@ -96,16 +96,26 @@ impl Home {
 }
 
 /// Write `bytes` as the whole of `target`, in one step: to a temporary
-/// name beside it (with this process's id, so two processes do not share
-/// one), synced to the disk, then renamed. A reader sees the old file or
-/// the new one, never part of one, also after a power loss.
+/// name beside it, synced to the disk, then renamed. A reader sees the old
+/// file or the new one, never part of one, also after a power loss.
+///
+/// The temporary name carries this process's id and a count, so neither
+/// two processes nor two threads of one share it. It is named as a
+/// placement's temporary clone is, so `clone::clear_leftovers_beside`
+/// removes one a stopped process left.
 pub fn write_in_one_step(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
     use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static CALLS: AtomicU64 = AtomicU64::new(0);
     let name = target
         .file_name()
         .ok_or_else(|| std::io::Error::other("the file has no name"))?
         .to_string_lossy();
-    let tmp = target.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    let tmp = target.with_file_name(format!(
+        ".{name}.{}-{}.dedupd-tmp",
+        std::process::id(),
+        CALLS.fetch_add(1, Ordering::Relaxed)
+    ));
     let written = (|| {
         let mut file = std::fs::File::create(&tmp)?;
         file.write_all(bytes)?;
@@ -153,6 +163,26 @@ mod tests {
         write_in_one_step(&target, b"two").unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"two");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        // Many threads writing one file: each write is whole, none fails,
+        // and nothing is left beside it.
+        std::thread::scope(|scope| {
+            for i in 0..8u8 {
+                let target = &target;
+                scope.spawn(move || {
+                    for _ in 0..50 {
+                        write_in_one_step(target, &[b'a' + i; 4096]).unwrap();
+                    }
+                });
+            }
+        });
+        let last = std::fs::read(&target).unwrap();
+        assert!(last.len() == 4096 && last.iter().all(|b| *b == last[0]));
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        // What a stopped process left is cleared as a clone's is.
+        let left = dir.path().join(".favorites.json.4000000007-0.dedupd-tmp");
+        std::fs::write(&left, b"half").unwrap();
+        crate::clone::clear_leftovers_beside(&target);
+        assert!(!left.exists());
         assert!(process_is_alive(std::process::id()));
         assert!(!process_is_alive(4_000_000_000));
     }

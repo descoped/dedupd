@@ -114,9 +114,16 @@ pub fn sync(
     // The database lock is held only while the copy is written to the
     // internal disk. Writing it to the archive disk, which may be slow or
     // go away part of the way, comes after, with the lock given back.
-    let made = store.tmp_path(&format!("dedupd.sqlite.{}.backup", std::process::id()));
+    // Both names carry the process id: the daemon and a `dedupd backup`
+    // beside it each write their own, and `Store::clear_leftovers` removes
+    // what a stopped process left.
+    let made = store.tmp_path(&crate::store::db_copy_name(std::process::id()));
     let _ = fs::remove_file(&made);
-    let tmp = archive.root().join("dedupd.sqlite.tmp");
+    fs::create_dir_all(archive.tmp_dir())
+        .with_context(|| format!("creating {}", archive.tmp_dir().display()))?;
+    let tmp = archive
+        .tmp_dir()
+        .join(crate::store::db_copy_name(std::process::id()));
     let copied = (|| -> Result<()> {
         lock(db)
             .vacuum_into(&made)
@@ -124,8 +131,12 @@ pub fn sync(
         let _ = fs::remove_file(&tmp);
         fs::copy(&made, &tmp)
             .with_context(|| format!("copying the database to {}", tmp.display()))?;
+        // On the disk before it takes the place of the copy that is there:
+        // a disk pulled out a moment later still holds a whole database.
+        fs::File::open(&tmp)?.sync_all()?;
         fs::rename(&tmp, archive.db_path())
             .with_context(|| format!("putting {} in place", archive.db_path().display()))?;
+        fs::File::open(archive.root())?.sync_all()?;
         Ok(())
     })();
     let _ = fs::remove_file(&made);

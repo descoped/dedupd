@@ -352,6 +352,8 @@ pub fn place_ollama(
     if fs::read_to_string(&path).ok().as_deref() != Some(manifest_body) {
         let parent = path.parent().expect("manifest has a parent");
         fs::create_dir_all(parent)?;
+        // What a write that was cut off left in Ollama's folder.
+        crate::clone::clear_leftovers_beside(&path);
         crate::paths::write_in_one_step(&path, manifest_body.as_bytes())?;
     }
     Ok(out)

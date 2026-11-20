@@ -198,7 +198,7 @@ impl Store {
     /// Remove the half-made copies a process that stopped part of the way
     /// left in the temp folders, here and on the archive disk: a file
     /// cloned or copied into the store, copied back from the archive, or
-    /// copied to it. A copy that is still being written was written to a
+    /// copied to it, and a copy of the database on its way there. A copy that is still being written was written to a
     /// moment ago and is left alone, and so is one whose process still
     /// runs (a clone carries its source's time, so its age says nothing);
     /// partial downloads, which are continued, are never touched. Returns
@@ -333,8 +333,22 @@ fn is_leftover_copy(name: &str) -> bool {
     leftover_copy_of(name).is_some()
 }
 
+/// The name of a copy of the database on its way to the archive disk,
+/// made by the process `pid`: in the temp folder here, and in the
+/// archive's.
+pub(crate) fn db_copy_name(pid: u32) -> String {
+    format!("dedupd.sqlite.{pid}.backup")
+}
+
 /// The id of the process that made a half-made copy, when `name` is one.
 fn leftover_copy_of(name: &str) -> Option<u32> {
+    if let Some(pid) = name
+        .strip_prefix("dedupd.sqlite.")
+        .and_then(|rest| rest.strip_suffix(".backup"))
+    {
+        return (!pid.is_empty() && pid.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| pid.parse().unwrap_or(0));
+    }
     let (sha, rest) = name.split_once('.')?;
     let pid = rest.strip_prefix("restore.").unwrap_or(rest);
     let named_so = sha.len() == 64
@@ -390,6 +404,8 @@ mod tests {
         let sha = "a".repeat(64);
         assert!(is_leftover_copy(&format!("{sha}.123")));
         assert!(is_leftover_copy(&format!("{sha}.restore.123")));
+        assert!(is_leftover_copy(&db_copy_name(123)));
+        assert!(!is_leftover_copy("dedupd.sqlite"));
         assert!(!is_leftover_copy(&format!("{sha}.part")));
         assert!(!is_leftover_copy(&format!("{sha}.asm")));
         assert!(!is_leftover_copy("ollama-asked-1-2"));

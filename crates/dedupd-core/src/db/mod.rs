@@ -389,6 +389,11 @@ impl Db {
     }
 
     /// Add a job to the download queue and return its id.
+    ///
+    /// The row names no model until the queue saves the job into it, and
+    /// `has_unfinished_job` fails on such a row. The two never meet: the
+    /// queue adds a job and a move starts under one lock of the daemon
+    /// (`Server::starting`), and the command line adds no jobs.
     pub fn insert_download(&self, state: &str) -> Result<i64> {
         self.conn.execute(
             "INSERT INTO downloads (state, job_json, updated_at) VALUES (?1, '{}', ?2)",

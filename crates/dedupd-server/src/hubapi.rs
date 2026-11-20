@@ -67,7 +67,12 @@ impl Server {
     /// Find out what `repo@rev` contains: from upstream when it answers, from
     /// the archive when it cannot or when the repository is gone. `None` means
     /// dedupd has nothing to say and the request should be passed through.
+    ///
+    /// `rev` is the revision as the request's path has it: one segment,
+    /// in which `huggingface_hub` writes `refs/pr/3` as `refs%2Fpr%2F3`.
+    /// It is decoded here, once, for every route.
     pub(crate) async fn revision(&self, repo: &str, rev: &str, auth: Option<&str>) -> Option<Rev> {
+        let rev = &decode_path(rev);
         let archived = self.archived(repo, rev);
         let open = archived.as_ref().is_some_and(|s| !restricted(&s.info_json));
         // A commit never changes; a branch is trusted for a short while.
