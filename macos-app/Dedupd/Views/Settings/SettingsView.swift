@@ -7,7 +7,6 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(DaemonStore.self) private var daemon
-    @Environment(ServiceStore.self) private var service
     /// The address as it is being typed. It becomes the setting on Return
     /// and when the field is left, so the app does not try to reach every
     /// half-typed address.
@@ -42,12 +41,12 @@ struct SettingsView: View {
                     .onDisappear(perform: applyAddress)
                     .accessibilityIdentifier("settings-address")
                 if addressRefused {
-                    Text("That is not an address. Write it as host:port, for example \(settings.defaultAddress).")
+                    Text("That is not an address of this Mac. Write it as host:port, for example \(settings.defaultAddress).")
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .accessibilityIdentifier("settings-address-refused")
                 }
-                Text("Leave empty for \(settings.defaultAddress). Change it only if the daemon listens somewhere else.")
+                Text("Leave empty for \(settings.defaultAddress). Change it only if the daemon listens on another port.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 LabeledContent("State", value: daemon.summary)
@@ -87,7 +86,7 @@ struct SettingsView: View {
             }
             Section("General") {
                 Toggle("Tell me when a download is done or needs me", isOn: $settings.notifications)
-                Toggle("Open this app at login", isOn: startsAtLogin)
+                LoginItemToggle()
             }
         }
         .formStyle(.grouped)
@@ -95,9 +94,6 @@ struct SettingsView: View {
         .fixedSize(horizontal: false, vertical: true)
         .onChange(of: settings.address) {
             daemon.start()
-        }
-        .task {
-            await service.loadAgent()
         }
         .modifier(MainWindowOpener())
     }
@@ -119,14 +115,6 @@ struct SettingsView: View {
             settings.apps(for: format, known: daemon.apps).contains(app)
         } set: { enabled in
             settings.setApp(app, for: format, to: enabled, known: daemon.apps)
-        }
-    }
-
-    private var startsAtLogin: Binding<Bool> {
-        Binding {
-            service.startsAtLogin
-        } set: { enabled in
-            service.setStartsAtLogin(enabled)
         }
     }
 }

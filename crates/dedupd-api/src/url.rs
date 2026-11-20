@@ -1,6 +1,19 @@
 //! Percent-encoding, as the control API, the Hub API and the provider's
 //! URLs use it: one set of rules for a path and one for a query.
 
+/// Whether the address is one of this Mac itself: `127.0.0.1`, `[::1]` or
+/// `localhost`, with a port. The daemon listens nowhere else and the client
+/// asks nowhere else: the control API asks for no password, removes files
+/// and uses the owner's token, so it is not put on a network.
+pub fn is_loopback(address: &str) -> bool {
+    if let Ok(parsed) = address.parse::<std::net::SocketAddr>() {
+        return parsed.ip().is_loopback();
+    }
+    address
+        .strip_prefix("localhost:")
+        .is_some_and(|port| port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok())
+}
+
 /// The bytes that are never encoded (RFC 3986's unreserved characters).
 fn unreserved(b: u8) -> bool {
     b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~')

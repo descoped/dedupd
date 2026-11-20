@@ -85,47 +85,14 @@ struct StorageView: View {
     }
 }
 
-/// A titled box on the Storage and Daemon screens.
-struct Card<Content: View>: View {
-    let title: String
-    var note: String?
-    @ViewBuilder var content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title)
-                    .font(.headline)
-                    .accessibilityAddTraits(.isHeader)
-                if let note {
-                    Text(note)
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            content
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(.background.secondary, in: .rect(cornerRadius: 10))
-        .overlay {
-            RoundedRectangle(cornerRadius: 10)
-                .strokeBorder(.separator)
-        }
-    }
-}
-
 /// The internal disk: how much the models take, and how much of that the
 /// apps would take again without sharing.
 private struct VolumeCard: View {
     let locations: Locations
 
-    private var apps: UInt64 { locations.apps.map(\.bytes).reduce(0, +) }
-    private var shared: UInt64 { locations.apps.map(\.sharedBytes).reduce(0, +) }
-    /// What is really on the disk for models: the store, plus what the apps
-    /// hold that is not a clone of it.
-    private var used: UInt64 { locations.store.bytes + (apps - min(apps, shared)) }
+    private var apps: UInt64 { locations.appBytes }
+    private var shared: UInt64 { locations.sharedBytes }
+    private var used: UInt64 { locations.modelBytes }
 
     var body: some View {
         Card(title: "This Mac's disk") {
@@ -227,7 +194,7 @@ private struct LocationRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .textSelection(.enabled)
-                Text(note)
+                Text(location.note)
                     .font(.caption)
                     .foregroundStyle(location.present ? Color.secondary : .orange)
             }
@@ -247,24 +214,5 @@ private struct LocationRow: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("location-\(location.id)")
-    }
-
-    private var note: String {
-        if !location.present {
-            return location.kind == .archive ? "The disk is not attached" : "The folder is not there"
-        }
-        switch location.kind {
-        case .store:
-            return "What the apps share"
-        case .archive:
-            return "The second copy, on another disk"
-        case .app:
-            if location.bytes == 0 {
-                return "Empty"
-            }
-            return location.sharedBytes >= location.bytes
-                ? "All of it shared with the store"
-                : "\(ByteFormat.string(location.bytes - location.sharedBytes)) not shared yet"
-        }
     }
 }

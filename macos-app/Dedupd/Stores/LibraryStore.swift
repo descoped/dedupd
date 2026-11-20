@@ -2,30 +2,6 @@ import DedupdClient
 import Foundation
 import Observation
 
-/// Something that is loaded from the daemon and may fail.
-enum Loaded<Value: Equatable & Sendable>: Equatable, Sendable {
-    case idle
-    case loading
-    case ready(Value)
-    case failed(String)
-
-    var value: Value? {
-        if case let .ready(value) = self {
-            return value
-        }
-        return nil
-    }
-
-    var isLoading: Bool { self == .loading }
-
-    var failure: String? {
-        if case let .failed(message) = self {
-            return message
-        }
-        return nil
-    }
-}
-
 /// The models on this Mac: the list, what the owner filters it by, and the
 /// details of the one they selected.
 @MainActor
@@ -57,7 +33,10 @@ final class LibraryStore {
     private(set) var detail: Loaded<ModelDetail> = .idle
     /// The answer to the last "check for a newer version".
     private(set) var upstream: UpstreamCheck?
-    private(set) var isChecking = false
+    /// The models Hugging Face is being asked about.
+    private var checking: Set<String> = []
+    /// The selected model is being asked about.
+    var isChecking: Bool { selected.map { checking.contains($0.repo) } ?? false }
     /// What removing the selected model from an app would delete; set while
     /// the owner is asked to confirm.
     var removal: UnplacePlan?
@@ -73,9 +52,29 @@ final class LibraryStore {
     /// The last answer for each model looked at, by its id, until the
     /// library changes.
     @ObservationIgnored private var seen: [String: ModelDetail] = [:]
+    /// A model another screen asked for by name before the list was read;
+    /// it is selected when the list has it.
+    @ObservationIgnored private var wanted: String?
 
     init(daemon: DaemonStore) {
         self.daemon = daemon
+        daemon.whenAddressChanges { [weak self] in self?.forgetDaemon() }
+    }
+
+    /// The app turned to another daemon: nothing of the old one stays, and
+    /// what it still answers is dropped.
+    private func forgetDaemon() {
+        listGeneration += 1
+        detailGeneration += 1
+        models = []
+        hasLoaded = false
+        failure = nil
+        seen = [:]
+        wanted = nil
+        selection = nil
+        removal = nil
+        archiving = nil
+        checking = []
     }
 
     // MARK: - The list
@@ -101,10 +100,15 @@ final class LibraryStore {
         models.first { $0.id == selection }
     }
 
-    /// Select a model by its name, as another screen knows it. The list may
-    /// not have been read yet; the id then follows the list's rule.
+    /// Select a model by its name, as another screen knows it. When the
+    /// list has not been read yet, the model is selected once it has.
     func select(repo: String) {
-        selection = models.first { $0.repo == repo }?.id ?? "hf/\(repo)"
+        if let model = models.first(where: { $0.repo == repo }) {
+            wanted = nil
+            selection = model.id
+        } else {
+            wanted = repo
+        }
     }
 
     /// "5 models · 290.12 GB", or how many of them the filter leaves.
@@ -142,6 +146,12 @@ final class LibraryStore {
             failure = describe(error)
         }
         hasLoaded = true
+        if let wanted {
+            self.wanted = nil
+            if let model = models.first(where: { $0.repo == wanted }) {
+                selection = model.id
+            }
+        }
         if selection != nil, selected == nil {
             selection = nil
         }
@@ -180,12 +190,12 @@ final class LibraryStore {
 
     /// Ask Hugging Face whether the model changed or is gone.
     func checkUpstream() async {
-        guard let model = selected, !isChecking else {
+        guard let model = selected, !checking.contains(model.repo) else {
             return
         }
-        isChecking = true
+        checking.insert(model.repo)
         let answer = await daemon.attempt { client, address in try await client.checkUpstream(model.repo, at: address) }
-        isChecking = false
+        checking.remove(model.repo)
         if selected?.repo == model.repo {
             upstream = answer
         }
@@ -210,8 +220,13 @@ final class LibraryStore {
         guard let model = selected else {
             return
         }
-        removal = await daemon.attempt { client, address in
+        let plan = await daemon.attempt { client, address in
             try await client.unplace(model.repo, app: app, paths: nil, apply: false, at: address)
+        }
+        // The owner may have gone on to another model meanwhile; a sheet
+        // for this one is not put over that one.
+        if selected?.repo == model.repo {
+            removal = plan
         }
     }
 
@@ -248,8 +263,11 @@ final class LibraryStore {
         guard let model = selected else {
             return
         }
-        archiving = await daemon.attempt { client, address in
+        let plan = await daemon.attempt { client, address in
             try await client.archivePlan(model.repo, at: address)
+        }
+        if selected?.repo == model.repo {
+            archiving = plan
         }
     }
 

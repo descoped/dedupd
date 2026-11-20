@@ -46,18 +46,9 @@ const DEFAULT_VERIFY_DAYS: u64 = 7;
 /// otherwise.
 const DEFAULT_SCAN_INTERVAL: u64 = 300;
 
-/// Whether the address is one of this Mac itself: `127.0.0.1`, `[::1]` or
-/// `localhost`, with a port. The daemon listens nowhere else: its control
-/// API asks for no password, removes files and uses the owner's token, so
-/// it is not put on a network.
-pub fn is_loopback(address: &str) -> bool {
-    if let Ok(parsed) = address.parse::<std::net::SocketAddr>() {
-        return parsed.ip().is_loopback();
-    }
-    address
-        .strip_prefix("localhost:")
-        .is_some_and(|port| port.parse::<u16>().is_ok())
-}
+/// Whether the address is one of this Mac itself; the rule the client
+/// checks an address with too.
+pub use dedupd_api::url::is_loopback;
 
 /// Why an address that is not this Mac's own is refused, in a sentence.
 pub fn not_loopback(address: &str) -> String {

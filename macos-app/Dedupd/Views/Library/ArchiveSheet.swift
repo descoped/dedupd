@@ -9,7 +9,7 @@ struct ArchiveSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Archive \(plan.repo)?")
+            Text(verbatim: "Archive \(plan.repo)?")
                 .font(.headline)
             if plan.isEmpty {
                 Text("Nothing would change: no app has the model, and none of its files on the internal disk can go.")
@@ -38,11 +38,11 @@ struct ArchiveSheet: View {
                             .font(.caption.weight(.semibold))
                         ForEach(plan.deactivate, id: \.app) { step in
                             ForEach(step.keep, id: \.path) { file in
-                                Text("\(file.path): \(file.why)")
+                                Text(verbatim: "\(file.path): \(file.why)")
                             }
                         }
                         ForEach(plan.keep, id: \.sha256) { file in
-                            Text("\(ByteFormat.string(file.size)) on the internal disk (\(file.sha256.prefix(12))): \(file.why)")
+                            Text(verbatim: "\(ByteFormat.string(file.size)) on the internal disk (\(file.sha256.prefix(12))): \(file.why)")
                         }
                     }
                     .font(.caption)

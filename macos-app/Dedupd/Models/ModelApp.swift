@@ -50,11 +50,12 @@ extension ModelApp: @retroactive Identifiable {
         }
     }
 
-    /// Which tools read from this place.
+    /// Which tools read from this place. What each takes is the daemon's
+    /// to say (the app profiles), not this text's.
     var detail: String {
         switch self {
         case .bionic: "Bionic and LM Studio"
-        case .ollama: "One GGUF file per model"
+        case .ollama: "Ollama"
         case .huggingFace: "MLX tools, llama.cpp, hf"
         }
     }

@@ -8,14 +8,14 @@ struct LibraryFiles: View {
     var body: some View {
         ForEach(detail.revisions, id: \.commit) { revision in
             InspectorSection(title: "Revision \(revision.commit.prefix(12))") {
-                Text(Self.caption(revision))
+                Text(revision.caption)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 ForEach(revision.files, id: \.path) { file in
                     FileRow(
                         path: file.path,
                         size: file.size,
-                        note: Self.note(file),
+                        note: file.note,
                         symbol: file.stored ? "internaldrive" : (file.archived ? "externaldrive" : "icloud"),
                         digest: file.sha256
                     )
@@ -32,20 +32,6 @@ struct LibraryFiles: View {
                 }
             }
         }
-    }
-
-    private static func caption(_ revision: Revision) -> String {
-        var parts = [ByteFormat.string(revision.bytes), "added \(TimeFormat.full(TimeFormat.date(epoch: revision.fetchedAt)))"]
-        if !revision.refs.isEmpty {
-            parts.insert(revision.refs.joined(separator: ", "), at: 0)
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    private static func note(_ file: RevisionFile) -> String {
-        let place = file.stored ? "stored" : (file.archived ? "on the archive disk only" : "not downloaded")
-        let apps = file.apps.map(\.shortTitle)
-        return apps.isEmpty ? place : "\(place) · in \(ListFormatter.localizedString(byJoining: apps))"
     }
 }
 
@@ -121,20 +107,11 @@ private struct PlacementGroup: View {
                         .truncationMode(.middle)
                         .textSelection(.enabled)
                     Spacer(minLength: 4)
-                    Text(Self.state(file))
+                    Text(file.stateWords)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
-        }
-    }
-
-    private static func state(_ file: Placement) -> String {
-        switch file.verifyState {
-        case .verified: "verified"
-        case .mismatch: "differs"
-        case .notUpstream: "not on Hugging Face"
-        case .unchecked: "not checked"
         }
     }
 }
@@ -148,16 +125,16 @@ struct RemovalSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Deactivate \(plan.repo) in \(plan.app.title)?")
+            Text(verbatim: "Deactivate \(plan.repo) in \(plan.app.title)?")
                 .font(.headline)
-            Text(summary)
+            Text(plan.summary)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(plan.remove, id: \.path) { file in
                         HStack(alignment: .firstTextBaseline) {
-                            Text(file.path)
+                            Text(verbatim: file.path)
                                 .font(.caption.monospaced())
                                 .lineLimit(2)
                                 .truncationMode(.middle)
@@ -169,7 +146,7 @@ struct RemovalSheet: View {
                         }
                     }
                     ForEach(plan.links, id: \.self) { link in
-                        Text(link)
+                        Text(verbatim: link)
                             .font(.caption.monospaced())
                             .lineLimit(2)
                             .truncationMode(.middle)
@@ -179,7 +156,7 @@ struct RemovalSheet: View {
                             .font(.caption.weight(.semibold))
                             .padding(.top, 6)
                         ForEach(plan.keep, id: \.path) { file in
-                            Text("\(file.path): \(file.why)")
+                            Text(verbatim: "\(file.path): \(file.why)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -205,14 +182,5 @@ struct RemovalSheet: View {
         }
         .padding(20)
         .frame(width: 520)
-    }
-
-    private var summary: String {
-        let count = UInt64(plan.remove.count)
-        if count == 0, plan.links.isEmpty {
-            return "Nothing can be removed: every file is still needed or has no stored copy."
-        }
-        return "\(ByteFormat.files(count)), \(ByteFormat.string(plan.bytes)), are deleted from the app's folder. "
-            + "The stored copy stays, so the model can be activated again without downloading."
     }
 }

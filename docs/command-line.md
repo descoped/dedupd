@@ -59,7 +59,7 @@ The apps are named `bionic`, `ollama` and `hf` (the Hugging Face cache; `mlx` an
 | Command | What it does |
 |---|---|
 | `dedupd forget <repo>` | Say what dropping a model from the library would drop; `--apply` drops its records, so `gc` can remove its files. Refused while an app holds the model. |
-| `dedupd gc` | Show stored files nothing refers to; `--apply` removes them. `--offload` also lists local copies of files that are on the archive disk and in no app. |
+| `dedupd gc` | Show stored files nothing refers to; `--apply` removes them. `--offload` also lists local copies of files that are on the archive disk and in no app, each with the model and path it is kept under where a kept model lists it. |
 
 ## The daemon
 

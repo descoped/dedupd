@@ -53,6 +53,8 @@ struct ModelAddressTests {
             "dedupd://huggingface.co/org/repo",
             // A path that climbs out of the repository.
             "https://huggingface.co/org/..",
+            "https://huggingface.co/good/model/../../other/thing",
+            "https://huggingface.co/good/model/./tree/main",
             "https://huggingface.co/../../etc/passwd",
             "https://huggingface.co/org/%2e%2e",
             "https://huggingface.co/org/repo%2F..%2F..",
@@ -118,6 +120,19 @@ struct ModelAddressTests {
         #expect(ModelSpec.typed("org/repo") == .model("org/repo"))
         #expect(ModelSpec.typed("org/repo:Q4_K_M") == .model("org/repo"))
         #expect(ModelSpec.typed("org/repo@refs/pr/1") == .model("org/repo"))
+        // The name's own rule, also in front of a quantization.
+        #expect(ModelSpec.typed("_org/repo") == .model("_org/repo"))
+        #expect(ModelSpec.typed("_org/repo:Q4_K_M") == .model("_org/repo"))
+        #expect(ModelSpec.typed("www.hf.co/org/repo") == .model("org/repo"))
+        if case .refused = ModelSpec.typed("www.hf.co/org") {} else {
+            Issue.record("half an address was taken for a model")
+        }
+        // Few characters as a person sees them, and megabytes underneath.
+        let marks = String(repeating: "a" + String(repeating: "\u{0301}", count: 50), count: 100)
+        #expect(marks.count == 100)
+        if case .refused = ModelSpec.typed(marks) {} else {
+            Issue.record("text of \(marks.utf8.count) bytes was searched for")
+        }
         #expect(ModelSpec.typed(" https://hf.co/org/repo?download=true ") == .model("org/repo"))
     }
 

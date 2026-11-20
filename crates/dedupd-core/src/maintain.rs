@@ -9,7 +9,7 @@ use crate::store::{Fingerprint, Store};
 use anyhow::{Context, Result, bail};
 use dedupd_api::app::App;
 use dedupd_api::moves::{KeptFile, PlannedFile, StoredFile};
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -235,6 +235,9 @@ pub struct GcPlan {
     /// Stored files that are safely on the archive disk and that no app
     /// uses. Removing the local copy frees space; they come back on demand.
     pub offload: Vec<BlobRow>,
+    /// What a kept model calls a listed file, by the file's sha256:
+    /// `org/repo: path`. An orphan has no name: no kept model lists it.
+    pub names: BTreeMap<String, String>,
 }
 
 impl GcPlan {
@@ -246,6 +249,7 @@ impl GcPlan {
                     sha256: b.sha256.clone(),
                     size: b.size,
                     git_oid: b.git_oid.clone(),
+                    known_as: self.names.get(&b.sha256).cloned(),
                 })
                 .collect()
         };
@@ -264,17 +268,18 @@ impl GcPlan {
 pub fn gc_plan(db: &Mutex<Db>, store: &Store, offload: bool) -> Result<GcPlan> {
     // The rows are read under the database lock; the disks, of which the
     // archive may be slow to answer, are asked after it is given back.
-    let (orphans, unplaced) = {
+    let (orphans, unplaced, listed) = {
         let db = lock(db);
-        let unplaced = match offload && store.archive().is_some() {
-            true => db.unplaced_blobs()?,
-            false => Vec::new(),
+        let (unplaced, listed) = match offload && store.archive().is_some() {
+            true => (db.unplaced_blobs()?, db.listed_names()?),
+            false => (Vec::new(), BTreeMap::new()),
         };
-        (db.unreferenced_blobs()?, unplaced)
+        (db.unreferenced_blobs()?, unplaced, listed)
     };
     let mut plan = GcPlan {
         orphans,
         offload: Vec::new(),
+        names: BTreeMap::new(),
     };
     if offload && let Some(archive) = store.archive() {
         let orphans: HashSet<&str> = plan.orphans.iter().map(|o| o.sha256.as_str()).collect();
@@ -284,6 +289,16 @@ pub fn gc_plan(db: &Mutex<Db>, store: &Store, offload: bool) -> Result<GcPlan> {
             .filter(|b| store.contains(&b.sha256))
             .filter(|b| fs::metadata(archive.blob_path(&b.sha256)).is_ok_and(|m| m.len() == b.size))
             .collect();
+        // A revision lists a large file by its sha256 and a small one by
+        // its git id.
+        for blob in &plan.offload {
+            let name = listed
+                .get(&blob.sha256)
+                .or_else(|| blob.git_oid.as_ref().and_then(|oid| listed.get(oid)));
+            if let Some(name) = name {
+                plan.names.insert(blob.sha256.clone(), name.clone());
+            }
+        }
     }
     Ok(plan)
 }

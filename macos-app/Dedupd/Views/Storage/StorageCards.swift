@@ -119,10 +119,13 @@ private struct CleanUpSheet: View {
                 .padding(.top, 4)
             ForEach(files, id: \.sha256) { file in
                 HStack {
-                    Text(file.sha256)
-                        .font(.caption.monospaced())
+                    // What a kept model calls the file, where the daemon
+                    // knows it; the digest otherwise, and always on hover.
+                    Text(verbatim: file.knownAs ?? file.sha256)
+                        .font(file.knownAs == nil ? .caption.monospaced() : .caption)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                        .help("sha256 \(file.sha256)")
                     Spacer(minLength: 8)
                     Text(ByteFormat.string(file.size))
                         .font(.caption)
@@ -173,7 +176,9 @@ struct StoreCheckCard: View {
             HStack(spacing: 8) {
                 ProgressView()
                     .controlSize(.small)
-                Text("Checking: \(ByteFormat.files(check.checked)) so far, \(ByteFormat.string(check.bytes))")
+                // No count: the screen is told when the check starts and
+                // ends, not how far it is in between.
+                Text("Checking every stored file…")
             }
         } else if let finished = check.finishedAt {
             let fine = check.damaged.isEmpty && check.missing.isEmpty && check.error == nil
@@ -206,12 +211,12 @@ struct StoreCheckCard: View {
             FailureLabel(message: error)
         }
         ForEach(check.damaged, id: \.self) { digest in
-            Text("Damaged: \(digest)")
+            Text(verbatim: "Damaged: \(digest)")
                 .font(.caption.monospaced())
                 .textSelection(.enabled)
         }
         ForEach(check.missing, id: \.self) { digest in
-            Text("Missing: \(digest)")
+            Text(verbatim: "Missing: \(digest)")
                 .font(.caption.monospaced())
                 .textSelection(.enabled)
         }

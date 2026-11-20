@@ -71,11 +71,15 @@ pub fn cmd_verify(o: &Opened, archive: bool, jobs: usize) -> Result<()> {
 }
 
 /// One list of a gc plan: what it is, how much, then each file.
-fn print_blobs(title: &str, blobs: &[BlobRow]) {
+fn print_blobs(title: &str, plan: &maintain::GcPlan, blobs: &[BlobRow]) {
     let total: u64 = blobs.iter().map(|b| b.size).sum();
     println!("{title}: {} files, {}", blobs.len(), human(total));
     for b in blobs {
-        println!("  {:>10}  {}", human(b.size), b.sha256);
+        // What a kept model calls the file, where one lists it.
+        match plan.names.get(&b.sha256) {
+            Some(name) => println!("  {:>10}  {}  {name}", human(b.size), b.sha256),
+            None => println!("  {:>10}  {}", human(b.size), b.sha256),
+        }
     }
 }
 
@@ -83,11 +87,13 @@ pub fn cmd_gc(o: &Opened, offload: bool, apply: bool) -> Result<()> {
     let plan = maintain::gc_plan(&o.engine.db, &o.engine.store, offload)?;
     print_blobs(
         "Not referred to by any model in the library or app file",
+        &plan,
         &plan.orphans,
     );
     if offload {
         print_blobs(
             "On the archive disk and in no app (local copy can go)",
+            &plan,
             &plan.offload,
         );
     }

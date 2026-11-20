@@ -17,6 +17,13 @@ struct DiscoverView: View {
         var revision: Int
     }
 
+    /// What makes the rows' "Downloading" and "In Bionic" worth reading
+    /// again: a change on this Mac, or another set of downloads under way.
+    private struct LocalKey: Equatable {
+        var revision: Int
+        var downloading: [String]
+    }
+
     var body: some View {
         @Bindable var discover = discover
         content
@@ -47,6 +54,9 @@ struct DiscoverView: View {
             }
             .task(id: DetailKey(selection: discover.selection, revision: daemon.revision)) {
                 await discover.loadDetail(quietly: true)
+            }
+            .task(id: LocalKey(revision: daemon.revision, downloading: daemon.activeJobs.map(\.repo))) {
+                await discover.refreshLocal()
             }
             .onChange(of: [discover.format, discover.task, discover.sort.title]) {
                 Task { await discover.search() }
@@ -111,14 +121,14 @@ struct DiscoverView: View {
             ContentUnavailableView(
                 "Not a model dedupd can open",
                 systemImage: "questionmark.circle",
-                description: Text(notice)
+                description: Text(verbatim: notice)
             )
             .accessibilityIdentifier("discover-notice")
         } else if discover.hits.isEmpty, discover.selection != nil {
             ContentUnavailableView(
                 "One model, by name",
                 systemImage: "arrow.right.circle",
-                description: Text("The inspector shows \(discover.selection ?? ""). Clear the search field to list models again.")
+                description: Text(verbatim: "The inspector shows \(discover.selection ?? ""). Clear the search field to list models again.")
             )
         } else if discover.hits.isEmpty, discover.hasSearched, !discover.isSearching {
             ContentUnavailableView.search(text: discover.text)
@@ -206,7 +216,9 @@ struct DiscoverView: View {
                 Button("Copy Name") {
                     Pasteboard.copy(repo)
                 }
-                Link("Show on Hugging Face", destination: HuggingFace.page(repo))
+                if let page = HuggingFace.page(repo) {
+                    Link("Show on Hugging Face", destination: page)
+                }
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {

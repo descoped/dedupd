@@ -6,6 +6,7 @@ import SwiftUI
 struct MenuPanel: View {
     @Environment(DaemonStore.self) private var daemon
     @Environment(\.openWindow) private var openWindow
+    @Environment(WindowControl.self) private var windows
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -56,7 +57,7 @@ struct MenuPanel: View {
     private var notRunning: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(
-                daemon.isOtherBuild
+                verbatim: daemon.isOtherBuild
                     ? "The daemon at \(daemon.address) is another build of dedupd. Update it on the Daemon screen."
                     : "No dedupd daemon answers at \(daemon.address). Your models are untouched; the apps keep using them."
             )
@@ -142,8 +143,8 @@ struct MenuPanel: View {
     }
 
     private func open(_ pane: Pane?) {
-        AppEnvironment.shared.openMainWindow = { openWindow(id: MainWindow.id) }
-        AppEnvironment.shared.showMainWindow(pane)
+        windows.open = { openWindow(id: MainWindow.id) }
+        windows.show(pane)
     }
 }
 

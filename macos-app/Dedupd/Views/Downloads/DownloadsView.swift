@@ -5,7 +5,6 @@ import SwiftUI
 /// and how hard Hugging Face is being asked.
 struct DownloadsView: View {
     @Environment(DaemonStore.self) private var daemon
-    @Environment(ServiceStore.self) private var service
     @Environment(Navigation.self) private var navigation
     @State private var selection: Job.ID?
     @State private var showsInspector = true
@@ -46,7 +45,7 @@ struct DownloadsView: View {
             (daemon.downloads?.governor.speedLimit ?? 0) == limit
         } set: { chosen in
             if chosen {
-                Task { await service.update([SettingChange(key: .speedLimit, value: .number(value: limit))]) }
+                Task { await daemon.setSpeedLimit(limit) }
             }
         }
     }
@@ -109,7 +108,7 @@ struct DownloadRow: View {
                         .controlSize(.small)
                         .tint(job.state == .paused ? .secondary : .accentColor)
                 }
-                Text(line)
+                Text(job.line)
                     .font(.caption)
                     .foregroundStyle(job.state == .needsAttention ? .orange : .secondary)
                     .lineLimit(2)
@@ -119,20 +118,8 @@ struct DownloadRow: View {
         }
         .padding(.vertical, 4)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(job.model): \(line)")
+        .accessibilityLabel("\(job.model): \(job.line)")
         .accessibilityIdentifier("download-\(job.id)")
-    }
-
-    /// "41.94 MB of 106.07 MB · 11.80 MB/s · 5 s left".
-    private var line: String {
-        switch job.state {
-        case .downloading, .done:
-            "\(job.progressText) · \(job.statusText)"
-        case .paused where job.bytesTotal > 0:
-            "Paused · \(job.progressText)"
-        default:
-            job.statusText
-        }
     }
 
     /// What the daemon says can be done to the job now.
@@ -218,26 +205,5 @@ struct GovernorStrip: View {
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(title): \(value), \(note)")
-    }
-}
-
-/// The buttons for what can be done to a job, as the daemon lists them.
-struct JobActionButtons: View {
-    let job: Job
-
-    @Environment(DaemonStore.self) private var daemon
-
-    var body: some View {
-        HStack(spacing: 2) {
-            ForEach(job.actions, id: \.self) { action in
-                Button(action.title, systemImage: action.symbol) {
-                    Task { await daemon.act(action, on: job) }
-                }
-                .help(action.help(activation: job.isActivation))
-                .accessibilityIdentifier("\(action.name)-\(job.id)")
-            }
-        }
-        .buttonStyle(.borderless)
-        .labelStyle(.iconOnly)
     }
 }

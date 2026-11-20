@@ -1,5 +1,6 @@
 import DedupdClient
 import Foundation
+import OSLog
 import UserNotifications
 
 /// Something worth telling the owner while the window is closed.
@@ -63,6 +64,7 @@ extension Notice {
 /// there is something to say, not at launch.
 @MainActor
 final class Notifier {
+    private static let log = Logger(subsystem: "io.descoped.dedupd.app", category: "notifications")
     /// False under tests and canned daemons, which must not post anything.
     private let isLive: Bool
 
@@ -77,7 +79,14 @@ final class Notifier {
         }
         Task {
             let center = UNUserNotificationCenter.current()
-            guard (try? await center.requestAuthorization(options: [.alert, .sound])) == true else {
+            // A notice is a courtesy: the job's state is on screen either
+            // way. A refusal by the owner is an answer, not a failure.
+            do {
+                guard try await center.requestAuthorization(options: [.alert, .sound]) else {
+                    return
+                }
+            } catch {
+                Self.log.error("Notifications could not be asked for: \(error.localizedDescription, privacy: .public)")
                 return
             }
             for notice in notices {
@@ -85,7 +94,11 @@ final class Notifier {
                 content.title = notice.title
                 content.body = notice.body
                 content.sound = .default
-                try? await center.add(UNNotificationRequest(identifier: notice.id, content: content, trigger: nil))
+                do {
+                    try await center.add(UNNotificationRequest(identifier: notice.id, content: content, trigger: nil))
+                } catch {
+                    Self.log.error("A notification was not posted: \(error.localizedDescription, privacy: .public)")
+                }
             }
         }
     }

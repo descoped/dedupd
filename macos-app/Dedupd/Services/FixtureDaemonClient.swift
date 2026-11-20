@@ -35,7 +35,48 @@ actor FixtureDaemonClient: DaemonClient {
         jobs = scenario == .downloading ? FixtureData.jobs : []
     }
 
-    private func answering(_ address: String) throws {
+    /// The calls a test holds back, by name (`models(at:)`), and the ones
+    /// that wait to go on.
+    private var held: Set<String> = []
+    private var waiting: [String: [CheckedContinuation<String?, Never>]] = [:]
+
+    /// Hold every later call of this name until it is released, so a test
+    /// can have answers come back late or in another order than asked.
+    func hold(_ call: String) {
+        held.insert(call)
+    }
+
+    /// How many calls of this name wait.
+    func waiting(_ call: String) -> Int {
+        waiting[call]?.count ?? 0
+    }
+
+    /// Let one waiting call go on: the oldest, or the newest with `last`.
+    /// With `failing` it fails with that message instead of answering.
+    func release(_ call: String, last: Bool = false, failing: String? = nil) {
+        guard var queue = waiting[call], !queue.isEmpty else {
+            return
+        }
+        let one = last ? queue.removeLast() : queue.removeFirst()
+        waiting[call] = queue
+        one.resume(returning: failing)
+    }
+
+    /// Stop holding calls of this name and let those that wait go on.
+    func releaseAll(_ call: String) {
+        held.remove(call)
+        for one in waiting.removeValue(forKey: call) ?? [] {
+            one.resume(returning: nil)
+        }
+    }
+
+    private func answering(_ address: String, call: String = #function) async throws {
+        if held.contains(call) {
+            let failure = await withCheckedContinuation { waiting[call, default: []].append($0) }
+            if let failure {
+                throw ClientError.Failed(message: failure)
+            }
+        }
         if scenario == .notRunning {
             throw ClientError.NotRunning(address: address)
         }
@@ -102,12 +143,12 @@ actor FixtureDaemonClient: DaemonClient {
     // MARK: - Status and library
 
     func status(at address: String) async throws -> DaemonStatus {
-        try answering(address)
+        try await answering(address)
         return FixtureData.status(jobs: jobs)
     }
 
     func scan(at address: String) async throws -> ScanResult {
-        try answering(address)
+        try await answering(address)
         return ScanResult(
             forgotten: 0, adopted: 2, adoptedBytes: 4_920_000_000, recognised: 0, reclaimed: 2,
             reclaimedBytes: 4_920_000_000, archived: 2, errors: []
@@ -115,12 +156,12 @@ actor FixtureDaemonClient: DaemonClient {
     }
 
     func apps(at address: String) async throws -> [AppInfo] {
-        try answering(address)
+        try await answering(address)
         return RecordedProfiles.apps
     }
 
     func models(at address: String) async throws -> [LibraryModel] {
-        try answering(address)
+        try await answering(address)
         return FixtureData.models.map(asHeld)
     }
 
@@ -137,7 +178,7 @@ actor FixtureDaemonClient: DaemonClient {
     }
 
     func model(_ repo: String, at address: String) async throws -> ModelDetail {
-        try answering(address)
+        try await answering(address)
         guard var detail = FixtureData.detail(repo) else {
             throw ClientError.Failed(message: "\(repo) is not in the library")
         }
@@ -155,14 +196,14 @@ actor FixtureDaemonClient: DaemonClient {
     }
 
     func locations(at address: String) async throws -> Locations {
-        try answering(address)
+        try await answering(address)
         return FixtureData.locations
     }
 
     // MARK: - Hugging Face
 
     func search(_ query: SearchQuery, at address: String) async throws -> SearchPage {
-        try answering(address)
+        try await answering(address)
         if query.cursor != nil {
             return SearchPage(models: FixtureData.moreHits, next: nil)
         }
@@ -175,14 +216,18 @@ actor FixtureDaemonClient: DaemonClient {
     }
 
     func hubModel(_ repo: String, at address: String) async throws -> HubModel {
-        try answering(address)
+        try await answering(address)
+        // The provider has no such repository: the real daemon says so.
+        guard FixtureData.isKnown(repo) else {
+            throw ClientError.Failed(message: "\(repo) was not found on Hugging Face")
+        }
         return FixtureData.hubModel(repo, downloading: jobs.contains { $0.repo == repo && $0.state.isActive })
     }
 
     // MARK: - Models
 
     func checkUpstream(_ repo: String, at address: String) async throws -> UpstreamCheck {
-        try answering(address)
+        try await answering(address)
         let model = FixtureData.models.first { $0.repo == repo }
         return UpstreamCheck(
             upstream: model?.upstream ?? .ok, commit: model?.commit, latest: model?.commit, changed: false
@@ -190,15 +235,15 @@ actor FixtureDaemonClient: DaemonClient {
     }
 
     func forget(_ repo: String, at address: String) async throws {
-        try answering(address)
-        if let model = FixtureData.models.first(where: { $0.repo == repo }), !model.apps.isEmpty {
+        try await answering(address)
+        if let model = FixtureData.models.first(where: { $0.repo == repo }).map(asHeld), !model.apps.isEmpty {
             throw ClientError.Failed(message: "\(repo) still has files in \(model.appNames.map(\.name).joined(separator: ", "))")
         }
     }
 
     func unplace(_ repo: String, app: ModelApp, paths: [String]?, apply: Bool, at address: String) async throws
         -> UnplacePlan {
-        try answering(address)
+        try await answering(address)
         let files = (FixtureData.detail(repo)?.placements.filter { $0.app == app } ?? [])
             .filter { paths?.contains($0.path) ?? true }
         let plan = UnplacePlan(
@@ -219,7 +264,7 @@ actor FixtureDaemonClient: DaemonClient {
     }
 
     func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan {
-        try answering(address)
+        try await answering(address)
         guard let model = FixtureData.models.first(where: { $0.repo == repo }), !archived.contains(repo) else {
             throw ClientError.Failed(message: "\(repo) is not in the library")
         }
@@ -236,14 +281,14 @@ actor FixtureDaemonClient: DaemonClient {
     }
 
     func archive(_ repo: String, at address: String) async throws {
-        try answering(address)
+        try await answering(address)
         let plan = try await archivePlan(repo, at: address)
         archived.insert(repo)
         moved(kind: .archive, repo: repo, files: plan.files, bytes: plan.bytes)
     }
 
     func restore(_ repo: String, at address: String) async throws {
-        try answering(address)
+        try await answering(address)
         guard archived.remove(repo) != nil, let model = FixtureData.models.first(where: { $0.repo == repo }) else {
             throw ClientError.Failed(message: "\(repo) is not archived")
         }
@@ -263,12 +308,12 @@ actor FixtureDaemonClient: DaemonClient {
     // MARK: - Storage
 
     func gcPlan(offload: Bool, at address: String) async throws -> GcPlan {
-        try answering(address)
+        try await answering(address)
         return FixtureData.gcPlan(offload: offload)
     }
 
     func gcApply(orphans: [String], offload: [String], at address: String) async throws -> GcPlan {
-        try answering(address)
+        try await answering(address)
         let plan = FixtureData.gcPlan(offload: !offload.isEmpty)
         return GcPlan(
             orphans: [], offload: [], orphanBytes: 0, offloadBytes: 0, freed: plan.orphanBytes + plan.offloadBytes
@@ -276,23 +321,23 @@ actor FixtureDaemonClient: DaemonClient {
     }
 
     func startStoreCheck(at address: String) async throws {
-        try answering(address)
+        try await answering(address)
     }
 
     func storeCheck(at address: String) async throws -> StoreCheck {
-        try answering(address)
+        try await answering(address)
         return FixtureData.storeCheck
     }
 
     // MARK: - The daemon itself
 
     func settings(at address: String) async throws -> DaemonSettings {
-        try answering(address)
+        try await answering(address)
         return settings
     }
 
     func updateSettings(_ changes: [SettingChange], at address: String) async throws -> DaemonSettings {
-        try answering(address)
+        try await answering(address)
         for change in changes {
             switch (change.key, change.value) {
             case let (.maxConnections, .number(value)): settings.maxConnections = value
@@ -314,12 +359,12 @@ actor FixtureDaemonClient: DaemonClient {
     }
 
     func logTail(lines: UInt32, at address: String) async throws -> LogTail {
-        try answering(address)
+        try await answering(address)
         return FixtureData.log
     }
 
     func restart(at address: String) async throws {
-        try answering(address)
+        try await answering(address)
         settings.restartNeeded = false
     }
 }
@@ -329,7 +374,7 @@ actor FixtureDaemonClient: DaemonClient {
 extension FixtureDaemonClient {
 
     func download(_ id: Int64, at address: String) async throws -> JobDetail {
-        try answering(address)
+        try await answering(address)
         guard let job = jobs.first(where: { $0.id == id }) else {
             throw ClientError.Failed(message: "no download \(id)")
         }
@@ -337,8 +382,10 @@ extension FixtureDaemonClient {
     }
 
     func enqueue(_ request: PullRequest, at address: String) async throws -> Enqueued {
-        try answering(address)
-        guard ModelSpec.isValid(request.model) else {
+        try await answering(address)
+        // Only the name is checked here; the rest of a spec is the real
+        // daemon's rule, which is not written a second time.
+        guard let repo = ModelSpec.repository(ofSpec: request.model) else {
             throw ClientError.Failed(
                 message: "\(request.model) is not a model name; use org/repo, org/repo:Q4_K_M or org/repo@revision"
             )
@@ -349,13 +396,27 @@ extension FixtureDaemonClient {
         let id = nextID
         nextID += 1
         // What is already stored is placed at once; anything else waits its
-        // turn, as it would behind a running download.
-        let stored = FixtureData.models.contains { $0.repo == request.model.split(separator: ":").first.map(String.init) }
-        jobs.insert(FixtureData.job(id: id, request: request, state: stored ? .done : .queued), at: 0)
-        if stored {
-            let repo = request.model.split(separator: ":").first.map(String.init) ?? request.model
+        // turn, as it would behind a running download. An app the recorded
+        // profiles say no for does not take the model, with their reason.
+        let stored = FixtureData.models.first { $0.repo == repo }
+        var notTakenBy: [ModelApp: String] = [:]
+        if let stored {
+            let decisions = FixtureData.judged(repo, formats: stored.meta.formats, stored: true).decisions
+            for decision in decisions where decision.state != .ready && request.apps.contains(decision.app) {
+                notTakenBy[decision.app] = decision.reason
+            }
+        }
+        jobs.insert(
+            FixtureData.job(id: id, request: request, state: stored == nil ? .queued : .done, notTakenBy: notTakenBy),
+            at: 0
+        )
+        if stored != nil {
             for app in request.apps {
-                note(.init(action: .activate, repo: repo, app: app, ok: true, text: "Activated in \(app.title)"))
+                let reason = notTakenBy[app]
+                note(.init(
+                    action: .activate, repo: repo, app: app, ok: reason == nil,
+                    text: reason.map { "Not activated in \(app.title): \($0)" } ?? "Activated in \(app.title)"
+                ))
             }
         }
         changed()
@@ -363,7 +424,7 @@ extension FixtureDaemonClient {
     }
 
     func downloadAction(_ action: JobAction, id: Int64, at address: String) async throws {
-        try answering(address)
+        try await answering(address)
         guard let index = jobs.firstIndex(where: { $0.id == id }) else {
             throw ClientError.Failed(message: "no download \(id)")
         }
@@ -391,17 +452,17 @@ extension FixtureDaemonClient {
     }
 
     func activity(at address: String) async throws -> [ActivityEntry] {
-        try answering(address)
+        try await answering(address)
         return history
     }
 
     func favorites(at address: String) async throws -> Favorites {
-        try answering(address)
+        try await answering(address)
         return favoriteList
     }
 
     func setFavorite(_ repo: String, _ favorite: Bool, at address: String) async throws -> Favorites {
-        try answering(address)
+        try await answering(address)
         favoriteList.favorites.removeAll { $0.repo == repo }
         if favorite {
             favoriteList.favorites.insert(Favorite(repo: repo, addedAt: FixtureData.now, source: .dedupd), at: 0)
@@ -411,7 +472,7 @@ extension FixtureDaemonClient {
     }
 
     func syncFavorites(at address: String) async throws -> Favorites {
-        try answering(address)
+        try await answering(address)
         favoriteList.likes.syncedAt = FixtureData.now
         changed()
         return favoriteList
@@ -430,7 +491,7 @@ extension FixtureDaemonClient {
     }
 
     func clearDownloads(at address: String) async throws -> UInt64 {
-        try answering(address)
+        try await answering(address)
         let before = jobs.count
         jobs.removeAll { $0.state.isFinished }
         changed()

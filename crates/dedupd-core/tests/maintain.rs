@@ -172,6 +172,8 @@ async fn verify_finds_damage_and_gc_removes_only_what_is_unreferenced() {
     let plan = maintain::gc_plan(&fx.db, &fx.store, true).unwrap();
     assert!(plan.orphans.is_empty(), "{:?}", plan.orphans);
     assert_eq!(plan.offload.len(), 1);
+    // No revision lists it, so the plan has no name for it.
+    assert_eq!(plan.answer(None).offload[0].known_as, None);
     let repo_id = fx.db.lock().unwrap().known_repo("org/Drop").unwrap();
     let held = fx.db.lock().unwrap().repo_blobs(repo_id).unwrap();
     assert_eq!(held.len(), 1);
@@ -247,6 +249,12 @@ async fn offload_frees_local_space_and_the_file_comes_back() {
     let plan = maintain::gc_plan(&fx.db, &fx.store, true).unwrap();
     assert!(plan.orphans.is_empty());
     assert_eq!(plan.offload.len(), 1);
+    // The plan says what the kept model calls the file, so the owner can
+    // tell what would leave the Mac.
+    assert_eq!(
+        plan.answer(None).offload[0].known_as.as_deref(),
+        Some("org/Cold: model.gguf")
+    );
 
     // An archive copy of the right size but other bytes is not a copy: the
     // local one stays.

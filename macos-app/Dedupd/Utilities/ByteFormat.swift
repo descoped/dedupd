@@ -51,6 +51,11 @@ enum ByteFormat {
         if unit == 0 {
             return "\(number)"
         }
+        // 999,950 rounds to 1000 of its unit: that is 1 of the next.
+        if value.rounded() >= 1000, unit < units.count - 1 {
+            value /= 1000
+            unit += 1
+        }
         let digits = value < 10 ? "%.1f%@" : "%.0f%@"
         return String(format: digits, locale: posix, value, units[unit])
             .replacingOccurrences(of: ".0", with: "")

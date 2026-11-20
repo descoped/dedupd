@@ -43,15 +43,28 @@ enum TypedText: Equatable, Sendable {
 /// not the rest of its path, not its query. A text that is anything but a
 /// plain name or a plain address on a known host is not an address at all.
 enum ModelSpec {
-    /// `org/repo`, `org/repo:Q4_K_M` or `org/repo@revision`: the way the
-    /// daemon reads what it is asked to download.
-    static func isValid(_ text: String) -> Bool {
-        let pattern = /[A-Za-z0-9][A-Za-z0-9._-]*\/[A-Za-z0-9][A-Za-z0-9._-]*(:[A-Za-z0-9._-]+)?(@[A-Za-z0-9._\/-]+)?/
-        return text.wholeMatch(of: pattern) != nil
+    /// The repository in a model as the command line writes it:
+    /// `org/repo`, `org/repo:Q4_K_M` or `org/repo@revision`. Only the name
+    /// is read and checked; what follows it is the daemon's to judge, by
+    /// its own rule (`names::parse_model`), which is not written again
+    /// here.
+    static func repository(ofSpec text: String) -> String? {
+        let name = text.prefix { $0 != ":" && $0 != "@" }
+        // What follows the name is not used, but text with anything in it
+        // that a quantization or a revision is never written with is not a
+        // model's name at all.
+        let rest = text.dropFirst(name.count)
+        let plain = rest.utf8.allSatisfy { byte in
+            (byte >= 0x30 && byte <= 0x39) || (byte >= 0x41 && byte <= 0x5A) || (byte >= 0x61 && byte <= 0x7A)
+                || [0x2D, 0x2E, 0x2F, 0x3A, 0x40, 0x5F].contains(byte)
+        }
+        return plain && isRepository(String(name)) ? String(name) : nil
     }
 
     /// The hosts whose addresses name a repository on Hugging Face.
-    private static let huggingFaceHosts: Set<String> = ["huggingface.co", "www.huggingface.co", "hf.co"]
+    private static let huggingFaceHosts: Set<String> = [
+        "huggingface.co", "www.huggingface.co", "hf.co", "www.hf.co",
+    ]
     /// Hosts of sources that are known and not built yet, with their names.
     private static let laterHosts: [String: String] = [
         "modelscope.cn": "ModelScope", "www.modelscope.cn": "ModelScope",
@@ -134,17 +147,25 @@ enum ModelSpec {
         }
         // The first two parts of the path, as they are written: nothing
         // escaped, nothing empty, and each a name Hugging Face would allow.
+        // A `.` or `..` anywhere in the path makes it another page than its
+        // first two parts say, so such an address is not read.
         let path = parts.percentEncodedPath
-        let names = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst().prefix(2)
-        guard path.hasPrefix("/"), !path.contains("%"), names.count == 2 else {
+        let all = path.split(separator: "/", omittingEmptySubsequences: false).dropFirst()
+        let names = all.prefix(2)
+        guard path.hasPrefix("/"), !path.contains("%"), names.count == 2,
+              !all.contains(where: { $0 == "." || $0 == ".." })
+        else {
             return nil
         }
         let repo = names.joined(separator: "/")
         return isRepository(repo) ? .repository(repo) : nil
     }
 
-    /// The longest text that is searched for.
+    /// The longest text that is searched for, in characters as a person
+    /// sees them and in bytes: one such character can hold any number of
+    /// combining marks.
     private static let longestWords = 200
+    private static let longestWordsBytes = 800
 
     /// What a search field's text asks for. A model's name, the name as
     /// the command line writes it (`org/name:Q4_K_M`) or its address shows
@@ -163,8 +184,7 @@ enum ModelSpec {
         case nil:
             break
         }
-        if isValid(text), let repo = text.split(whereSeparator: { $0 == ":" || $0 == "@" }).first.map(String.init),
-           isRepository(repo) {
+        if let repo = repository(ofSpec: text) {
             return .model(repo)
         }
         if text.contains("/") || text.contains("\\") {
@@ -181,7 +201,7 @@ enum ModelSpec {
                 true
             }
         }
-        guard text.count <= longestWords, isPlain else {
+        guard text.count <= longestWords, text.utf8.count <= longestWordsBytes, isPlain else {
             return .refused("That text cannot be searched for. Type a few words, or a model's name as org/name.")
         }
         return .words(text)

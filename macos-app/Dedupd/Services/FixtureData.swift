@@ -384,10 +384,17 @@ extension FixtureData {
 
     static func gcPlan(offload: Bool, freed: UInt64? = nil) -> GcPlan {
         let orphans = [
-            StoredFile(sha256: sha("orphan-one"), size: 4_920_000_000, gitOid: nil),
-            StoredFile(sha256: sha("orphan-two"), size: 1840, gitOid: String(sha("orphan-two").prefix(40))),
+            StoredFile(sha256: sha("orphan-one"), size: 4_920_000_000, gitOid: nil, knownAs: nil),
+            StoredFile(sha256: sha("orphan-two"), size: 1840, gitOid: String(sha("orphan-two").prefix(40)), knownAs: nil),
         ]
-        let away = offload ? [StoredFile(sha256: sha("model.safetensors"), size: 79_210_000, gitOid: nil)] : []
+        let away = offload
+            ? [
+                StoredFile(
+                    sha256: sha("model.safetensors"), size: 79_210_000, gitOid: nil,
+                    knownAs: "\(smolMLX): model.safetensors"
+                ),
+            ]
+            : []
         return GcPlan(
             orphans: orphans,
             offload: away,
