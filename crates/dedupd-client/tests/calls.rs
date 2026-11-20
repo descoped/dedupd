@@ -90,6 +90,10 @@ fn the_sentences_are_the_ones_the_app_shows() {
         "the dedupd daemon is not running at a:1"
     );
     assert_eq!(
+        dedupd_client::error_message(ClientError::TimedOut),
+        "the daemon did not answer in time"
+    );
+    assert_eq!(
         dedupd_client::error_message(ClientError::BadAddress {
             address: "a".into()
         }),

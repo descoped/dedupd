@@ -53,6 +53,9 @@ pub enum ClientError {
     /// The answer was not what this client understands.
     #[error("unexpected answer from the daemon: {message}")]
     Protocol { message: String },
+    /// The daemon did not answer within the time a call may take.
+    #[error("the daemon did not answer in time")]
+    TimedOut,
     /// The address is not `host:port`, so nothing was asked.
     #[error("{address} is not an address of the form host:port, such as 127.0.0.1:8642")]
     BadAddress { address: String },
@@ -105,9 +108,7 @@ fn checked(address: &str) -> Result<&str, ClientError> {
 /// HTTP, or too long, is an answer this client does not understand.
 fn failed(address: &str, e: ureq::Error) -> ClientError {
     match e {
-        ureq::Error::Timeout(_) => ClientError::Failed {
-            message: "the daemon did not answer in time".into(),
-        },
+        ureq::Error::Timeout(_) => ClientError::TimedOut,
         ureq::Error::Io(_) | ureq::Error::ConnectionFailed | ureq::Error::HostNotFound => {
             ClientError::NotRunning {
                 address: address.to_string(),

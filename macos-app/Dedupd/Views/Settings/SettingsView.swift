@@ -28,7 +28,11 @@ struct SettingsView: View {
                             applyAddress()
                         }
                     }
-                    .onAppear { addressDraft = settings.customAddress }
+                    .onAppear {
+                        addressDraft = settings.customAddress
+                        let saved = addressDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+                        addressRefused = !saved.isEmpty && !addressIsValid(address: saved)
+                    }
                     .onChange(of: settings.customAddress) { _, address in
                         // Changed elsewhere while this window is open.
                         if !addressFocused {

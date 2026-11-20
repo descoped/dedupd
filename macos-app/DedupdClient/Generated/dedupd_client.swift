@@ -590,7 +590,10 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 /**
- * Receives what the daemon says. Called on a background thread.
+ * Receives what the daemon says. Called on a background thread, with one
+ * exception: when the subscription's thread cannot be started,
+ * `on_connection(false)` is called once on the thread that subscribed,
+ * before `subscribe` returns. A listener must take a call from any thread.
  */
 public protocol EventListener: AnyObject, Sendable {
     
@@ -616,7 +619,10 @@ public protocol EventListener: AnyObject, Sendable {
     
 }
 /**
- * Receives what the daemon says. Called on a background thread.
+ * Receives what the daemon says. Called on a background thread, with one
+ * exception: when the subscription's thread cannot be started,
+ * `on_connection(false)` is called once on the thread that subscribed,
+ * before `subscribe` returns. A listener must take a call from any thread.
  */
 open class EventListenerImpl: EventListener, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -1044,6 +1050,10 @@ enum ClientError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
     case Protocol(message: String
     )
     /**
+     * The daemon did not answer within the time a call may take.
+     */
+    case TimedOut
+    /**
      * The address is not `host:port`, so nothing was asked.
      */
     case BadAddress(address: String
@@ -1086,7 +1096,8 @@ public struct FfiConverterTypeClientError: FfiConverterRustBuffer {
         case 3: return .Protocol(
             message: try FfiConverterString.read(from: &buf)
             )
-        case 4: return .BadAddress(
+        case 4: return .TimedOut
+        case 5: return .BadAddress(
             address: try FfiConverterString.read(from: &buf)
             )
 
@@ -1116,8 +1127,12 @@ public struct FfiConverterTypeClientError: FfiConverterRustBuffer {
             FfiConverterString.write(message, into: &buf)
             
         
-        case let .BadAddress(address):
+        case .TimedOut:
             writeInt(&buf, Int32(4))
+        
+        
+        case let .BadAddress(address):
+            writeInt(&buf, Int32(5))
             FfiConverterString.write(address, into: &buf)
             
         }

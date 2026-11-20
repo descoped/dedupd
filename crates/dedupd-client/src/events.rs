@@ -23,7 +23,10 @@ const MAX_LINE: usize = 8 * 1024 * 1024;
 /// and made again, as if it had been closed.
 const SILENCE: Duration = Duration::from_secs(45);
 
-/// Receives what the daemon says. Called on a background thread.
+/// Receives what the daemon says. Called on a background thread, with one
+/// exception: when the subscription's thread cannot be started,
+/// `on_connection(false)` is called once on the thread that subscribed,
+/// before `subscribe` returns. A listener must take a call from any thread.
 #[uniffi::export(with_foreign)]
 pub trait EventListener: Send + Sync {
     /// The daemon's state as of now. The first one arrives as soon as the
@@ -162,8 +165,12 @@ fn follow(address: &str, listener: &dyn EventListener, stopped: &AtomicBool, sil
 /// speaks plain HTTP/1.1.
 fn open(address: &str, silence: Duration) -> Option<Body> {
     crate::url(address, "events").ok()?;
-    let to = address.to_socket_addrs().ok()?.next()?;
-    let stream = TcpStream::connect_timeout(&to, Duration::from_secs(2)).ok()?;
+    // Every address the name stands for is tried, as the other calls do:
+    // a daemon may listen on only one of them.
+    let stream = address
+        .to_socket_addrs()
+        .ok()?
+        .find_map(|to| TcpStream::connect_timeout(&to, Duration::from_secs(2)).ok())?;
     stream.set_read_timeout(Some(silence)).ok()?;
     stream
         .set_write_timeout(Some(Duration::from_secs(2)))
