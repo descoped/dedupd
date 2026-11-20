@@ -68,6 +68,15 @@ struct LaunchOptionsTests {
         #expect(environment.daemon.problem?.contains("Nothing is installed") == true)
     }
 
+    @Test("An address option without its value follows no daemon")
+    func addressWithoutValue() {
+        let environment = AppEnvironment(options: LaunchOptions(
+            arguments: ["Dedupd", "-daemonAddress", "-pane", "storage"],
+            environment: ["XCTestConfigurationFilePath": "/tmp/x"]
+        ))
+        #expect(!addressIsValid(address: environment.settings.address))
+    }
+
     @Test("A canned daemon comes with preferences of its own, a canned client and a login item that is only remembered")
     func fixtureEnvironment() async {
         let environment = AppEnvironment(options: LaunchOptions(arguments: ["Dedupd", "-uiTestFixture", "running", "-pane", "storage"]))

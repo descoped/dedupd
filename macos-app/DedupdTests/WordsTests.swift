@@ -78,6 +78,8 @@ struct WordsTests {
         #expect(RepoName.organisation("org/Repo-GGUF") == "org")
         #expect(RepoName.name("alone") == "alone")
         #expect(HuggingFace.page("org/Repo-GGUF")?.absoluteString == "https://huggingface.co/org/Repo-GGUF")
+        #expect(HuggingFace.page("a/../../settings") == nil)
+        #expect(HuggingFace.page("settings") == nil)
     }
 
     @Test("What a deactivation removes, a folder's note and the token line")

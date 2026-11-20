@@ -81,7 +81,11 @@ pub fn address_is_valid(address: String) -> bool {
 
 fn checked(address: &str) -> Result<&str, ClientError> {
     // Port 0 is one a daemon can ask to listen on, never one to ask at.
-    if dedupd_api::url::is_loopback(address) && !address.ends_with(":0") {
+    // It is read as a number, because `:00` is port 0 too.
+    let port = address
+        .rsplit_once(':')
+        .and_then(|(_, p)| p.parse::<u16>().ok());
+    if dedupd_api::url::is_loopback(address) && port.is_some_and(|p| p != 0) {
         Ok(address)
     } else {
         Err(ClientError::BadAddress {

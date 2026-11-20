@@ -72,14 +72,17 @@ final class AppSettings {
 
     /// `launchAddress` is an address given for this run (`-daemonAddress`):
     /// it stands in for the default and for a saved choice, and is not
-    /// saved itself. One that is not an address is not used.
+    /// saved itself. One that is not an address of this Mac is kept as it
+    /// is, so the run follows no daemon and says why: it never falls back
+    /// to the saved or the default address, which may be the real daemon's
+    /// when the run was meant for a scratch one.
     init(
         defaults: UserDefaults = .standard,
         defaultAddress: String = DedupdClient.defaultAddress(),
         launchAddress: String? = nil
     ) {
         self.defaults = defaults
-        if let launchAddress, addressIsValid(address: launchAddress) {
+        if let launchAddress {
             self.defaultAddress = launchAddress
             // Setting it here writes nothing: the saved choice stays for
             // the next run.

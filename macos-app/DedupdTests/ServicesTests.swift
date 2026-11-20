@@ -55,6 +55,11 @@ struct ServicesTests {
         // More than a pipe holds on both streams at once.
         let long = try BundledAgent.launch(shell, ["-c", "head -c 300000 /dev/zero | tr '\\0' x; head -c 300000 /dev/zero >&2"])
         #expect(long.count == 300_000)
+        // Something the command started that outlives it and holds its
+        // output open is not waited for.
+        let before = Date()
+        #expect(try BundledAgent.launch(shell, ["-c", "sleep 20 & echo done"]) == "done")
+        #expect(Date().timeIntervalSince(before) < 10)
         let started = Date()
         #expect(throws: AgentError.self) {
             try BundledAgent.launch(shell, ["-c", "sleep 30"], patience: 0.3)

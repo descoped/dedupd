@@ -165,18 +165,34 @@ struct BundledAgent: AgentControl {
             process.terminate()
         }
         timer.resume()
-        // The two pipes are read at the same time, so a long complaint
-        // cannot fill one while the other is waited for.
+        // The two pipes are read as they fill, so a long complaint cannot
+        // fill one while the other is waited for.
+        let written = Mutex(Data())
         let complaint = Mutex(Data())
-        let reading = DispatchGroup()
-        DispatchQueue.global(qos: .userInitiated).async(group: reading) {
-            let data = errors.fileHandleForReading.readDataToEndOfFile()
-            complaint.withLock { $0 = data }
+        let ended = DispatchSemaphore(value: 0)
+        func read(_ pipe: Pipe, into keep: @escaping @Sendable (Data) -> Void) {
+            pipe.fileHandleForReading.readabilityHandler = { handle in
+                let data = handle.availableData
+                if data.isEmpty {
+                    handle.readabilityHandler = nil
+                    ended.signal()
+                } else {
+                    keep(data)
+                }
+            }
         }
-        let said = String(bytes: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        reading.wait()
+        read(output) { data in written.withLock { $0.append(data) } }
+        read(errors) { data in complaint.withLock { $0.append(data) } }
         process.waitUntilExit()
         timer.cancel()
+        // What it wrote is read to its end. Something it started that
+        // outlives it and holds a pipe open is not waited for.
+        let limit = DispatchTime.now() + 2
+        if ended.wait(timeout: limit) == .timedOut || ended.wait(timeout: limit) == .timedOut {
+            output.fileHandleForReading.readabilityHandler = nil
+            errors.fileHandleForReading.readabilityHandler = nil
+        }
+        let said = String(bytes: written.withLock { $0 }, encoding: .utf8) ?? ""
         let complained = String(bytes: complaint.withLock { $0 }, encoding: .utf8) ?? ""
         if gaveUp.withLock({ $0 }) {
             throw AgentError.failed(

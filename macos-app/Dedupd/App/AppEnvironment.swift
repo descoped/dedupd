@@ -86,7 +86,10 @@ final class AppEnvironment {
             // The app that hosts the unit tests must not use up the owner's
             // first launch, so it keeps preferences of its own too.
             let hosted = options.isHostingUnitTests ? UserDefaults(suiteName: "io.descoped.dedupd.app.unittests") : nil
-            settings = AppSettings(defaults: hosted ?? .standard, launchAddress: options.daemonAddress)
+            // An address option without its value follows nothing either.
+            let launchAddress = options.malformed.contains("-daemonAddress")
+                ? "-daemonAddress without a value" : options.daemonAddress
+            settings = AppSettings(defaults: hosted ?? .standard, launchAddress: launchAddress)
             client = LiveDaemonClient()
             // A trial names its home and its label. With either name there
             // and its value missing, the commands would run on the real

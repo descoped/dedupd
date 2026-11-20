@@ -101,9 +101,12 @@ struct AppSettingsTests {
         #expect(AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642").address == "127.0.0.1:9000",
                 "the saved choice is there again in the next run")
 
-        // One that is not an address of this Mac is not used.
+        // One that is not an address of this Mac follows no daemon: the
+        // run never falls back to the saved one, which may be the real
+        // daemon's.
         let other = AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642", launchAddress: "example.com:80")
-        #expect(other.address == "127.0.0.1:9000")
+        #expect(other.address == "example.com:80")
+        #expect(!addressIsValid(address: other.address))
     }
 
     @Test("Only an address of this Mac itself is used")
