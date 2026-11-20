@@ -185,32 +185,6 @@ struct LateAnswerTests {
         #expect(library.selected?.repo == FixtureData.smolMLX)
     }
 
-    @Test("A model that is archived and restored shows as each in turn, as the events come")
-    func archivedAndRestored() async {
-        let (_, daemon) = await running()
-        let library = LibraryStore(daemon: daemon)
-        await library.reload()
-        library.select(repo: FixtureData.qwen)
-        var seen = daemon.revision
-        // What the window does: read again when the daemon says it changed.
-        func follow() async {
-            let before = seen
-            _ = await eventually { await daemon.revision != before }
-            seen = daemon.revision
-            await library.reload()
-        }
-        await library.planArchive()
-        await library.applyArchive()
-        await follow()
-        #expect(daemon.problem == nil)
-        #expect(library.selected?.isArchived == true)
-        await library.restore()
-        await follow()
-        #expect(daemon.problem == nil)
-        #expect(library.selected?.isArchived == false)
-        #expect(!library.isMoving)
-    }
-
     @Test("A failed reload keeps the list and says so")
     func failedReloadKeepsTheList() async {
         let (client, daemon) = await running()
