@@ -7,7 +7,7 @@ use anyhow::{Result, bail};
 /// One half of `org/name`, by Hugging Face's own rule: up to 96 letters,
 /// digits, `-`, `_` and `.`; it starts and ends with a letter, a digit or
 /// `_`; no `--`, no `..`, and it does not end in `.git`.
-fn is_name_part(part: &str) -> bool {
+pub(crate) fn is_name_part(part: &str) -> bool {
     let word = |c: char| c.is_ascii_alphanumeric() || c == '_';
     !part.is_empty()
         && part.len() <= 96
@@ -30,6 +30,29 @@ pub fn is_repo_name(repo: &str) -> bool {
         (parts.next(), parts.next(), parts.next()),
         (Some(org), Some(name), None) if is_name_part(org) && is_name_part(name)
     )
+}
+
+/// Whether the text names a model as the provider's own API takes it:
+/// `org/name`, or a single name from before Hugging Face had organisations
+/// (`gpt2`). The check for a name that goes into an address of the API;
+/// what a person types or a client names in a path is `is_repo_name`.
+pub fn is_model_name(repo: &str) -> bool {
+    is_repo_name(repo) || is_name_part(repo)
+}
+
+/// Whether the text is a revision: a branch, a tag, a commit or a ref such
+/// as `refs/pr/3`, with nothing in it that climbs out of a path or changes
+/// the meaning of an address.
+pub fn is_revision(revision: &str) -> bool {
+    !revision.is_empty()
+        && revision.len() <= 200
+        && !revision.contains("..")
+        && !revision.contains("//")
+        && !revision.starts_with(['/', '-', '.'])
+        && !revision.ends_with('/')
+        && revision
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c))
 }
 
 /// Whether the text is a sha256 as dedupd names files by it: 64 lower-case
@@ -60,10 +83,10 @@ pub fn is_file_path(path: &str) -> bool {
 /// part is checked: a quantization is a short word, and a revision is a
 /// branch, tag or commit with nothing in it that climbs out of a path.
 pub fn parse_model(spec: &str) -> Result<(String, Option<String>, String)> {
-    let spec = spec
-        .trim()
-        .trim_start_matches("https://huggingface.co/")
-        .trim_start_matches("hf.co/");
+    // Each prefix once: `hf.co` is also a name an organisation can have.
+    let spec = spec.trim();
+    let spec = spec.strip_prefix("https://huggingface.co/").unwrap_or(spec);
+    let spec = spec.strip_prefix("hf.co/").unwrap_or(spec);
     let (rest, revision) = match spec.split_once('@') {
         Some((r, rev)) => (r, rev.to_string()),
         None => (spec, "main".to_string()),
@@ -79,16 +102,7 @@ pub fn parse_model(spec: &str) -> Result<(String, Option<String>, String)> {
             && q.chars()
                 .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
     });
-    let revision_ok = !revision.is_empty()
-        && revision.len() <= 200
-        && !revision.contains("..")
-        && !revision.contains("//")
-        && !revision.starts_with(['/', '-', '.'])
-        && !revision.ends_with('/')
-        && revision
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c));
-    if !is_repo_name(repo) || !quant_ok || !revision_ok {
+    if !is_repo_name(repo) || !quant_ok || !is_revision(&revision) {
         bail!("{spec} is not a model name; use org/repo, org/repo:Q4_K_M or org/repo@revision");
     }
     Ok((repo.to_string(), quant, revision))
@@ -151,6 +165,11 @@ mod tests {
             )
         );
         assert_eq!(ok("hf.co/org/repo@v1.0").2, "v1.0");
+        // A prefix is taken off once: `hf.co` is also a name.
+        assert_eq!(ok("hf.co/hf.co/repo").0, "hf.co/repo");
+        assert!(parse_model("hf.co/hf.co/org/repo").is_err());
+        assert!(is_model_name("gpt2") && is_model_name("org/repo"));
+        assert!(!is_model_name("a/b/c") && !is_model_name("..") && !is_model_name(""));
 
         for hostile in [
             "",

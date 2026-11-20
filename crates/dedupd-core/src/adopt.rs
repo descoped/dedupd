@@ -208,8 +208,15 @@ async fn plan_repo(
     on_event: &mut (dyn FnMut(Event<'_>) + Send),
 ) -> Result<(RepoState, RepoOutcome, Vec<Job>)> {
     let revision = repo.revision.as_deref().unwrap_or("main");
-    // Only Hugging Face repositories can be checked against the Hub.
-    let hub = hub.filter(|_| repo.provider == PROVIDER_HF);
+    // Only Hugging Face repositories can be checked against the Hub, and
+    // only by a name and a revision that are ones: both come from folder
+    // names here and go into the address asked. Anything else is adopted
+    // without asking.
+    let hub = hub.filter(|_| {
+        repo.provider == PROVIDER_HF
+            && crate::names::is_repo_name(&repo.name)
+            && (revision == "main" || crate::hub::is_commit(revision))
+    });
     let (upstream, snapshot) = match hub {
         None => (Upstream::NotAsked, None),
         Some(hub) => match hub.snapshot(&repo.name, revision).await {
@@ -273,7 +280,9 @@ async fn plan_repo(
         } else {
             lock(db).placement(&abs)?
         };
-        if let (Some(known), Some(repo_id)) = (known, state.repo_id)
+        // Also in a dry run, where there is no repository id to write
+        // under: a file that is recorded and unchanged is not read again.
+        if let Some(known) = known
             && known.fingerprint() == file.fingerprint
             && store.contains(&known.sha256)
             && (!needs_git_oid_now || known.git_oid.is_some())
@@ -286,7 +295,10 @@ async fn plan_repo(
             );
             // An answer from the provider replaces an older one; no
             // answer leaves the earlier result in place.
-            if v != VerifyState::Unchecked && v.as_str() != known.verify_state {
+            if let Some(repo_id) = state.repo_id
+                && v != VerifyState::Unchecked
+                && v.as_str() != known.verify_state
+            {
                 lock(db).upsert_placement(&state.placement(
                     repo_id,
                     &Adopted {
@@ -360,11 +372,11 @@ fn record_hashed(
                         mtime_ns: file.fingerprint.mtime_ns,
                     },
                     verify: v,
-                    shared: added == Added::Cloned,
+                    shared: added == Added::Stored,
                 },
             ))?;
             match added {
-                Added::Cloned => Action::Cloned,
+                Added::Stored => Action::Cloned,
                 Added::AlreadyPresent => Action::AlreadyInStore,
             }
         }
@@ -403,6 +415,8 @@ pub async fn adopt(
 
     // Hash in the background, a few files at a time; record results here as
     // they finish so the database is only ever touched from this task.
+    // Recording one file is short (a clone and a rename on the internal
+    // disk, two database writes) and the task yields between files.
     let limit = Arc::new(Semaphore::new(opts.jobs.max(1)));
     let mut running: JoinSet<(Job, std::io::Result<FileHashes>)> = JoinSet::new();
     for job in jobs {
@@ -530,7 +544,7 @@ pub fn scan_apps(
             App::Bionic if dirs.bionic.is_dir() => repos.extend(bionic::scan(&dirs.bionic)?),
             App::Hf => {
                 // The cache records which commit each branch name was at.
-                let refs = hf_cache::refs(&dirs.hf_cache);
+                let refs = hf_cache::refs(&dirs.hf_cache)?;
                 let db = lock(db);
                 for (repo, name, commit) in refs {
                     let repo_id = db.upsert_repo(PROVIDER_HF, &repo)?;
@@ -542,7 +556,7 @@ pub fn scan_apps(
                 repos.extend(hf_cache::scan(&dirs.hf_cache)?);
             }
             App::Ollama => {
-                let found = ollama::manifests(&dirs.ollama);
+                let found = ollama::manifests(&dirs.ollama)?;
                 let db = lock(db);
                 // A file dedupd derived from a stored one is its own work.
                 // Neither it nor a manifest that names it is something to

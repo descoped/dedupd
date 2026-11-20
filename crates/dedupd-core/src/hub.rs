@@ -234,6 +234,9 @@ impl HubClient {
     /// A GET under the endpoint, for the parts of the Hub API this client
     /// has no method of its own for. `what` names the thing asked about in
     /// the error.
+    ///
+    /// The path goes into the address as it is: the caller has checked
+    /// every part of it that came from outside (`names`).
     pub async fn api(
         &self,
         path_and_query: &str,
@@ -306,7 +309,20 @@ impl HubClient {
         revision: &str,
         auth: Option<&str>,
     ) -> Result<Snapshot, HubError> {
-        let info_url = format!("{}/api/models/{repo}/revision/{revision}", self.endpoint);
+        // Checked here, whoever calls: both go into the address, and the
+        // daemon's own token may go with it.
+        if !crate::names::is_model_name(repo) || !crate::names::is_revision(revision) {
+            return Err(HubError::Malformed(format!(
+                "{repo}@{revision} is not a model and a revision"
+            )));
+        }
+        // One segment of the address, as the provider's own client writes
+        // it: `refs/pr/3` goes as `refs%2Fpr%2F3`.
+        let info_url = format!(
+            "{}/api/models/{repo}/revision/{}",
+            self.endpoint,
+            dedupd_api::url::encode_component(revision)
+        );
         let info_json = self.get(&info_url, repo, auth).await?.text().await?;
         let info: serde_json::Value = serde_json::from_str(&info_json)
             .map_err(|e| HubError::Malformed(format!("model info: {e}")))?;
@@ -322,7 +338,9 @@ impl HubClient {
             "{}/api/models/{repo}/tree/{commit}?recursive=true&expand=false",
             self.endpoint
         ));
+        let mut asked = Pages::default();
         while let Some(url) = next {
+            asked.turn(&url)?;
             let resp = self.get(&url, repo, auth).await?;
             next = resp
                 .headers()
@@ -392,7 +410,7 @@ impl HubClient {
             return Ok(None);
         }
         let name = me.get("name").and_then(|v| v.as_str()).unwrap_or_default();
-        if !is_user_name(name) {
+        if !crate::names::is_name_part(name) {
             return Err(HubError::Malformed(format!("account name {name:?}")));
         }
         Ok(Some(name.to_string()))
@@ -402,12 +420,14 @@ impl HubClient {
     /// Hugging Face; datasets, Spaces and names that are not a model's
     /// are left out.
     pub async fn liked_models(&self, user: &str) -> Result<Vec<String>, HubError> {
-        if !is_user_name(user) {
+        if !crate::names::is_name_part(user) {
             return Err(HubError::Malformed(format!("account name {user:?}")));
         }
         let mut models = Vec::new();
         let mut next = Some(format!("{}/api/users/{user}/likes", self.endpoint));
+        let mut asked = Pages::default();
         while let Some(url) = next {
+            asked.turn(&url)?;
             let resp = self.get(&url, "your likes", None).await?;
             next = resp
                 .headers()
@@ -432,15 +452,34 @@ impl HubClient {
     }
 }
 
-/// Hugging Face's rule for an account name, which goes into a path.
-fn is_user_name(name: &str) -> bool {
-    !name.is_empty()
-        && name.len() <= 96
-        && !name.starts_with(['-', '.'])
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        && !name.contains("..")
+/// The most pages of one listing that are followed. Hugging Face gives a
+/// thousand entries a page, so this is far past any real repository.
+const MAX_PAGES: usize = 1000;
+
+/// The pages of one listing asked so far: a provider that keeps naming a
+/// next page (a fault, or a link back to a page already read) is stopped
+/// here, not followed for ever.
+#[derive(Default)]
+struct Pages {
+    asked: std::collections::HashSet<String>,
+}
+
+impl Pages {
+    /// Note that `url` is asked next; an error when it was asked before or
+    /// the listing has gone on for too long.
+    fn turn(&mut self, url: &str) -> Result<(), HubError> {
+        if self.asked.len() >= MAX_PAGES {
+            return Err(HubError::Malformed(format!(
+                "a listing of more than {MAX_PAGES} pages"
+            )));
+        }
+        if !self.asked.insert(url.to_string()) {
+            return Err(HubError::Malformed(format!(
+                "a listing whose next page is one already read: {url}"
+            )));
+        }
+        Ok(())
+    }
 }
 
 /// Pull the `rel="next"` target out of a `Link` header.
@@ -638,6 +677,69 @@ mod tests {
         let hub = HubClient::new(server.uri(), None).unwrap();
         let err = hub.snapshot("org/gone", "main").await.unwrap_err();
         assert!(matches!(err, HubError::NotAvailable { status: 401, .. }));
+    }
+
+    #[tokio::test]
+    async fn a_listing_whose_next_page_is_itself_is_stopped() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/models/org/repo/revision/main"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"sha": COMMIT})))
+            .mount(&server)
+            .await;
+        let again = format!(
+            r#"<{}/api/models/org/repo/tree/{COMMIT}?recursive=true&expand=false>; rel="next""#,
+            server.uri()
+        );
+        Mock::given(method("GET"))
+            .and(path(format!("/api/models/org/repo/tree/{COMMIT}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("link", again.as_str())
+                    .set_body_json(json!([])),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let hub = HubClient::new(server.uri(), None).unwrap();
+        let said = hub.snapshot("org/repo", "main").await.unwrap_err();
+        assert!(said.to_string().contains("already read"), "{said}");
+
+        let mut pages = Pages::default();
+        for n in 0..MAX_PAGES {
+            pages.turn(&format!("page {n}")).unwrap();
+        }
+        assert!(pages.turn("one more").is_err());
+    }
+
+    #[tokio::test]
+    async fn a_name_or_a_revision_that_is_not_one_is_not_asked_about() {
+        // Nothing is mounted: a request would be answered 404, which reads
+        // as "not available". These are refused before any request.
+        let server = MockServer::start().await;
+        let hub = HubClient::new(server.uri(), Some("secret".into())).unwrap();
+        for (repo, revision) in [
+            ("org/repo", ".."),
+            ("org/repo", "main?x=1"),
+            ("org/repo", "main#x"),
+            ("..", "main"),
+            ("org/repo/../../x", "main"),
+            ("org/re po", "main"),
+        ] {
+            assert!(
+                matches!(
+                    hub.snapshot(repo, revision).await,
+                    Err(HubError::Malformed(_))
+                ),
+                "{repo}@{revision}"
+            );
+        }
+        assert!(server.received_requests().await.unwrap().is_empty());
+        // A single name from before organisations is asked about.
+        assert!(matches!(
+            hub.snapshot("gpt2", "refs/pr/3").await,
+            Err(HubError::NotAvailable { .. })
+        ));
     }
 
     #[tokio::test]

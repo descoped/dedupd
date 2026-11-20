@@ -16,6 +16,7 @@ pub struct Status {
     pub repos: Vec<Repository>,
 }
 
+/// What the store and the apps hold, in totals.
 pub fn status(db: &Db, store: &Store) -> Result<Status> {
     let (store_files, store_bytes) = store_totals(db, store)?;
     Ok(Status {

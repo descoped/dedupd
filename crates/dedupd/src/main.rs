@@ -276,7 +276,7 @@ pub fn backup_if_attached(o: &Opened) {
 
 /// Whether two names are of one folder: `~/.dedupd` and the same folder
 /// reached through a link, or written with a trailing slash, are one.
-fn same_folder(a: &Path, b: &Path) -> bool {
+pub(crate) fn same_folder(a: &Path, b: &Path) -> bool {
     match (std::fs::canonicalize(a), std::fs::canonicalize(b)) {
         (Ok(a), Ok(b)) => a == b,
         _ => a == b,

@@ -307,11 +307,11 @@ async fn model(server: &Arc<Server>, repo: &str) -> Response {
         _ => (Vec::new(), None),
     };
     let local = {
-        let db = engine.db();
+        let db = &engine.db;
         let installed = Installed::detect(&engine.dirs);
         let variants =
-            library::local_variants(&db, &engine.store, repo, &files, &meta.formats, &installed);
-        let detail = library::model(&db, &engine.store, repo, &installed);
+            library::local_variants(db, &engine.store, repo, &files, &meta.formats, &installed);
+        let detail = library::model(db, &engine.store, repo, &installed);
         variants.and_then(|v| Ok((v, detail?)))
     };
     let (variants, detail) = match local {

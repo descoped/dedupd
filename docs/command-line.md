@@ -11,7 +11,8 @@ order: 3
 `~/.dedupd/bin/dedupd` and runs the daemon from there. The macOS app carries the same command inside it.
 
 The command line works on the store directly, also while the daemon runs. `pull` and `activate` are handed to the
-daemon when one is running, so one process does the downloading.
+daemon when one is running, so one process does the downloading. So are `archive --apply` and `restore`: the daemon
+keeps its downloads away from the model while its files move.
 
 ## A model's name
 

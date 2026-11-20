@@ -317,6 +317,14 @@ pub async fn check_store(server: Arc<Server>) {
                 check.archive_away = r.archive_away as u64;
                 check.damaged = r.damaged;
                 check.missing = r.missing;
+                // Not damaged, and not checked either: said as it is.
+                if let Some((sha, why)) = r.unreadable.first() {
+                    check.error = Some(format!(
+                        "{} of the files could not be read, so nothing is known about them (the first: {}: {why})",
+                        r.unreadable.len(),
+                        sha.get(..12).unwrap_or(sha)
+                    ));
+                }
             }
             Ok(Err(e)) => check.error = Some(format!("{e:#}")),
             Err(e) => check.error = Some(e.to_string()),

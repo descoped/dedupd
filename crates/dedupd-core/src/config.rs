@@ -41,12 +41,13 @@ pub struct Config {
 }
 
 /// Days between full checks of the store unless `verify_days` says otherwise.
-pub const DEFAULT_VERIFY_DAYS: u64 = 7;
+const DEFAULT_VERIFY_DAYS: u64 = 7;
 /// Seconds between scans of the app folders unless `scan_interval` says
 /// otherwise.
-pub const DEFAULT_SCAN_INTERVAL: u64 = 300;
+const DEFAULT_SCAN_INTERVAL: u64 = 300;
 
 impl Config {
+    /// Where the config file of `home` is.
     pub fn path(home: &Home) -> PathBuf {
         home.config_path()
     }
@@ -69,6 +70,17 @@ impl Config {
     /// written when the result would not be a valid config.
     pub fn update(home: &Home, changes: &BTreeMap<Setting, serde_json::Value>) -> Result<Self> {
         let path = Self::path(home);
+        std::fs::create_dir_all(home.root())?;
+        // The daemon (a setting changed in the app) and the command line
+        // (`install --env`) both come here: one at a time, so neither
+        // drops the other's change.
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(home.root().join("config.lock"))
+            .context("opening the config lock")?;
+        lock.lock().context("waiting for the config lock")?;
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -98,13 +110,12 @@ impl Config {
         }
         let text = doc.to_string();
         let config: Self = toml::from_str(&text).context("the settings are not valid")?;
-        std::fs::create_dir_all(home.root())?;
-        let tmp = path.with_extension("toml.tmp");
-        std::fs::write(&tmp, text).with_context(|| format!("writing {}", tmp.display()))?;
-        std::fs::rename(&tmp, &path).with_context(|| format!("writing {}", path.display()))?;
+        crate::paths::write_in_one_step(&path, text.as_bytes())
+            .with_context(|| format!("writing {}", path.display()))?;
         Ok(config)
     }
 
+    /// The address the daemon listens on: the setting, or the default.
     pub fn listen(&self) -> &str {
         self.listen.as_deref().unwrap_or(DEFAULT_LISTEN)
     }

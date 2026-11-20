@@ -18,7 +18,7 @@ pub struct Selection {
 
 /// Match `text` against a pattern where `*` is any run of characters and `?`
 /// is any one character. Case-insensitive.
-pub fn glob_match(pattern: &str, text: &str) -> bool {
+pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     let p: Vec<char> = pattern.to_lowercase().chars().collect();
     let t: Vec<char> = text.to_lowercase().chars().collect();
     let (mut pi, mut ti, mut star, mut mark) = (0, 0, None, 0);
@@ -55,7 +55,12 @@ fn is_projector(path: &str) -> bool {
 
 /// The name of a GGUF without the `-00001-of-00004` part of a split file.
 fn gguf_group(path: &str) -> String {
-    let stem = path.strip_suffix(".gguf").unwrap_or(path);
+    // The ending in any case, as `is_gguf` takes it.
+    let stem = if is_gguf(path) {
+        &path[..path.len() - ".gguf".len()]
+    } else {
+        path
+    };
     let parts: Vec<&str> = stem.rsplitn(4, '-').collect();
     let digits = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
     if parts.len() == 4 && digits(parts[0]) && parts[1] == "of" && digits(parts[2]) {
@@ -67,7 +72,7 @@ fn gguf_group(path: &str) -> String {
 
 /// The quantization in a GGUF's name, for example `Q4_K_M` in
 /// `Model-Q4_K_M`. The whole name when it does not say.
-pub fn quant_label(group: &str) -> String {
+pub(crate) fn quant_label(group: &str) -> String {
     let name = file_name(group);
     let looks_like_one = |token: &str| {
         let t = token.to_lowercase();
@@ -292,6 +297,13 @@ mod tests {
 
     fn paths(v: &[TreeEntry]) -> Vec<&str> {
         v.iter().map(|e| e.path.as_str()).collect()
+    }
+
+    #[test]
+    fn a_split_file_with_an_upper_case_ending_is_one_group() {
+        assert_eq!(gguf_group("m-Q4_K_M-00001-of-00002.GGUF"), "m-Q4_K_M");
+        assert_eq!(gguf_group("m-Q4_K_M-00002-of-00002.gguf"), "m-Q4_K_M");
+        assert_eq!(gguf_group("m-Q4_K_M.Gguf"), "m-Q4_K_M");
     }
 
     #[test]

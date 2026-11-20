@@ -22,7 +22,7 @@ use crate::paths::Home;
 use dedupd_api::favorites::{Favorite, FavoriteSource, Favorites, LikesSync};
 
 /// How long the likes read are taken as current.
-pub const LIKES_FRESH_FOR: i64 = 3600;
+const LIKES_FRESH_FOR: i64 = 3600;
 
 /// What the file holds.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -88,10 +88,8 @@ impl Kept {
 
     fn save(&self, home: &Home) -> Result<()> {
         let target = home.favorites_path();
-        let tmp = home.root().join(".favorites.json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(self)?)
-            .with_context(|| format!("writing {}", tmp.display()))?;
-        std::fs::rename(&tmp, &target).with_context(|| format!("writing {}", target.display()))
+        crate::paths::write_in_one_step(&target, &serde_json::to_vec_pretty(self)?)
+            .with_context(|| format!("writing {}", target.display()))
     }
 
     /// The control API's answer: newest first.

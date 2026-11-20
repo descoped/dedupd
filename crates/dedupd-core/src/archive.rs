@@ -111,25 +111,48 @@ pub fn sync(
     {
         return Ok(report);
     }
-    let tmp = archive.root().join("dedupd.sqlite.tmp");
-    let _ = fs::remove_file(&tmp);
-    lock(db)
-        .vacuum_into(&tmp)
-        .context("copying the database to the archive")?;
-    fs::rename(&tmp, archive.db_path())?;
+    // The database lock is held only while the copy is written to the
+    // internal disk. Writing it to the archive disk, which may be slow or
+    // go away part of the way, comes after, with the lock given back.
+    // Both names carry the process id: the daemon and a `dedupd backup`
+    // beside it each write their own, and `Store::clear_leftovers` removes
+    // what a stopped process left.
+    let made = store.tmp_path(&crate::store::db_copy_name(std::process::id()));
+    let _ = fs::remove_file(&made);
+    fs::create_dir_all(archive.tmp_dir())
+        .with_context(|| format!("creating {}", archive.tmp_dir().display()))?;
+    let tmp = archive
+        .tmp_dir()
+        .join(crate::store::db_copy_name(std::process::id()));
+    let copied = (|| -> Result<()> {
+        lock(db)
+            .vacuum_into(&made)
+            .context("copying the database for the archive")?;
+        let _ = fs::remove_file(&tmp);
+        fs::copy(&made, &tmp)
+            .with_context(|| format!("copying the database to {}", tmp.display()))?;
+        // On the disk before it takes the place of the copy that is there:
+        // a disk pulled out a moment later still holds a whole database.
+        fs::File::open(&tmp)?.sync_all()?;
+        fs::rename(&tmp, archive.db_path())
+            .with_context(|| format!("putting {} in place", archive.db_path().display()))?;
+        fs::File::open(archive.root())?.sync_all()?;
+        Ok(())
+    })();
+    let _ = fs::remove_file(&made);
+    if copied.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    copied?;
     Ok(report)
 }
-
-/// One copy to the archive at a time in this process: the daemon's backup
-/// and an archive the owner asked for may want the same file.
-static COPYING: Mutex<()> = Mutex::new(());
 
 /// Copy one stored file to the archive, hashing it as it is written. A copy
 /// that does not hash to its name is not kept. A copy of the right size
 /// that is already there is left alone, unless `replace` says it is bad.
 fn copy_in(store: &Store, archive: &Home, sha256: &str, replace: bool) -> Result<()> {
     let (src, dst) = (store.blob_path(sha256), archive.blob_path(sha256));
-    let _one = COPYING.lock().unwrap_or_else(|e| e.into_inner());
+    let _one = store.copying_to_archive();
     // Another caller may have written it while this one waited.
     let same_size = |a: &std::path::Path, b: &std::path::Path| matches!((fs::metadata(a), fs::metadata(b)), (Ok(x), Ok(y)) if x.len() == y.len());
     if !replace && same_size(&src, &dst) {
@@ -148,7 +171,7 @@ fn copy_in(store: &Store, archive: &Home, sha256: &str, replace: bool) -> Result
         }
         fs::set_permissions(&tmp, fs::Permissions::from_mode(0o444))?;
         fs::create_dir_all(dst.parent().expect("blob path has a parent"))?;
-        let _ = fs::remove_file(&dst);
+        // The rename replaces a copy that is there, in one step.
         fs::rename(&tmp, &dst)?;
         // The name must be on the disk too before anything relies on it.
         fs::File::open(dst.parent().expect("blob path has a parent"))?.sync_all()?;
@@ -394,7 +417,10 @@ fn archive_quietly(
     for blob in &plan.remove {
         match secure(store, archive, blob) {
             Ok(copied) => report.copied += u64::from(copied),
-            Err(e) => failed.push(format!("{}: {e:#}", &blob.sha256[..12])),
+            Err(e) => failed.push(format!(
+                "{}: {e:#}",
+                blob.sha256.get(..12).unwrap_or(&blob.sha256)
+            )),
         }
         on_file(blob.size);
     }
@@ -417,6 +443,7 @@ fn archive_quietly(
         .map(|p| p.sha256)
         .collect();
     report.keep = plan.keep;
+    let mut marked = false;
     for blob in plan.remove {
         if in_apps.contains(&blob.sha256) {
             report.keep.push(KeptStored {
@@ -426,12 +453,22 @@ fn archive_quietly(
             });
             continue;
         }
+        // The model is marked before its first file leaves the store: a
+        // stop from here on leaves a model that is marked archived with
+        // some files still local, which a second archive and a restore
+        // both finish, and never one that is unmarked and incomplete.
+        if !marked {
+            lock(db).set_archived(id, Some(crate::now()))?;
+            marked = true;
+        }
         let path = store.blob_path(&blob.sha256);
         fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
         report.files += 1;
         report.freed += blob.size;
     }
-    lock(db).set_archived(id, Some(crate::now()))?;
+    if !marked {
+        lock(db).set_archived(id, Some(crate::now()))?;
+    }
     Ok(report)
 }
 
@@ -560,7 +597,10 @@ fn restore_quietly(
     };
     for blob in &plan.copy {
         if !store.ensure_local(&blob.sha256)? {
-            bail!("{} is gone from the archive disk", &blob.sha256[..12]);
+            bail!(
+                "{} is gone from the archive disk",
+                blob.sha256.get(..12).unwrap_or(&blob.sha256)
+            );
         }
         report.files += 1;
         report.bytes += blob.size;

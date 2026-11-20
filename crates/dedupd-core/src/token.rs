@@ -69,26 +69,37 @@ pub fn goes_to(endpoint: &str, url: &str) -> bool {
 /// Where `from_environment` would read the token from: the name
 /// of the variable or the path of the file. `None` when there is none.
 pub fn source() -> Option<String> {
-    if std::env::var("HF_TOKEN").is_ok_and(|t| !t.trim().is_empty()) {
-        return Some("HF_TOKEN".into());
-    }
-    let file = token_file()?;
-    let text = std::fs::read_to_string(&file).ok()?;
-    (!text.trim().is_empty()).then(|| file.to_string_lossy().into_owned())
+    found().map(|(source, _)| source)
 }
 
 /// The token other Hugging Face tools use: `HF_TOKEN`, else the token file.
 pub fn from_environment() -> Option<String> {
-    if let Ok(t) = std::env::var("HF_TOKEN")
-        && !t.trim().is_empty()
-    {
-        return Some(t.trim().to_string());
-    }
-    let t = std::fs::read_to_string(token_file()?).ok()?;
-    (!t.trim().is_empty()).then(|| t.trim().to_string())
+    found().map(|(_, token)| token)
 }
 
-/// The file Hugging Face's own tools keep the token in.
+/// The one place that says where the token is looked for: its source and
+/// its value. A value that cannot be a token counts as none (see
+/// `usable`), so the next place is tried and `source` never names a place
+/// the client does not read.
+fn found() -> Option<(String, String)> {
+    if let Some(token) = std::env::var("HF_TOKEN").ok().as_deref().and_then(usable) {
+        return Some(("HF_TOKEN".into(), token));
+    }
+    let file = token_file()?;
+    let token = usable(&std::fs::read_to_string(&file).ok()?)?;
+    Some((file.to_string_lossy().into_owned(), token))
+}
+
+/// The token in `text`, trimmed, when it can be one: visible ASCII with
+/// no space in it. Anything else (a file with a second line, a control
+/// character) cannot be sent as a header; taken as a token it would make
+/// every request fail as if the provider were out of reach.
+fn usable(text: &str) -> Option<String> {
+    let token = text.trim();
+    (!token.is_empty() && token.len() <= 4096 && token.bytes().all(|b| b.is_ascii_graphic()))
+        .then(|| token.to_string())
+}
+
 fn token_file() -> Option<PathBuf> {
     std::env::var_os("HF_TOKEN_PATH")
         .map(PathBuf::from)
@@ -100,7 +111,22 @@ fn token_file() -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::goes_to;
+    use super::{goes_to, usable};
+
+    #[test]
+    fn a_value_that_cannot_be_a_header_is_not_a_token() {
+        assert_eq!(usable(" hf_abc123\n").as_deref(), Some("hf_abc123"));
+        for bad in [
+            "",
+            "  \n",
+            "hf_abc\nhf_def",
+            "hf abc",
+            "hf_\u{7}abc",
+            "hf_æ",
+        ] {
+            assert_eq!(usable(bad), None, "{bad:?}");
+        }
+    }
 
     #[test]
     fn only_the_endpoints_own_host_gets_the_token() {

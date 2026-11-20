@@ -85,10 +85,8 @@ impl Refusals {
         });
         known.list.push(refusal);
         let target = path(home);
-        let tmp = home.root().join(".refusals.json.tmp");
-        std::fs::write(&tmp, serde_json::to_vec_pretty(&known.list)?)
-            .with_context(|| format!("writing {}", tmp.display()))?;
-        std::fs::rename(&tmp, &target).with_context(|| format!("writing {}", target.display()))?;
+        crate::paths::write_in_one_step(&target, &serde_json::to_vec_pretty(&known.list)?)
+            .with_context(|| format!("writing {}", target.display()))?;
         Ok(())
     }
 }

@@ -19,6 +19,7 @@ use dedupd_api::library::{
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 
 /// The most of a README that is handed out.
 const README_LIMIT: u64 = 512 * 1024;
@@ -34,7 +35,8 @@ fn model_of(db: &Db, row: RepoRow) -> Result<LibraryModel> {
     if meta.formats.is_empty() {
         // Nothing from the provider says; the files do.
         let any = |test: &dyn Fn(&str, &str) -> bool| facts.placed.iter().any(|(a, p)| test(a, p));
-        if any(&|app, path| select::is_gguf(path) || app == App::Ollama.as_str()) {
+        // By the files' names, not by the app: Ollama also holds MLX models.
+        if any(&|_, path| select::is_gguf(path)) {
             meta.formats.push("gguf".into());
         }
         if any(&|_, path| path.ends_with(".safetensors")) {
@@ -59,8 +61,8 @@ fn model_of(db: &Db, row: RepoRow) -> Result<LibraryModel> {
         not_upstream: facts.not_upstream,
         unchecked: facts.unchecked,
         upstream: match row.upstream.as_deref() {
-            Some("ok") => UpstreamState::Ok,
-            Some("gone") => UpstreamState::Gone,
+            Some(crate::db::UPSTREAM_OK) => UpstreamState::Ok,
+            Some(crate::db::UPSTREAM_GONE) => UpstreamState::Gone,
             _ => UpstreamState::Unknown,
         },
         checked_at: row.checked_at,
@@ -78,33 +80,62 @@ pub fn models(db: &Db) -> Result<Vec<LibraryModel>> {
 }
 
 /// `org/repo:quant` for a variant of a GGUF repository, else `org/repo`.
-pub fn spec_of(repo: &str, variant: &select::Variant) -> String {
+fn spec_of(repo: &str, variant: &select::Variant) -> String {
     match &variant.quant {
         Some(q) => format!("{repo}:{q}"),
         None => repo.to_string(),
     }
 }
 
+/// What the database says about the files of one revision: which stored
+/// file each one is, and which apps hold which stored file. Read under the
+/// database lock; the disks are looked at afterwards, without it.
+struct VariantRows {
+    holders: BTreeMap<String, BTreeSet<App>>,
+    /// Each file's content, when the store knows it.
+    content: BTreeMap<String, Option<String>>,
+}
+
+fn variant_rows(db: &Db, repo: &str, entries: &[TreeEntry]) -> Result<VariantRows> {
+    let mut content = BTreeMap::new();
+    for e in entries {
+        content.insert(e.path.clone(), db.blob_for_entry(e)?.map(|b| b.sha256));
+    }
+    Ok(VariantRows {
+        holders: db.holders(repo)?,
+        content,
+    })
+}
+
 /// The ways a revision with these files can be used, and how much of each
 /// is in the store and in the apps. The repository need not be archived.
+/// The database is locked only while its rows are read: the refusals file,
+/// the stored `config.json` and the store's folder are read after that.
 pub fn local_variants(
-    db: &Db,
+    db: &Mutex<Db>,
     store: &Store,
     repo: &str,
     entries: &[TreeEntry],
     formats: &[String],
     installed: &Installed,
 ) -> Result<Vec<Variant>> {
-    let holders = db.holders(repo)?;
-    // Each file's content, when the store knows it.
-    let mut content: BTreeMap<&str, Option<String>> = BTreeMap::new();
-    for e in entries {
-        content.insert(&e.path, db.blob_for_entry(e)?.map(|b| b.sha256));
-    }
-    let sha_of = |path: &str| content.get(path).and_then(|s| s.as_deref());
+    let rows = variant_rows(&crate::db::lock(db), repo, entries)?;
+    Ok(variants_of(&rows, store, repo, entries, formats, installed))
+}
+
+fn variants_of(
+    rows: &VariantRows,
+    store: &Store,
+    repo: &str,
+    entries: &[TreeEntry],
+    formats: &[String],
+    installed: &Installed,
+) -> Vec<Variant> {
+    let holders = &rows.holders;
+    let sha_of = |path: &str| rows.content.get(path).and_then(|s| s.as_deref());
     // What an app said when it was asked about this model before.
     let refusals = Refusals::load(store.home());
-    Ok(select::variants(entries)
+    select::variants(entries)
         .into_iter()
         .filter(|v| !v.files.is_empty())
         .map(|v| {
@@ -151,7 +182,7 @@ pub fn local_variants(
                 name: v.name,
             }
         })
-        .collect())
+        .collect()
 }
 
 /// The Hugging Face repositories the database knows, each with the apps
@@ -161,35 +192,54 @@ pub fn presence(db: &Db) -> Result<BTreeMap<String, Vec<App>>> {
 }
 
 /// Everything about one repository. `None` when the database does not
-/// know it.
+/// know it. The database is locked only while its rows are read; the
+/// store, the README and the archive disk (which may be asleep and answer
+/// after seconds) are looked at after the lock is given back.
 pub fn model(
-    db: &Db,
+    db: &Mutex<Db>,
     store: &Store,
     repo: &str,
     installed: &Installed,
 ) -> Result<Option<ModelDetail>> {
-    let Some(row) = db.repo_rows(Some(repo))?.into_iter().next() else {
-        return Ok(None);
+    /// One file of a revision with the stored file it is, when known.
+    type Listed = (TreeEntry, Option<String>);
+    let (name, model, placements, refs, rows, listed, variant_rows) = {
+        let db = crate::db::lock(db);
+        let Some(row) = db.repo_rows(Some(repo))?.into_iter().next() else {
+            return Ok(None);
+        };
+        let (repo_id, name) = (row.id, row.name.clone());
+        let model = model_of(&db, row)?;
+        let placements = db.placements_of(repo_id)?;
+        let refs = db.refs(repo_id)?;
+        let rows = db.revisions_of(repo_id, model.commit.as_deref())?;
+        let mut listed: Vec<Vec<Listed>> = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let mut files = Vec::new();
+            for e in db.revision_entries(row.id)? {
+                let sha = db.blob_for_entry(&e)?.map(|b| b.sha256);
+                files.push((e, sha));
+            }
+            listed.push(files);
+        }
+        let newest: Vec<TreeEntry> = listed
+            .first()
+            .map(|files| files.iter().map(|(e, _)| e.clone()).collect())
+            .unwrap_or_default();
+        let variant_rows = variant_rows(&db, &name, &newest)?;
+        (name, model, placements, refs, rows, listed, variant_rows)
     };
-    let (repo_id, name) = (row.id, row.name.clone());
-    let model = model_of(db, row)?;
-    let placements = db.placements_of(repo_id)?;
+
     let mut holders: BTreeMap<&str, BTreeSet<App>> = BTreeMap::new();
     for p in &placements {
         holders.entry(&p.sha256).or_default().insert(p.app);
     }
-
     let archive = store.archive().filter(|a| a.attached());
-    let refs = db.refs(repo_id)?;
-    let rows = db.revisions_of(repo_id, model.commit.as_deref())?;
     let mut revisions = Vec::new();
-    let mut newest: Option<Vec<TreeEntry>> = None;
     let mut readme = None;
-    for row in &rows {
-        let entries = db.revision_entries(row.id)?;
+    for (row, entries) in rows.iter().zip(&listed) {
         let mut files = Vec::with_capacity(entries.len());
-        for e in &entries {
-            let sha = db.blob_for_entry(e)?.map(|b| b.sha256);
+        for (e, sha) in entries {
             let stored = sha.as_deref().is_some_and(|s| store.contains(s));
             if readme.is_none() && stored && e.path.eq_ignore_ascii_case("README.md") {
                 readme = sha.as_deref().and_then(|s| read_text(&store.blob_path(s)));
@@ -200,7 +250,7 @@ pub fn model(
                 git_oid: e.git_oid.clone(),
                 lfs: e.lfs_sha256.is_some(),
                 stored,
-                archived: match (&sha, archive) {
+                archived: match (sha, archive) {
                     (Some(s), Some(a)) => a.blob_path(s).is_file(),
                     _ => false,
                 },
@@ -209,7 +259,7 @@ pub fn model(
                     .and_then(|s| holders.get(s))
                     .map(|apps| apps.iter().copied().collect())
                     .unwrap_or_default(),
-                sha256: sha.or_else(|| e.lfs_sha256.clone()),
+                sha256: sha.clone().or_else(|| e.lfs_sha256.clone()),
             });
         }
         revisions.push(Revision {
@@ -220,20 +270,24 @@ pub fn model(
                 .filter(|(_, c)| *c == row.commit)
                 .map(|(name, _)| name.clone())
                 .collect(),
-            bytes: entries.iter().map(|e| e.size).sum(),
+            bytes: entries.iter().map(|(e, _)| e.size).sum(),
             files,
         });
-        newest.get_or_insert(entries);
     }
 
-    let variants = local_variants(
-        db,
+    let newest: Vec<TreeEntry> = listed
+        .into_iter()
+        .next()
+        .map(|files| files.into_iter().map(|(e, _)| e).collect())
+        .unwrap_or_default();
+    let variants = variants_of(
+        &variant_rows,
         store,
         &name,
-        &newest.unwrap_or_default(),
+        &newest,
         &model.meta.formats,
         installed,
-    )?;
+    );
 
     Ok(Some(ModelDetail {
         model,
@@ -308,16 +362,39 @@ pub fn locations(db: &Db, store: &Store, dirs: &AppDirs) -> Result<Locations> {
     })
 }
 
+/// Whether the provider's refusal says the model is gone, and not only
+/// that this caller may not see it. 404 and 410 say gone. 401 is what the
+/// provider answers for a missing model when no token is sent, so it says
+/// gone only then: with a token, 401 is the token's own trouble (expired,
+/// taken back). 403 is a model whose terms were not accepted.
+fn says_gone(status: u16, has_token: bool) -> bool {
+    matches!(status, 404 | 410) || (status == 401 && !has_token)
+}
+
 /// Ask the provider whether it still has the repository and where `main`
 /// is now, and note the answer. Nothing is downloaded. Fails with
 /// [`crate::db::NotInLibrary`] for a model the database does not know, with
-/// the provider's [`HubError`] when it could not be asked, and when the
-/// answer cannot be noted, so a check that says it is done was kept.
-pub async fn check_upstream(engine: &Engine, repo: &str) -> Result<UpstreamCheck> {
+/// the provider's [`HubError`] when it could not be asked or would not
+/// show the model to this caller (what is known about the model then
+/// stays as it was), and when the answer cannot be noted, so a check that
+/// says it is done was kept.
+pub async fn check_upstream(engine: &Arc<Engine>, repo: &str) -> Result<UpstreamCheck> {
+    // The database is asked off the runtime: its lock may be held by a
+    // caller that is reading a disk.
     let known = {
-        let db = engine.db();
-        let id = db.known_repo(repo)?;
-        db.ref_commit(id, "main")?
+        let repo = repo.to_string();
+        crate::engine::blocking(engine, move |engine| {
+            let db = engine.db();
+            let id = db.known_repo(&repo)?;
+            db.ref_commit(id, "main")
+        })
+        .await?
+    };
+    let note = |gone: bool| {
+        let repo = repo.to_string();
+        crate::engine::blocking(engine, move |engine| {
+            engine.db().set_upstream(PROVIDER_HF, &repo, gone)
+        })
     };
     let path = format!(
         "/api/models/{}/revision/main",
@@ -333,7 +410,7 @@ pub async fn check_upstream(engine: &Engine, repo: &str) -> Result<UpstreamCheck
     match answer {
         Ok(info) => {
             let latest = info.get("sha").and_then(|v| v.as_str()).map(str::to_string);
-            engine.db().set_upstream(PROVIDER_HF, repo, false)?;
+            note(false).await?;
             Ok(UpstreamCheck {
                 upstream: UpstreamState::Ok,
                 changed: latest.is_some() && latest != known,
@@ -341,8 +418,8 @@ pub async fn check_upstream(engine: &Engine, repo: &str) -> Result<UpstreamCheck
                 latest,
             })
         }
-        Err(HubError::NotAvailable { .. }) => {
-            engine.db().set_upstream(PROVIDER_HF, repo, true)?;
+        Err(HubError::NotAvailable { status, .. }) if says_gone(status, engine.hub.has_token()) => {
+            note(true).await?;
             Ok(UpstreamCheck {
                 upstream: UpstreamState::Gone,
                 commit: known,
@@ -351,5 +428,21 @@ pub async fn check_upstream(engine: &Engine, repo: &str) -> Result<UpstreamCheck
             })
         }
         Err(e) => Err(e.into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refusal_is_not_a_model_that_is_gone() {
+        // Not there, with or without a token.
+        assert!(says_gone(404, true) && says_gone(404, false) && says_gone(410, true));
+        // What the provider answers for a missing model when no token is sent.
+        assert!(says_gone(401, false));
+        // A token that expired, and terms that were not accepted.
+        assert!(!says_gone(401, true));
+        assert!(!says_gone(403, true) && !says_gone(403, false));
     }
 }

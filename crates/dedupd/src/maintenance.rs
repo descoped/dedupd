@@ -37,6 +37,9 @@ pub fn cmd_verify(o: &Opened, archive: bool, jobs: usize) -> Result<()> {
         report.damaged.len(),
         report.missing.len()
     );
+    for (sha, why) in &report.unreadable {
+        println!("  COULD NOT READ {sha}: {why}");
+    }
     if report.only_in_archive > 0 {
         println!(
             "{} files are only on the archive disk.",

@@ -45,6 +45,8 @@ impl Expect {
     }
 }
 
+/// A file that is in the store after a fetch: its sha256 and size, and
+/// its git blob id when the file was asked for by that id.
 #[derive(Debug, Clone)]
 pub struct Fetched {
     pub sha256: String,
@@ -105,6 +107,8 @@ pub trait Watch: Send + Sync {
     fn bytes(&self, delta: i64);
     /// This many bytes just came over the network.
     fn received(&self, _bytes: u64) {}
+    /// Nothing moves for now, and why: the server asked for a pause, or
+    /// it cannot be reached. `running` follows when bytes move again.
     fn waiting(&self, _why: Wait) {}
     /// Bytes are moving again.
     fn running(&self) {}
@@ -183,6 +187,9 @@ enum Failure {
     NoRanges,
 }
 
+/// Downloads files into the store: resumable, in parts for large files,
+/// each verified against its hash before it is stored. One per process;
+/// the daemon's queue and its front ends share it.
 pub struct Fetcher {
     http: reqwest::Client,
     /// The same client, except that it hands redirects back to the caller.
@@ -201,6 +208,8 @@ pub struct Fetcher {
 }
 
 impl Fetcher {
+    /// A fetcher for the provider at `endpoint`, with a fixed token or
+    /// none. Fails only when the HTTP client cannot be built.
     pub fn new(endpoint: impl Into<String>, token: Option<String>) -> Result<Self> {
         let builder = || {
             reqwest::Client::builder()
@@ -257,6 +266,8 @@ impl Fetcher {
         &self.endpoint
     }
 
+    /// The HTTP client, for a request this fetcher has no method for.
+    /// It follows redirects and attaches no token.
     pub fn http(&self) -> &reqwest::Client {
         &self.http
     }
@@ -283,6 +294,9 @@ impl Fetcher {
         self.token.get().map(|t| format!("Bearer {t}"))
     }
 
+    /// The address of a file of a repository at a commit. `repo` and
+    /// `commit` go in as they are: the caller has checked them (`names`,
+    /// `hub::is_commit`). The path is escaped here.
     pub fn resolve_url(&self, repo: &str, commit: &str, path: &str) -> String {
         format!(
             "{}/{repo}/resolve/{commit}/{}",
@@ -291,6 +305,9 @@ impl Fetcher {
         )
     }
 
+    /// The address of a layer in the provider's Ollama registry. Both
+    /// parts go in as they are: the caller has checked them
+    /// (`names::is_repo_name`, `names::is_sha256`).
     pub fn registry_blob_url(&self, repo: &str, sha256: &str) -> String {
         format!("{}/v2/{repo}/blobs/sha256:{sha256}", self.endpoint)
     }
@@ -305,6 +322,12 @@ impl Fetcher {
     /// Download `url` into the store. An interrupted download continues from
     /// where it stopped, in this run or a later one. `watch` is told about
     /// every byte; when the download fails, what it was told is taken back.
+    ///
+    /// The errors a caller acts on are typed and found by downcast:
+    /// [`Unavailable`] (the server will not hand the file over),
+    /// [`NoSpace`] and [`WrongContent`] (it arrived damaged twice).
+    /// A future that is dropped part of the way leaves the partial file for
+    /// the next try, and what `watch` was told stays told.
     pub async fn fetch(
         &self,
         store: &Store,
@@ -314,18 +337,13 @@ impl Fetcher {
         watch: &dyn Watch,
     ) -> Result<Fetched> {
         let key = expect.key();
-        let lock = self
-            .in_flight
-            .lock()
-            .expect("lock")
-            .entry(key.clone())
-            .or_default()
-            .clone();
-        let _guard = lock.lock().await;
+        let turn = InFlight::enter(&self.in_flight, key.clone());
+        let _guard = turn.lock.lock().await;
 
         if let Expect::Sha256(h) = expect
             && store.contains(h)
         {
+            // One stat of a file on the internal disk.
             let size = std::fs::metadata(store.blob_path(h))?.len();
             watch.bytes(size as i64);
             return Ok(Fetched {
@@ -391,6 +409,7 @@ impl Fetcher {
                 Expect::GitOid(o) => hashes.git_oid.as_deref() == Some(o.as_str()),
             };
             if ok {
+                // A rename within the store's volume: short.
                 if let Err(e) = store.add_tmp(&part, &hashes.sha256) {
                     watch.undo();
                     return Err(e);
@@ -413,6 +432,7 @@ impl Fetcher {
 
     /// Refuse a download the store's volume cannot hold.
     fn room(&self, store: &Store, needed: u64) -> Result<(), Failure> {
+        // One `statvfs`: short.
         let free = store.free_bytes().map_err(Failure::Fatal)?;
         if needed > free {
             return Err(Failure::Fatal(NoSpace { needed, free }.into()));
@@ -433,6 +453,7 @@ impl Fetcher {
         let count = size.div_ceil(self.part_size);
         let length = |index: u64| (size - index * self.part_size).min(self.part_size);
 
+        // A few hundred bytes from the store's temp folder: short.
         let mut done = PartMap::load(&map_path, size, self.part_size);
         let on_disk = tokio::fs::metadata(part).await.map(|m| m.len()).ok();
         if on_disk != Some(size) {
@@ -470,6 +491,10 @@ impl Fetcher {
                     .await?;
                 let mut guard = shared.lock().expect("lock");
                 guard.1.insert(index);
+                // Written under the lock, so the map on disk never goes
+                // back to an older set. It is short: a few hundred bytes
+                // and a rename in the store's own temp folder, once per
+                // finished part (tens of megabytes of download).
                 PartMap::save(&map_path, size, self.part_size, &guard.1)
                     .map_err(|e| Failure::Fatal(io_error(e, &map_path)))?;
             }
@@ -641,6 +666,10 @@ impl Fetcher {
     /// answer carries its rate limits, and the token must not travel on to
     /// the download server it points at.
     async fn open(&self, url: &str, range: Option<&str>) -> Result<reqwest::Response, Failure> {
+        // What was asked for, for the error: a redirect leads to the
+        // download server's signed address, which is a credential for the
+        // file and not what anyone asked for.
+        let asked = url.to_string();
         let mut url = reqwest::Url::parse(url).map_err(|e| Failure::Fatal(e.into()))?;
         for _ in 0..8 {
             let ours = crate::token::goes_to(&self.endpoint, url.as_str());
@@ -676,13 +705,9 @@ impl Fetcher {
             }
             return match status {
                 200 | 206 => Ok(resp),
-                401 | 403 | 404 | 410 => Err(Failure::Fatal(
-                    Unavailable {
-                        status,
-                        url: url.to_string(),
-                    }
-                    .into(),
-                )),
+                401 | 403 | 404 | 410 => {
+                    Err(Failure::Fatal(Unavailable { status, url: asked }.into()))
+                }
                 // The position asked for is not in the file: the partial
                 // file is stale.
                 416 => Err(Failure::NoRanges),
@@ -707,6 +732,39 @@ impl Fetcher {
     }
 }
 
+/// A caller's turn at one file: the file's lock, and its place in the
+/// map of files being fetched, which is given up when the last caller for
+/// that file is done (also when its future is dropped), so the map holds
+/// only the files in flight.
+struct InFlight<'a> {
+    map: &'a Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    key: String,
+    lock: Arc<tokio::sync::Mutex<()>>,
+}
+
+impl<'a> InFlight<'a> {
+    fn enter(map: &'a Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>, key: String) -> Self {
+        let lock = map
+            .lock()
+            .expect("lock")
+            .entry(key.clone())
+            .or_default()
+            .clone();
+        Self { map, key, lock }
+    }
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        let mut map = self.map.lock().expect("lock");
+        // The map's reference and this one: nobody else waits for the file.
+        // Counted under the map's lock, where every new reference is made.
+        if Arc::strong_count(&self.lock) == 2 {
+            map.remove(&self.key);
+        }
+    }
+}
+
 /// Which parts of a large download are complete, kept beside its partial file.
 struct PartMap;
 
@@ -718,10 +776,13 @@ impl PartMap {
             if value["size"].as_u64()? != size || value["part"].as_u64()? != part_size {
                 return None;
             }
+            // A part past the end of the file is not one: a map that names
+            // any (damaged, or edited by hand) is dropped whole.
+            let parts = size.div_ceil(part_size.max(1));
             value["done"]
                 .as_array()?
                 .iter()
-                .map(|v| v.as_u64())
+                .map(|v| v.as_u64().filter(|index| *index < parts))
                 .collect()
         };
         read().unwrap_or_default()
@@ -744,4 +805,166 @@ fn io_error(e: std::io::Error, path: &Path) -> anyhow::Error {
         return NoSpace { needed: 0, free: 0 }.into();
     }
     anyhow::Error::new(e).context(format!("writing {}", path.display()))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+    use crate::hash::hash_file;
+    use crate::paths::Home;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn sha256_of(bytes: &[u8]) -> String {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("f");
+        std::fs::write(&file, bytes).unwrap();
+        hash_file(&file, false).unwrap().sha256
+    }
+
+    struct Scratch {
+        _dir: tempfile::TempDir,
+        store: Store,
+    }
+
+    fn scratch() -> Scratch {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&Home::new(dir.path().join("home"))).unwrap();
+        Scratch { _dir: dir, store }
+    }
+
+    /// The provider, which sends every download on to `cdn` with a signed
+    /// address.
+    async fn redirecting(cdn: &MockServer) -> MockServer {
+        let provider = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/org/repo/resolve/main/model.bin"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", format!("{}/blob?sig=secret", cdn.uri())),
+            )
+            .mount(&provider)
+            .await;
+        provider
+    }
+
+    #[tokio::test]
+    async fn a_redirect_is_followed_and_the_token_stays_behind() {
+        let bytes = vec![5u8; 3000];
+        let cdn = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/blob"))
+            .respond_with(ResponseTemplate::new(200).set_body_bytes(bytes.clone()))
+            .mount(&cdn)
+            .await;
+        let provider = redirecting(&cdn).await;
+        let fetcher = Fetcher::new(provider.uri(), Some("secret-token".into())).unwrap();
+        let s = scratch();
+        let sha = sha256_of(&bytes);
+        let url = format!("{}/org/repo/resolve/main/model.bin", provider.uri());
+
+        let got = fetcher
+            .fetch(
+                &s.store,
+                &url,
+                Some(3000),
+                &Expect::Sha256(sha.clone()),
+                &Unwatched,
+            )
+            .await
+            .unwrap();
+        assert_eq!((got.sha256.as_str(), got.size), (sha.as_str(), 3000));
+        assert!(s.store.contains(&sha));
+
+        let sent = |server_got: Vec<wiremock::Request>| -> Vec<bool> {
+            server_got
+                .iter()
+                .map(|r| r.headers.contains_key("authorization"))
+                .collect()
+        };
+        // The provider is shown the token; the server it points at is not.
+        let at_provider = sent(provider.received_requests().await.unwrap());
+        let at_cdn = sent(cdn.received_requests().await.unwrap());
+        assert!(!at_provider.is_empty() && at_provider.iter().all(|with| *with));
+        assert!(!at_cdn.is_empty() && at_cdn.iter().all(|with| !*with));
+        // Nothing is kept for a file that is no longer being fetched.
+        assert!(fetcher.in_flight.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_refusal_names_the_address_asked_for_not_the_signed_one() {
+        let cdn = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/blob"))
+            .respond_with(ResponseTemplate::new(403))
+            .mount(&cdn)
+            .await;
+        let provider = redirecting(&cdn).await;
+        let fetcher = Fetcher::new(provider.uri(), None).unwrap();
+        let s = scratch();
+        let url = format!("{}/org/repo/resolve/main/model.bin", provider.uri());
+
+        let said = fetcher
+            .fetch(
+                &s.store,
+                &url,
+                Some(10),
+                &Expect::Sha256("a".repeat(64)),
+                &Unwatched,
+            )
+            .await
+            .unwrap_err();
+        let unavailable = said.downcast_ref::<Unavailable>().expect("typed");
+        assert_eq!(
+            (unavailable.status, unavailable.url.as_str()),
+            (403, url.as_str())
+        );
+        assert!(!format!("{said:#}").contains("sig=secret"), "{said:#}");
+        assert!(fetcher.in_flight.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_redirect_that_leads_nowhere_is_an_error_at_once() {
+        let provider = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(302))
+            .expect(1)
+            .mount(&provider)
+            .await;
+        let fetcher = Fetcher::new(provider.uri(), None).unwrap();
+        let s = scratch();
+        let said = fetcher
+            .fetch(
+                &s.store,
+                &format!("{}/x", provider.uri()),
+                Some(10),
+                &Expect::Sha256("a".repeat(64)),
+                &Unwatched,
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            format!("{said:#}").contains("without a usable Location"),
+            "{said:#}"
+        );
+    }
+
+    #[test]
+    fn a_part_map_that_names_a_part_past_the_end_is_dropped() {
+        let dir = tempfile::tempdir().unwrap();
+        let map = dir.path().join("f.parts");
+        let write = |done: &str| {
+            std::fs::write(&map, format!(r#"{{"size":250,"part":100,"done":{done}}}"#)).unwrap();
+        };
+        write("[0,2]");
+        assert_eq!(PartMap::load(&map, 250, 100), BTreeSet::from([0, 2]));
+        // Three parts: 0, 1 and 2.
+        write("[0,3]");
+        assert!(PartMap::load(&map, 250, 100).is_empty());
+        write("[18446744073709551615]");
+        assert!(PartMap::load(&map, 250, 100).is_empty());
+        // Another size or part length is another download.
+        write("[0]");
+        assert!(PartMap::load(&map, 251, 100).is_empty());
+    }
 }

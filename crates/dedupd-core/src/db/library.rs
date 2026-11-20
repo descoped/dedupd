@@ -1,7 +1,7 @@
 //! The read-only queries behind the library view, the totals and the
 //! storage screen.
 
-use super::{Db, PROVIDER_HF, app_column};
+use super::{Db, PROVIDER_HF, app_column, count, used_by, verify_counts};
 use crate::hub::TreeEntry;
 use anyhow::Result;
 use dedupd_api::app::App;
@@ -56,10 +56,6 @@ pub struct AppTotals {
     pub models: u64,
 }
 
-fn count(n: i64) -> u64 {
-    n.max(0) as u64
-}
-
 impl Db {
     /// Every repository, or the one named `only`, by name.
     pub fn repo_rows(&self, only: Option<&str>) -> Result<Vec<RepoRow>> {
@@ -81,17 +77,16 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// The files of a repository's kept revisions, and the files it held in
-    /// an app, that are known to the store, and their size. Small files are
-    /// known to the Hub by their git blob id, weights by sha256.
+    /// The files a repository refers to that are known to the store, and
+    /// their size: by the same rule as archive and `gc` use (`used_by`: a
+    /// kept revision, a kept Ollama manifest, or a file it held in an app),
+    /// so the numbers a person sees are the files an operation touches.
     pub fn stored_of(&self, repo_id: i64) -> Result<(u64, u64)> {
         let (files, bytes): (i64, i64) = self.conn.query_row(
-            "SELECT count(*), COALESCE(sum(size), 0) FROM blobs WHERE sha256 IN (
-                 SELECT COALESCE(f.lfs_sha256,
-                                 (SELECT sha256 FROM blobs WHERE git_oid = f.git_oid LIMIT 1))
-                 FROM revision_files f JOIN revisions v ON v.id = f.revision_id
-                 WHERE v.repo_id = ?1
-                 UNION SELECT sha256 FROM repo_files WHERE repo_id = ?1)",
+            &format!(
+                "SELECT count(*), COALESCE(sum(b.size), 0) FROM blobs b WHERE {}",
+                used_by("= ?1")
+            ),
             [repo_id],
             |r| Ok((r.get(0)?, r.get(1)?)),
         )?;
@@ -137,11 +132,10 @@ impl Db {
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         let counts: (i64, i64, i64, i64) = conn.query_row(
-            "SELECT COALESCE(sum(verify_state = 'verified'), 0),
-                    COALESCE(sum(verify_state = 'mismatch'), 0),
-                    COALESCE(sum(verify_state = 'not_upstream'), 0),
-                    COALESCE(sum(verify_state = 'unchecked'), 0)
-             FROM placements WHERE repo_id = ?1",
+            &format!(
+                "SELECT {} FROM placements WHERE repo_id = ?1",
+                verify_counts("verify_state")
+            ),
             [repo_id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
         )?;
@@ -267,7 +261,7 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
-    /// The files in the store and their size.
+    /// How many repositories the database knows.
     pub fn repo_count(&self) -> Result<u64> {
         let n: i64 = self
             .conn
@@ -321,18 +315,16 @@ impl Db {
 
     /// Every repository in the totals, by provider and name.
     pub fn repositories(&self) -> Result<Vec<Repository>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT r.provider, r.name,
                     (SELECT commit_sha FROM refs WHERE repo_id = r.id AND name = 'main'),
                     count(p.id), COALESCE(sum(p.size), 0),
-                    COALESCE(sum(p.verify_state = 'verified'), 0),
-                    COALESCE(sum(p.verify_state = 'mismatch'), 0),
-                    COALESCE(sum(p.verify_state = 'not_upstream'), 0),
-                    COALESCE(sum(p.verify_state = 'unchecked'), 0),
+                    {},
                     r.id, r.archived_at IS NOT NULL
              FROM repos r LEFT JOIN placements p ON p.repo_id = r.id
              GROUP BY r.id ORDER BY r.provider, r.name",
-        )?;
+            verify_counts("p.verify_state")
+        ))?;
         let rows = stmt
             .query_map([], |r| {
                 let n = |i: usize| r.get::<_, i64>(i).map(count);
