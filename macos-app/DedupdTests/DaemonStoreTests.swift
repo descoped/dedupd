@@ -112,13 +112,14 @@ struct DaemonStoreTests {
     @Test("The queue before and after each change is handed on, for notifications")
     func jobsChanged() async {
         let daemon = makeDaemon()
-        var seen: [([Job], [Job])] = []
+        var seen: [([Job]?, [Job])] = []
         daemon.onJobsChanged = { before, after in seen.append((before, after)) }
         await daemon.receive(.event(event([job(1, .downloading)])))
         await daemon.receive(.event(event([job(1, .downloading)], seq: 2)))
         await daemon.receive(.event(event([job(1, .done)], seq: 3)))
         #expect(seen.count == 2)
-        #expect(seen.last?.0.first?.state == .downloading)
+        #expect(seen.first?.0 == nil, "there was no list before the first event")
+        #expect(seen.last?.0?.first?.state == .downloading)
         #expect(seen.last?.1.first?.state == .done)
     }
 
@@ -245,6 +246,12 @@ struct DaemonStoreTests {
         activity.markSeen()
         #expect(activity.unseenFailures == 0)
         #expect(daemon.settings.activitySeen == FixtureData.activity[0].id)
+
+        // A mark left by a longer history (another home, a removed file):
+        // the list has started over, and its failure has not been seen.
+        daemon.settings.activitySeen = FixtureData.activity[0].id + 1000
+        await activity.reload()
+        #expect(activity.unseenFailures == 1)
     }
 
     @Test("An activation is told about only when an app did not take the model")

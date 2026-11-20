@@ -4821,10 +4821,7 @@ public struct SearchQuery: Equatable, Hashable {
     public var task: String
     public var license: String
     public var author: String
-    /**
-     * `downloads`, `likes`, `modified`, `created` or `trending`.
-     */
-    public var sort: String
+    public var sort: SearchSort
     public var cursor: String?
 
     // Default memberwise initializers are never public by default, so we
@@ -4835,10 +4832,7 @@ public struct SearchQuery: Equatable, Hashable {
          */format: String, 
         /**
          * The provider's task name, for example `text-generation`.
-         */task: String, license: String, author: String, 
-        /**
-         * `downloads`, `likes`, `modified`, `created` or `trending`.
-         */sort: String, cursor: String?) {
+         */task: String, license: String, author: String, sort: SearchSort, cursor: String?) {
         self.text = text
         self.format = format
         self.task = task
@@ -4869,7 +4863,7 @@ public struct FfiConverterTypeSearchQuery: FfiConverterRustBuffer {
                 task: FfiConverterString.read(from: &buf), 
                 license: FfiConverterString.read(from: &buf), 
                 author: FfiConverterString.read(from: &buf), 
-                sort: FfiConverterString.read(from: &buf), 
+                sort: FfiConverterTypeSearchSort.read(from: &buf), 
                 cursor: FfiConverterOptionString.read(from: &buf)
         )
     }
@@ -4880,7 +4874,7 @@ public struct FfiConverterTypeSearchQuery: FfiConverterRustBuffer {
         FfiConverterString.write(value.task, into: &buf)
         FfiConverterString.write(value.license, into: &buf)
         FfiConverterString.write(value.author, into: &buf)
-        FfiConverterString.write(value.sort, into: &buf)
+        FfiConverterTypeSearchSort.write(value.sort, into: &buf)
         FfiConverterOptionString.write(value.cursor, into: &buf)
     }
 }
@@ -6644,6 +6638,98 @@ public func FfiConverterTypeOrigin_lift(_ buf: RustBuffer) throws -> Origin {
 #endif
 public func FfiConverterTypeOrigin_lower(_ value: Origin) -> RustBuffer {
     return FfiConverterTypeOrigin.lower(value)
+}
+
+
+
+/**
+ * The orders a search can be listed in. The app, the client and the daemon
+ * share this one list, so none of them can ask for an order the others do
+ * not know.
+ */
+
+public enum SearchSort: Equatable, Hashable, CaseIterable {
+    
+    case downloads
+    case likes
+    case modified
+    case created
+    case trending
+
+
+
+
+
+}
+
+#if compiler(>=6)
+extension SearchSort: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeSearchSort: FfiConverterRustBuffer {
+    typealias SwiftType = SearchSort
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SearchSort {
+        let variant: Int32 = try readInt(&buf)
+        switch variant {
+        
+        case 1: return .downloads
+        
+        case 2: return .likes
+        
+        case 3: return .modified
+        
+        case 4: return .created
+        
+        case 5: return .trending
+        
+        default: throw UniffiInternalError.unexpectedEnumCase
+        }
+    }
+
+    public static func write(_ value: SearchSort, into buf: inout [UInt8]) {
+        switch value {
+        
+        
+        case .downloads:
+            writeInt(&buf, Int32(1))
+        
+        
+        case .likes:
+            writeInt(&buf, Int32(2))
+        
+        
+        case .modified:
+            writeInt(&buf, Int32(3))
+        
+        
+        case .created:
+            writeInt(&buf, Int32(4))
+        
+        
+        case .trending:
+            writeInt(&buf, Int32(5))
+        
+        }
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchSort_lift(_ buf: RustBuffer) throws -> SearchSort {
+    return try FfiConverterTypeSearchSort.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeSearchSort_lower(_ value: SearchSort) -> RustBuffer {
+    return FfiConverterTypeSearchSort.lower(value)
 }
 
 

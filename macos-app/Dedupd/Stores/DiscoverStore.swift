@@ -2,15 +2,12 @@ import DedupdClient
 import Foundation
 import Observation
 
-/// The orders Hugging Face can list models in.
-enum SearchSort: String, CaseIterable, Identifiable, Sendable {
-    case trending = "trendingScore"
-    case downloads
-    case likes
-    case modified = "lastModified"
-    case created = "createdAt"
+/// The orders Hugging Face can list models in, as the daemon knows them.
+extension SearchSort: @retroactive CaseIterable, @retroactive Identifiable {
+    /// In the order the menu lists them.
+    public static let allCases: [SearchSort] = [.trending, .downloads, .likes, .modified, .created]
 
-    var id: String { rawValue }
+    public var id: Self { self }
 
     var title: String {
         switch self {
@@ -56,6 +53,10 @@ final class DiscoverStore {
             if selection != oldValue {
                 detail = .idle
             }
+            // Another choice ends the hold on a model opened by name.
+            if selection != opened {
+                opened = nil
+            }
         }
     }
 
@@ -63,6 +64,8 @@ final class DiscoverStore {
 
     @ObservationIgnored private let daemon: DaemonStore
     @ObservationIgnored private var generation = 0
+    /// The model last opened by name, which a search does not deselect.
+    @ObservationIgnored private var opened: SearchHit.ID?
     /// Counts the reads of a model's details, so an answer that comes back
     /// after a later one is dropped.
     @ObservationIgnored private var detailGeneration = 0
@@ -81,7 +84,7 @@ final class DiscoverStore {
             task: task,
             license: "",
             author: "",
-            sort: sort.rawValue,
+            sort: sort,
             cursor: nil
         )
     }
@@ -119,7 +122,9 @@ final class DiscoverStore {
             hits = page.models
             next = page.next
             failure = nil
-            if let selection, !hits.contains(where: { $0.id == selection }) {
+            // A model opened by name stays through a search that does not
+            // list it: "Show in Discover" may come before the first search.
+            if let selection, selection != opened, !hits.contains(where: { $0.id == selection }) {
                 self.selection = nil
             }
         } catch {
@@ -160,6 +165,7 @@ final class DiscoverStore {
     /// reads its details when the selection changes.
     func open(_ repo: String) {
         selection = repo
+        opened = repo
     }
 
     /// Show one model in place of the list, as if its name had been typed

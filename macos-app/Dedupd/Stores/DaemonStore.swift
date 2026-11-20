@@ -50,7 +50,9 @@ final class DaemonStore {
     var problem: String?
 
     /// Called with the queue before and after each event, for notifications.
-    @ObservationIgnored var onJobsChanged: (([Job], [Job]) -> Void)?
+    /// Before is nil when there was no list: the first event after the app
+    /// started or the daemon came back.
+    @ObservationIgnored var onJobsChanged: (([Job]?, [Job]) -> Void)?
 
     @ObservationIgnored let client: any DaemonClient
     @ObservationIgnored let settings: AppSettings
@@ -215,12 +217,13 @@ final class DaemonStore {
             if connection != .running {
                 await connected()
             }
+            let had = downloads?.jobs
             let before = jobs
             downloads = event.downloads
             checking = event.checking
             moving = event.moving
-            if before != event.downloads.jobs {
-                onJobsChanged?(before, event.downloads.jobs)
+            if had != event.downloads.jobs {
+                onJobsChanged?(had, event.downloads.jobs)
             }
             // A job that is done put files into apps. The screens look again
             // then, whether or not the daemon also says the library changed.

@@ -1333,6 +1333,49 @@ async fn a_name_that_is_not_a_models_name_is_refused() {
 }
 
 #[tokio::test]
+async fn every_order_the_app_can_ask_for_reaches_the_provider_as_its_own() {
+    use dedupd_api::hub::{SearchQuery, SearchSort};
+    let fx = fixture().await;
+    mount_search(&fx).await;
+    let address = fx.base.trim_start_matches("http://").to_string();
+    let mut asked_for = Vec::new();
+    for sort in SearchSort::ALL {
+        let (a, text) = (address.clone(), format!("order {}", sort.word()));
+        // Through the client the app uses, so the two ends are tried together.
+        tokio::task::spawn_blocking(move || {
+            let query = SearchQuery {
+                text,
+                sort,
+                ..Default::default()
+            };
+            dedupd_client::search(a, query)
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        let asked = fx.upstream.received_requests().await.unwrap();
+        let query: std::collections::HashMap<String, String> = asked
+            .last()
+            .unwrap()
+            .url
+            .query_pairs()
+            .into_owned()
+            .collect();
+        asked_for.push(query["sort"].clone());
+    }
+    assert_eq!(
+        asked_for,
+        [
+            "trendingScore",
+            "downloads",
+            "likes",
+            "lastModified",
+            "createdAt"
+        ]
+    );
+}
+
+#[tokio::test]
 async fn search_and_model_info_say_what_is_already_here() {
     let fx = fixture().await;
     mount_search(&fx).await;
@@ -1469,7 +1512,7 @@ async fn the_client_reads_everything_the_daemon_sends() {
         let query = SearchQuery {
             text: "repo".into(),
             format: "gguf".into(),
-            sort: "likes".into(),
+            sort: dedupd_api::hub::SearchSort::Likes,
             ..Default::default()
         };
         let page = client::search(a.clone(), query)?;

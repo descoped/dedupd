@@ -19,6 +19,7 @@ daemon when one is running, so one process does the downloading.
 |---|---|
 | `org/repo` | the whole repository |
 | `org/repo:Q4_K_M` | one quantization of a GGUF repository |
+| `org/repo:Model-Q4_K_M` | one GGUF file by its name without `.gguf`, for a repository where two files carry the same quantization |
 | `org/repo@revision` | a branch, tag or commit |
 
 In zsh, put the name in quotes when it comes from a variable: `"${repo}:Q4_K_M"`. Without them `:Q` is read as a

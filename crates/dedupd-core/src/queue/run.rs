@@ -144,6 +144,8 @@ impl Queue {
                 // full disk) waits for the owner to try again. The outcome
                 // says which apps took it and why the others did not.
                 let mut outcome = pull::outcome(&req, plan, files, downloaded, placement);
+                // What this run placed, before the earlier runs' are added.
+                let placed_any = !outcome.placed.is_empty();
                 // Trying again asked only the apps that had not taken the
                 // model; what the earlier run did stays part of the job.
                 let known = match earlier.filter(|_| !took.is_empty()) {
@@ -173,16 +175,28 @@ impl Queue {
                 }
                 if !retry.is_empty() {
                     // `place` has told the history already.
-                    return self.set(job, JobState::NeedsAttention, Some(retry.join("; ")));
+                    self.set(job, JobState::NeedsAttention, Some(retry.join("; ")));
+                    // The apps that did take the model have new files, also
+                    // when another one makes the job wait for the owner.
+                    if placed_any {
+                        self.tell_placed();
+                    }
+                    return;
                 }
                 self.set(job, JobState::Done, None);
                 self.forget_old();
-                let call = self.on_done.lock().expect("lock").clone();
-                if let Some(call) = call {
-                    call();
-                }
+                self.tell_placed();
             }
             Err(e) => self.needs_owner(job, &req, format!("{e:#}")),
+        }
+    }
+
+    /// Tell whoever asked to hear that a job is done or a run put files
+    /// into apps.
+    fn tell_placed(&self) {
+        let call = self.on_placed.lock().expect("lock").clone();
+        if let Some(call) = call {
+            call();
         }
     }
 

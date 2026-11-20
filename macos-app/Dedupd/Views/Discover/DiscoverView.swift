@@ -48,7 +48,7 @@ struct DiscoverView: View {
             .task(id: DetailKey(selection: discover.selection, revision: daemon.revision)) {
                 await discover.loadDetail(quietly: true)
             }
-            .onChange(of: [discover.format, discover.task, discover.sort.rawValue]) {
+            .onChange(of: [discover.format, discover.task, discover.sort.title]) {
                 Task { await discover.search() }
             }
             .onChange(of: discover.text) { _, text in

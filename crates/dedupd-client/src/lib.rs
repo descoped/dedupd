@@ -60,6 +60,10 @@ pub(crate) fn agent(timeout: Option<Duration>) -> ureq::Agent {
         .timeout_connect(Some(Duration::from_secs(2)))
         .timeout_global(timeout)
         .http_status_as_error(false)
+        // The daemon is on this Mac. A proxy named in the environment
+        // (`HTTP_PROXY`, `ALL_PROXY`), which ureq would use by itself, has
+        // no business with these calls and would hide a running daemon.
+        .proxy(None)
         .build()
         .into()
 }
@@ -209,7 +213,7 @@ pub fn search(address: String, query: SearchQuery) -> Result<SearchPage, ClientE
         ("task", query.task.as_str()),
         ("license", query.license.as_str()),
         ("author", query.author.as_str()),
-        ("sort", query.sort.as_str()),
+        ("sort", query.sort.word()),
         ("cursor", query.cursor.as_deref().unwrap_or("")),
     ] {
         if !value.is_empty() {

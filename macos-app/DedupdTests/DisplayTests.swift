@@ -307,7 +307,7 @@ struct DisplayTests {
         let before = [job(1, .downloading), job(2, .downloading), job(3, .queued)]
         var stuck = job(2, .needsAttention)
         stuck.detail = "The disk is full."
-        let after = [job(1, .done), stuck, job(3, .downloading), job(4, .done)]
+        let after = [job(1, .done), stuck, job(3, .downloading)]
 
         let notices = Notice.notices(from: before, to: after)
 
@@ -320,7 +320,10 @@ struct DisplayTests {
             Notice(id: "download-2", title: "org/Repo-GGUF:Q4_K_M needs attention", body: "The disk is full."),
         ])
         #expect(Notice.notices(from: after, to: after).isEmpty)
-        #expect(Notice.notices(from: [], to: after).isEmpty, "what was already done when the app started is old news")
+        #expect(Notice.notices(from: nil, to: after).isEmpty, "what was already done when the app started is old news")
+        // A job quick enough never to be seen running is told about too.
+        let quick = Notice.notices(from: after, to: after + [job(4, .done), job(5, .queued)])
+        #expect(quick.map(\.id) == ["download-4"])
     }
 
     @Test("A trial's home folder and label go on the command line")

@@ -51,6 +51,41 @@ impl Kept {
             .unwrap_or_default()
     }
 
+    /// What is kept, for a change that will be written back. A file that
+    /// is there and cannot be read is not written over: it is moved aside
+    /// first (`favorites.unreadable.json`), so what it held can still be
+    /// looked at, and the change starts from nothing.
+    fn load_to_change(home: &Home) -> Result<Self> {
+        let path = home.favorites_path();
+        let bytes = match std::fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Self::default()),
+            Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+        };
+        match serde_json::from_slice(&bytes) {
+            Ok(kept) => Ok(kept),
+            Err(e) => {
+                // A name that is free, so an earlier one set aside stays.
+                let aside = (1u32..)
+                    .map(|n| match n {
+                        1 => "favorites.unreadable.json".to_string(),
+                        n => format!("favorites.unreadable-{n}.json"),
+                    })
+                    .map(|name| home.root().join(name))
+                    .find(|candidate| !candidate.exists())
+                    .expect("a free name among four thousand million");
+                std::fs::rename(&path, &aside)
+                    .with_context(|| format!("moving {} aside", path.display()))?;
+                eprintln!(
+                    "dedupd: {} could not be read ({e}); it was moved to {} and the favorites start again",
+                    path.display(),
+                    aside.display()
+                );
+                Ok(Self::default())
+            }
+        }
+    }
+
     fn save(&self, home: &Home) -> Result<()> {
         let target = home.favorites_path();
         let tmp = home.root().join(".favorites.json.tmp");
@@ -115,7 +150,7 @@ pub fn set(home: &Home, repo: &str, favorite: bool, now: i64) -> Result<Kept> {
     if !crate::names::is_repo_name(repo) {
         bail!("{repo:?} is not a model's name");
     }
-    let mut kept = Kept::load(home);
+    let mut kept = Kept::load_to_change(home)?;
     let at = kept.favorites.iter().position(|f| f.repo == repo);
     match (favorite, at) {
         (true, None) => {
@@ -165,7 +200,7 @@ pub async fn read_likes(hub: &HubClient, known: Option<String>, by_hand: bool) -
 /// Keep what `read_likes` found at `now`. On a failure the favorites stay
 /// as they were and the reason is kept, to be shown.
 pub fn record_likes(home: &Home, likes: Likes, now: i64) -> Result<Kept> {
-    let mut kept = Kept::load(home);
+    let mut kept = Kept::load_to_change(home)?;
     match likes {
         Ok((user, liked)) => kept.take_likes(&user, &liked, now),
         Err(e) => {
@@ -189,6 +224,29 @@ mod tests {
             .collect();
         all.sort_by_key(|(r, _)| *r);
         all
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_is_moved_aside_not_written_over() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().to_path_buf());
+        std::fs::create_dir_all(home.root()).unwrap();
+        set(&home, "org/a", true, 10).unwrap();
+        // Half a file, as a full disk or a crash can leave it.
+        let whole = std::fs::read(home.favorites_path()).unwrap();
+        std::fs::write(home.favorites_path(), &whole[..whole.len() / 2]).unwrap();
+
+        set(&home, "org/b", true, 20).unwrap();
+        assert_eq!(Kept::load(&home).favorites.len(), 1);
+        let aside = home.root().join("favorites.unreadable.json");
+        assert_eq!(std::fs::read(&aside).unwrap(), &whole[..whole.len() / 2]);
+
+        // It happens again: the first one set aside is kept.
+        std::fs::write(home.favorites_path(), b"{").unwrap();
+        set(&home, "org/c", true, 30).unwrap();
+        assert_eq!(std::fs::read(&aside).unwrap(), &whole[..whole.len() / 2]);
+        let second = home.root().join("favorites.unreadable-2.json");
+        assert_eq!(std::fs::read(second).unwrap(), b"{");
     }
 
     #[test]

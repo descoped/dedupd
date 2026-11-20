@@ -57,7 +57,9 @@ final class StorageStore {
         locations = found
         await loadPlan()
         let checked = try? await client.storeCheck(at: address)
-        guard mine == generation else {
+        // A read that failed says nothing about the store: what was known
+        // stays, and is not replaced by "never checked".
+        guard mine == generation, let checked else {
             return
         }
         check = checked
@@ -111,7 +113,9 @@ final class StorageStore {
     }
 
     func refreshCheck() async {
-        check = try? await daemon.client.storeCheck(at: daemon.address)
+        if let answer = try? await daemon.client.storeCheck(at: daemon.address) {
+            check = answer
+        }
     }
 }
 
@@ -174,7 +178,10 @@ final class ServiceStore {
     }
 
     func loadLog() async {
-        log = try? await daemon.client.logTail(lines: 200, at: daemon.address)
+        // A read that failed leaves the lines already shown.
+        if let answer = try? await daemon.client.logTail(lines: 200, at: daemon.address) {
+            log = answer
+        }
     }
 
     enum Command {

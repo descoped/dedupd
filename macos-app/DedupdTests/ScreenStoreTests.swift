@@ -282,6 +282,16 @@ struct DiscoverStoreTests {
         #expect(discover.notice == nil, "the note goes when the text does")
     }
 
+    @Test("A model shown by name before the first search stays selected through it")
+    func shownBeforeTheFirstSearch() async {
+        let discover = DiscoverStore(daemon: await startedDaemon())
+        // "Show in Discover" from the Library, for a model no search lists.
+        discover.open("org/Not-In-Any-List")
+        await discover.search()
+        #expect(discover.hasSearched)
+        #expect(discover.selection == "org/Not-In-Any-List")
+    }
+
     @Test("Downloading a variant queues it for the chosen apps")
     func download() async throws {
         let daemon = await startedDaemon()

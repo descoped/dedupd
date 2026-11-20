@@ -75,7 +75,7 @@ struct ScreenContractTests {
 
         let query = SearchQuery(
             text: "smol lm", format: "gguf", task: "text-generation", license: "", author: "",
-            sort: "downloads", cursor: nil
+            sort: .trending, cursor: nil
         )
         let page = try await client.search(query, at: server.address)
         #expect(page.models.map(\.id) == ["org/Repo-GGUF", "mlx-community/Repo-4bit"])
@@ -86,7 +86,7 @@ struct ScreenContractTests {
         #expect(asked.contains("q=smol%20lm") || asked.contains("q=smol+lm"))
         #expect(asked.contains("format=gguf"))
         #expect(asked.contains("task=text-generation"))
-        #expect(asked.contains("sort=downloads"))
+        #expect(asked.contains("sort=trending"))
 
         let model = try await client.hubModel("org/Repo-GGUF", at: server.address)
         #expect(model.id == "org/Repo-GGUF")

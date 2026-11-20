@@ -581,6 +581,12 @@ async fn trying_again_asks_only_the_apps_that_did_not_take_the_model() {
         .mount(&up.server)
         .await;
     let s = scene(&up);
+    let told = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = told.clone();
+    s.queue.on_placed(move || {
+        count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    });
+    let told = || told.load(std::sync::atomic::Ordering::SeqCst);
     let id = s
         .queue
         .add(
@@ -594,6 +600,9 @@ async fn trying_again_asks_only_the_apps_that_did_not_take_the_model() {
     let first = settled(&s.queue, id).await;
     assert_eq!(first.state, JobState::NeedsAttention, "{}", history(&first));
     assert_eq!(first.activated(), [App::Bionic]);
+    // Bionic has new files, so whoever follows the daemon is told, also
+    // though the job now waits for the owner.
+    assert_eq!(told(), 1);
 
     // Try Again: Ollama still cannot be asked. Bionic is not placed or told
     // about again, and the job still says it took the model.
@@ -602,6 +611,8 @@ async fn trying_again_asks_only_the_apps_that_did_not_take_the_model() {
     assert_eq!(again.state, JobState::NeedsAttention, "{}", history(&again));
     assert_eq!(again.activated(), [App::Bionic]);
     assert_eq!(again.not_activated()[0].app, App::Ollama);
+    // The second run placed nothing, and says nothing.
+    assert_eq!(told(), 1);
     // What the first run downloaded is still part of the job.
     let downloaded = |r: &JobRecord| r.outcome.as_ref().unwrap().downloaded;
     assert!(downloaded(&first) > 0, "{}", history(&first));
