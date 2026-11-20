@@ -193,6 +193,17 @@ mod tests {
         let second = only_daemon_here(&home).unwrap_err();
         assert!(second.to_string().contains("already runs"), "{second:#}");
         drop(first);
-        only_daemon_here(&home).unwrap();
+        // The lock is free once every holder of the file is gone. A test
+        // beside this one that starts a program holds a copy of it for the
+        // moment between its fork and its exec, so the lock is asked for
+        // until it is given, within a bound.
+        let waited = std::time::Instant::now();
+        while let Err(e) = only_daemon_here(&home) {
+            assert!(
+                waited.elapsed() < std::time::Duration::from_secs(5),
+                "the lock was not given back: {e:#}"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 }

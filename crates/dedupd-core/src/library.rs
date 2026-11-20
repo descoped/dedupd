@@ -327,7 +327,7 @@ fn on_archive(
         .filter(|b| archive.blob_path(&b.sha256).is_file())
         .map(|b| (b.sha256.as_str(), b.size))
         .collect();
-    let mut whole: std::collections::BTreeMap<i64, bool> = std::collections::BTreeMap::new();
+    let mut whole: std::collections::HashMap<i64, bool> = std::collections::HashMap::new();
     for (repo, sha256) in by_repo {
         *whole.entry(*repo).or_insert(true) &= held.contains_key(sha256.as_str());
     }
@@ -355,12 +355,7 @@ pub fn locations(db: &Mutex<Db>, store: &Store, dirs: &AppDirs) -> Result<Locati
             totals,
         )
     };
-    let here: Vec<u64> = blobs
-        .iter()
-        .filter(|b| store.contains(&b.sha256))
-        .map(|b| b.size)
-        .collect();
-    let (files, bytes) = (here.len() as u64, here.iter().sum());
+    let (files, bytes) = crate::status::store_totals_of(&blobs, store);
     let (volume_total, volume_free) = store.volume()?;
     let mut apps = Vec::new();
     for (app, totals) in App::ALL.into_iter().zip(app_totals) {

@@ -98,7 +98,8 @@ struct ServicesTests {
             #expect(places.store.sharedBytes == 0, "as the daemon counts it")
             // The archive disk holds every model whole, an archived one too.
             #expect(places.archive?.models == UInt64(models.count))
-            #expect((places.archive?.bytes ?? 0) >= places.store.bytes)
+            let known = models.map(\.storedBytes).reduce(0, +)
+            #expect([known, known + FixtureData.orphanBytes].contains(places.archive?.bytes ?? 0))
             for place in places.apps {
                 let held = models.compactMap { model in model.apps.first { $0.app == place.app } }
                 #expect(place.files == held.map(\.files).reduce(0, +))
