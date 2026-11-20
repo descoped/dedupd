@@ -370,3 +370,31 @@ struct AgentStateTests {
         #expect(state.updateReason == "The installed daemon is version 0.0.9; this app carries 0.1.0.")
     }
 }
+
+@Suite("What comes from outside is cut to what is safe")
+struct OutsideValueTests {
+    @Test("Only a link to the web is opened from a README")
+    func readmeLinks() throws {
+        for good in ["https://huggingface.co/org/name", "http://example.com/paper.pdf", "HTTPS://example.com"] {
+            #expect(Markdown.mayOpen(try #require(URL(string: good))), "\(good)")
+        }
+        for bad in [
+            "file:///Users/example/Documents", "smb://host/share", "ssh://host", "x-apple.systempreferences:x",
+            "javascript:alert(1)", "mailto:someone@example.com", "https:///no-host", "relative/path", "ollama://run/x",
+        ] {
+            #expect(!Markdown.mayOpen(try #require(URL(string: bad))), "\(bad)")
+        }
+    }
+
+    @Test("A speed limit of any size is sent as a number the daemon can read", arguments: [
+        (1e15, UInt64(1_000_000_000_000)), (.infinity, UInt64(1_000_000_000_000)), (-5, UInt64(0)),
+        (.nan, UInt64(0)), (0.0000004, UInt64(0)), (12.3456789, UInt64(12_345_679)),
+    ])
+    func speedLimit(typed: Double, sent: UInt64) {
+        let original = SettingsDraft(FixtureData.settings)
+        var draft = original
+        draft.speedLimit = typed
+        let changes = draft.changes(from: original)
+        #expect(changes == [SettingChange(key: .speedLimit, value: .number(value: sent))])
+    }
+}

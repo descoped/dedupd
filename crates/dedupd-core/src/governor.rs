@@ -20,6 +20,9 @@ pub const DEFAULT_CONNECTIONS: usize = 8;
 const START_WINDOW: f64 = 2.0;
 /// The longest pause a server may ask for.
 const MAX_HOLD: Duration = Duration::from_secs(900);
+/// The longest a budget is believed to take to fill again, whatever the
+/// server's header says. Hugging Face's windows are five minutes.
+const MAX_RESET: Duration = Duration::from_secs(3600);
 /// The window is halved at most once in this time, so one bad moment that
 /// fails several requests counts once.
 const CUT_INTERVAL: Duration = Duration::from_secs(1);
@@ -191,7 +194,8 @@ impl Governor {
             Budget {
                 quota: quota.or(known).unwrap_or(remaining),
                 remaining,
-                resets_at: Instant::now() + Duration::from_secs(reset),
+                // A number from a header: cut to a time that can be added.
+                resets_at: Instant::now() + Duration::from_secs(reset).min(MAX_RESET),
             },
         );
     }
@@ -296,9 +300,9 @@ impl State {
             return;
         }
         budget.remaining = budget.remaining.saturating_sub(1);
-        if budget.remaining * 10 < budget.quota {
+        if budget.remaining.saturating_mul(10) < budget.quota {
             let left = budget.resets_at - now;
-            let gap = left / (budget.remaining.max(1) as u32);
+            let gap = left / u32::try_from(budget.remaining.max(1)).unwrap_or(u32::MAX);
             self.next_slot.insert(class.budget(), now + gap);
         } else {
             self.next_slot.remove(class.budget());
@@ -431,6 +435,42 @@ mod tests {
         let _p = g.permit(Class::Api).await;
         assert!(started.elapsed() >= Duration::from_secs(40));
         assert_eq!(g.state().hold_seconds, 0);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn numbers_no_server_should_send_do_no_harm() {
+        let g = Governor::new(8, 0);
+        // A reset time that cannot be added to a clock, and a count that
+        // does not fit the arithmetic done with it.
+        for (limit, policy) in [
+            (
+                r#""api";r=0;t=18446744073709551615"#,
+                r#""p";"api";q=500;w=300"#,
+            ),
+            (
+                r#""api";r=4294967296;t=18446744073709551615"#,
+                r#""p";"api";q=99999999999999999999;w=1"#,
+            ),
+            (
+                r#""api";r=4294967296;t=60"#,
+                r#""p";"api";q=18446744073709551615;w=1"#,
+            ),
+            (
+                r#""api";r=18446744073709551615;t=60"#,
+                r#""p";"api";q=18446744073709551615;w=1"#,
+            ),
+        ] {
+            g.observe(&headers(&[
+                ("ratelimit", limit),
+                ("ratelimit-policy", policy),
+            ]));
+            let started = Instant::now();
+            let _p = g.permit(Class::Api).await;
+            // Never held longer than a budget is believed to take to fill
+            // again, whatever was claimed.
+            assert!(started.elapsed() <= MAX_RESET, "{limit}");
+            let _ = g.state();
+        }
     }
 
     #[tokio::test(start_paused = true)]

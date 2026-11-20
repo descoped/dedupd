@@ -79,8 +79,38 @@ impl Home {
     }
 
     /// Where the file with this sha256 lives: `store/sha256/ab/abcdef…`.
+    ///
+    /// Text that is not a sha256 names a file that never exists, inside the
+    /// store's folder: nothing given here can point anywhere else.
     pub fn blob_path(&self, sha256: &str) -> PathBuf {
-        let prefix = sha256.get(..2).unwrap_or("xx");
-        self.store_dir().join("sha256").join(prefix).join(sha256)
+        let folder = self.store_dir().join("sha256");
+        if !crate::names::is_sha256(sha256) {
+            return folder.join("xx").join("not-a-sha256");
+        }
+        folder.join(&sha256[..2]).join(sha256)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Home;
+
+    #[test]
+    fn a_stored_files_path_cannot_leave_the_store() {
+        let home = Home::new("/Users/example/.dedupd");
+        let folder = home.store_dir().join("sha256");
+        let sha = "ab".repeat(32);
+        assert_eq!(home.blob_path(&sha), folder.join("ab").join(&sha));
+        for bad in [
+            "",
+            "ab",
+            "../../../../etc/hosts",
+            "/Users/example/.ssh/id_ed25519",
+            &sha.to_uppercase(),
+            &format!("../{}", &sha[3..]),
+        ] {
+            let path = home.blob_path(bad);
+            assert_eq!(path, folder.join("xx").join("not-a-sha256"), "{bad:?}");
+        }
     }
 }
