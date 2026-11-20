@@ -6,7 +6,7 @@ mod common;
 
 use common::{COMMIT, PART_SIZE, REPO, Ranged, engine, git_oid, sha256};
 use dedupd_api::app::App;
-use dedupd_api::jobs::{FileStage, JobKind, JobState};
+use dedupd_api::jobs::{FileStage, JobAction, JobKind, JobState};
 use dedupd_core::Home;
 use dedupd_core::engine::Engine;
 use dedupd_core::queue::Queue;
@@ -299,6 +299,52 @@ async fn pause_keeps_what_is_there_and_resume_finishes() {
     assert_eq!(record.bytes_done, record.bytes_total);
     assert_eq!(fs::read(placed(&s.engine)).unwrap(), up.weights);
     assert!(leftovers(&s.home).is_empty());
+}
+
+#[tokio::test]
+async fn an_action_whose_caller_goes_away_is_still_finished() {
+    let up = upstream(true).await;
+    let s = scene(&up);
+    s.engine.governor.configure(8, 100_000);
+    let id = add(&s.queue);
+    under_way(&s.queue, id).await;
+
+    // The request is dropped at its first wait, as when the app quits or
+    // the client's time runs out.
+    let asked = s.queue.act(id, JobAction::Pause);
+    let _ = tokio::time::timeout(Duration::ZERO, asked).await;
+
+    let record = settled(&s.queue, id).await;
+    assert_eq!(record.state, JobState::Paused, "{}", history(&record));
+    // The job gave its place back and can be continued.
+    s.engine.governor.configure(8, 0);
+    s.queue.resume(id).unwrap();
+    let record = settled(&s.queue, id).await;
+    assert_eq!(record.state, JobState::Done, "{}", history(&record));
+}
+
+#[tokio::test]
+async fn a_job_is_started_once_and_not_cut_off_while_placing() {
+    // Placing offers nothing: files are not left half put into an app.
+    assert!(JobState::Placing.actions().is_empty());
+
+    let up = upstream(true).await;
+    let s = scene(&up);
+    s.engine.governor.configure(8, 100_000);
+    let id = add(&s.queue);
+    under_way(&s.queue, id).await;
+    // A job that is working is not started a second time.
+    assert!(s.queue.act(id, JobAction::Start).await.is_err());
+    // Pause and Cancel at the same time: Cancel has the last word.
+    let (paused, cancelled) = tokio::join!(
+        s.queue.act(id, JobAction::Pause),
+        s.queue.act(id, JobAction::Cancel)
+    );
+    assert!(cancelled.is_ok() || paused.is_ok());
+    if cancelled.is_ok() {
+        assert_eq!(s.queue.get(id).unwrap().state, JobState::Cancelled);
+        assert!(leftovers(&s.home).is_empty(), "{:?}", leftovers(&s.home));
+    }
 }
 
 #[tokio::test]

@@ -69,7 +69,11 @@ pub fn scan(hub_dir: &Path) -> Result<Vec<LocalRepo>> {
         for (commit, snapshot) in dirs(&repo_dir.join("snapshots")) {
             let mut files = Vec::new();
             for entry in WalkDir::new(&snapshot).sort_by_file_name() {
-                let entry = entry?;
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(e) if super::gone(&e) => continue,
+                    Err(e) => return Err(e.into()),
+                };
                 if entry.file_type().is_dir() {
                     continue;
                 }
@@ -81,9 +85,12 @@ pub fn scan(hub_dir: &Path) -> Result<Vec<LocalRepo>> {
                 if !blob.starts_with(&blobs) || !blob.is_file() || !seen.insert(blob.clone()) {
                     continue;
                 }
+                let Some(fingerprint) = Fingerprint::if_there(&blob)? else {
+                    continue;
+                };
                 files.push(LocalFile {
                     rel_path: rel_components(entry.path(), &snapshot).join("/"),
-                    fingerprint: Fingerprint::of(&blob)?,
+                    fingerprint,
                     abs_path: blob,
                 });
             }

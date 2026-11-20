@@ -48,7 +48,8 @@ impl Queue {
                 Ok(req) => (req, r.commit.clone(), r.outcome.clone()),
                 Err(e) => {
                     drop(r);
-                    return self.set(job, JobState::NeedsAttention, Some(format!("{e:#}")));
+                    self.set(job, JobState::NeedsAttention, Some(format!("{e:#}")));
+                    return;
                 }
             }
         };
@@ -133,7 +134,13 @@ impl Queue {
             }
         };
 
-        self.set(job, JobState::Placing, None);
+        // Placing is not cut off (the owner's Pause and Cancel are not
+        // offered while it runs): a file half put into an app, with no
+        // word of it in the history, is worse than a short wait. An owner
+        // who stopped the job before this point has the last word.
+        if !self.set(job, JobState::Placing, None) {
+            return;
+        }
         let files = items.len();
         match pull::place(engine, &req, &plan, items).await {
             Ok(placement) => {

@@ -75,9 +75,10 @@ impl JobState {
             JobState::Resolving
             | JobState::Downloading
             | JobState::Verifying
-            | JobState::Placing
             | JobState::WaitingServer
             | JobState::WaitingNetwork => &[Pause, Cancel],
+            // Putting files into apps is not cut off part of the way.
+            JobState::Placing => &[],
             JobState::Paused => &[Resume, Cancel],
             JobState::NeedsAttention => &[Retry, Cancel],
             JobState::Done | JobState::Cancelled => &[Remove],

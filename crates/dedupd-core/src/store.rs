@@ -35,6 +35,17 @@ pub struct Fingerprint {
 }
 
 impl Fingerprint {
+    /// The file's size and time, or `None` when the file is no longer
+    /// there: an app renames a download that finished and removes a model
+    /// while its folder is being read, and that is not a failure.
+    pub fn if_there(path: &Path) -> std::io::Result<Option<Self>> {
+        match Self::of(path) {
+            Ok(found) => Ok(Some(found)),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(e),
+        }
+    }
+
     pub fn of(path: &Path) -> std::io::Result<Self> {
         let m = fs::metadata(path)?;
         Ok(Self {

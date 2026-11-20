@@ -57,6 +57,8 @@ pub async fn pass_with(
     reclaim_age: Duration,
 ) -> anyhow::Result<ScanResult> {
     let _guard = server.passes.lock.lock().await;
+    // Files a client began to download through the daemon and left.
+    server.drop_idle_assemblies(crate::files::ASSEMBLY_IDLE);
     let mut report = ScanResult::default();
     let (repos, scanned) = {
         let server = server.clone();

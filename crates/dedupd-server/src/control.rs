@@ -185,9 +185,9 @@ async fn check_upstream(server: &Arc<Server>, repo: &str) -> Response {
 
 async fn unplace(server: &Arc<Server>, body: UnplaceBody) -> Response {
     let engine = server.engine.clone();
-    let applying = body.apply;
+    let told = server.clone();
     let done = blocking(move || {
-        maintain::unplace(
+        let done = maintain::unplace(
             &engine.db,
             &engine.store,
             &engine.dirs,
@@ -195,14 +195,16 @@ async fn unplace(server: &Arc<Server>, body: UnplaceBody) -> Response {
             body.app,
             body.paths.as_deref(),
             body.apply,
-        )
+        );
+        // Also after a failure part of the way: the app's files and the
+        // activity list may have changed. Said here, where the work is
+        // done, so it is said also when the request was dropped meanwhile.
+        if done.is_ok() || body.apply {
+            told.touch();
+        }
+        done
     })
     .await;
-    // Also after a failure part of the way: the app's files and the
-    // activity list may have changed.
-    if done.is_ok() || applying {
-        server.touch();
-    }
     answer(done)
 }
 
@@ -296,7 +298,15 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 Ok((id, _)) => id,
                 Err(refused) => return *refused,
             };
-            match server.queue.settled(id).await {
+            // A restart does not wait for this call: the job is in the
+            // queue and goes on after it.
+            let settled = tokio::select! {
+                settled = server.queue.settled(id) => settled,
+                () = server.shutdown.cancelled() => return restarting(
+                    "the download is in the queue and continues after the restart",
+                ),
+            };
+            match settled {
                 Ok(job) if job.state == JobState::Done => ok(job.outcome),
                 Ok(job) => error(
                     StatusCode::BAD_GATEWAY,
@@ -306,7 +316,21 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 Err(e) => internal(format!("{e:#}")),
             }
         }
-        (&Method::POST, ["scan"]) => answer(daemon::pass(server).await),
+        (&Method::POST, ["scan"]) => {
+            // On a task of its own: a caller that goes away does not cut the
+            // pass off part of the way, and a restart does not wait for it.
+            let pass = {
+                let server = server.clone();
+                tokio::spawn(async move { daemon::pass(&server).await })
+            };
+            tokio::select! {
+                done = pass => match done {
+                    Ok(done) => answer(done),
+                    Err(e) => internal(format!("the scan stopped: {e}")),
+                },
+                () = server.shutdown.cancelled() => restarting("the scan was not finished"),
+            }
+        }
 
         (&Method::GET, ["events"]) => events(server),
         (&Method::GET, ["downloads"]) => ok(server.queue.downloads()),
@@ -375,11 +399,16 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
         (&Method::POST, ["forget"]) => match body::<RepoBody>(call) {
             Ok(b) => {
                 let repo = b.repo.clone();
-                match blocking(move || maintain::forget(&engine.db, &b.repo)).await {
-                    Ok(()) => {
-                        server.touch();
-                        ok(RepoBody { repo })
-                    }
+                let told = server.clone();
+                let forgotten = blocking(move || {
+                    maintain::forget(&engine.db, &b.repo)?;
+                    // Said where the work is done: a dropped request does
+                    // not keep the library's change from the app.
+                    told.touch();
+                    Ok(())
+                });
+                match forgotten.await {
+                    Ok(()) => ok(RepoBody { repo }),
                     Err(e) => error(StatusCode::CONFLICT, format!("{e:#}")),
                 }
             }
@@ -412,17 +441,20 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
         }
         (&Method::POST, ["gc"]) => match body::<GcBody>(call) {
             Ok(agreed) => {
+                let told = server.clone();
                 let done = blocking(move || {
                     // Only what is still removable now and was agreed to.
                     let mut plan =
                         maintain::gc_plan(&engine.db, &engine.store, !agreed.offload.is_empty())?;
                     plan.orphans.retain(|b| agreed.orphans.contains(&b.sha256));
                     plan.offload.retain(|b| agreed.offload.contains(&b.sha256));
-                    let freed = maintain::gc_apply(&engine.db, &engine.store, &plan)?;
-                    Ok(plan.answer(Some(freed)))
+                    let freed = maintain::gc_apply(&engine.db, &engine.store, &plan);
+                    // Also after a failure part of the way, and also when
+                    // the request was dropped meanwhile.
+                    told.touch();
+                    Ok(plan.answer(Some(freed?)))
                 })
                 .await;
-                server.touch();
                 answer(done)
             }
             Err(refused) => *refused,
@@ -503,4 +535,13 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
         }
         _ => plain(StatusCode::NOT_FOUND, "no such control endpoint"),
     }
+}
+
+/// The answer to a call that was waiting when the daemon was told to
+/// restart: the restart does not wait for it.
+fn restarting(what: &str) -> Response {
+    error(
+        StatusCode::SERVICE_UNAVAILABLE,
+        format!("dedupd is restarting; {what}"),
+    )
 }

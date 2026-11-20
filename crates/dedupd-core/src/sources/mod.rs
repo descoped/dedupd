@@ -10,6 +10,21 @@ use std::path::{Path, PathBuf};
 
 /// The parts of `path` below `base`. Joined with `/` they are the path as
 /// the provider names it. `path` must be under `base`.
+/// A walk's entry failed because it is no longer there.
+pub(crate) fn gone(e: &walkdir::Error) -> bool {
+    e.io_error()
+        .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+}
+
+/// An error that says a file or folder is no longer there.
+pub(crate) fn not_there(e: &anyhow::Error) -> bool {
+    e.chain().any(|cause| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+    })
+}
+
 pub(crate) fn rel_components(path: &Path, base: &Path) -> Vec<String> {
     path.strip_prefix(base)
         .expect("path is under its base folder")

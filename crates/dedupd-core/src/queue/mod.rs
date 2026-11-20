@@ -158,8 +158,11 @@ impl Queue {
         }
     }
 
+    /// Give a queued job its task. Only called with the `jobs` lock held
+    /// and the job seen as queued under it, as `claim` also holds it: a job
+    /// is started once, and never while an owner's action stops it.
     fn spawn(self: &Arc<Self>, job: &Arc<Job>) {
-        job.stopped.store(false, Ordering::Relaxed);
+        job.stopped.store(false, Ordering::SeqCst);
         self.set(job, JobState::Resolving, None);
         let (queue, running) = (self.clone(), job.clone());
         let handle = tokio::spawn(async move {
@@ -254,10 +257,34 @@ impl Queue {
         }
     }
 
-    /// End the job's task, if one is running, and wait until it is gone.
-    async fn stop(&self, job: &Job) {
-        job.stopped.store(true, Ordering::Relaxed);
+    /// The first half of Pause and Cancel, in one step with the check: the
+    /// job when its state allows `action`, marked as stopped so its task
+    /// writes no state after this, with the task to end. A job that waits
+    /// for its turn is taken out of the turn here. `start` and `start_now`
+    /// hold the same lock, so neither can start the job in between.
+    fn claim(&self, id: i64, action: JobAction) -> Result<(Arc<Job>, Option<JoinHandle<()>>)> {
+        let jobs = self.jobs.lock().expect("lock");
+        let Some(job) = jobs.get(&id).cloned() else {
+            bail!("there is no download {id}");
+        };
+        {
+            let mut r = job.record();
+            if !r.state.allows(action) {
+                bail!("{}", not_now(id, r.state, action));
+            }
+            // Under the record's lock, which `set` holds to look at the
+            // mark: a task that is about to place sees it and ends.
+            job.stopped.store(true, Ordering::SeqCst);
+            if r.state == JobState::Queued {
+                r.state = JobState::Paused;
+            }
+        }
         let handle = job.task.lock().expect("lock").take();
+        Ok((job, handle))
+    }
+
+    /// End the job's task, if one is running, and wait until it is gone.
+    async fn stop(&self, job: &Job, handle: Option<JoinHandle<()>>) {
         if let Some(handle) = handle {
             handle.abort();
             let _ = handle.await;
@@ -271,8 +298,17 @@ impl Queue {
         }
     }
 
-    /// Do what the owner asked to a job, when its state allows it.
+    /// Do what the owner asked to a job, when its state allows it. The
+    /// work runs on a task of its own, so a caller that goes away (a
+    /// request whose client hung up) cannot cut it in two.
     pub async fn act(self: &Arc<Self>, id: i64, action: JobAction) -> Result<()> {
+        let queue = self.clone();
+        tokio::spawn(async move { queue.act_now(id, action).await })
+            .await
+            .map_err(|e| anyhow::anyhow!("the action on download {id} did not finish: {e}"))?
+    }
+
+    async fn act_now(self: &Arc<Self>, id: i64, action: JobAction) -> Result<()> {
         match action {
             JobAction::Pause => self.pause(id).await,
             JobAction::Resume | JobAction::Retry => self.resume(id),
@@ -289,27 +325,21 @@ impl Queue {
         let job = self.job(id)?;
         let state = job.record().state;
         if !actions.iter().any(|a| state.allows(*a)) {
-            bail!(
-                "download {id} is {}; it cannot be {} now",
-                state.as_str().replace('_', " "),
-                match actions[0] {
-                    JobAction::Pause => "paused",
-                    JobAction::Resume | JobAction::Retry => "continued",
-                    JobAction::Start => "started ahead of the queue",
-                    JobAction::Cancel => "cancelled",
-                    JobAction::Remove => "removed",
-                }
-            );
+            bail!("{}", not_now(id, state, actions[0]));
         }
         Ok(job)
     }
 
     /// Stop a job; what it has downloaded is kept.
     pub async fn pause(self: &Arc<Self>, id: i64) -> Result<()> {
-        let job = self.allowing(id, &[JobAction::Pause])?;
-        self.stop(&job).await;
+        let (job, handle) = self.claim(id, JobAction::Pause)?;
+        self.stop(&job, handle).await;
         {
             let mut r = job.record();
+            // A Cancel that came at the same time has the last word.
+            if r.state.is_finished() {
+                return Ok(());
+            }
             r.state = JobState::Paused;
             r.detail = None;
             r.wait_until = None;
@@ -324,9 +354,13 @@ impl Queue {
 
     /// Continue a paused job, or try again one that needed attention.
     pub fn resume(self: &Arc<Self>, id: i64) -> Result<()> {
-        let job = self.allowing(id, &[JobAction::Resume, JobAction::Retry])?;
+        let job = self.job(id)?;
         {
+            // The check and the change under one lock.
             let mut r = job.record();
+            if !(r.state.allows(JobAction::Resume) || r.state.allows(JobAction::Retry)) {
+                bail!("{}", not_now(id, r.state, JobAction::Resume));
+            }
             r.state = JobState::Queued;
             r.detail = None;
             r.finished_at = None;
@@ -340,15 +374,22 @@ impl Queue {
 
     /// Start a queued job now, even when others are working.
     pub fn start_now(self: &Arc<Self>, id: i64) -> Result<()> {
-        let job = self.allowing(id, &[JobAction::Start])?;
-        self.spawn(&job);
+        let jobs = self.jobs.lock().expect("lock");
+        let Some(job) = jobs.get(&id) else {
+            bail!("there is no download {id}");
+        };
+        let state = job.record().state;
+        if !state.allows(JobAction::Start) {
+            bail!("{}", not_now(id, state, JobAction::Start));
+        }
+        self.spawn(job);
         Ok(())
     }
 
     /// Stop a job and remove what it has downloaded so far.
     pub async fn cancel(self: &Arc<Self>, id: i64) -> Result<()> {
-        let job = self.allowing(id, &[JobAction::Cancel])?;
-        self.stop(&job).await;
+        let (job, handle) = self.claim(id, JobAction::Cancel)?;
+        self.stop(&job, handle).await;
         let files = job.record().files.clone();
         for file in files.iter().filter(|f| f.stage != FileStage::Stored) {
             let wanted = expect_of(file);
@@ -505,15 +546,18 @@ impl Queue {
         }
     }
 
-    /// Move a job to `state` from inside its own task.
-    fn set(&self, job: &Job, state: JobState, detail: Option<String>) {
-        if job.stopped.load(Ordering::Relaxed) {
-            return;
-        }
+    /// Move a job to `state` from inside its own task. False when the owner
+    /// has stopped the job: nothing is written, and the task must not begin
+    /// anything that cannot be cut off.
+    fn set(&self, job: &Job, state: JobState, detail: Option<String>) -> bool {
         {
             let mut r = job.record();
+            // Looked at under the record's lock, as `claim` sets it.
+            if job.stopped.load(Ordering::SeqCst) {
+                return false;
+            }
             if r.state == state && r.detail == detail {
-                return;
+                return true;
             }
             r.state = state;
             if state != JobState::WaitingServer {
@@ -534,6 +578,7 @@ impl Queue {
         }
         self.save(job);
         self.changed();
+        true
     }
 
     /// Keep the list of finished jobs from growing without end.
@@ -552,6 +597,21 @@ impl Queue {
             let _ = self.remove(id);
         }
     }
+}
+
+/// Why `action` cannot be done to a job in `state`.
+fn not_now(id: i64, state: JobState, action: JobAction) -> String {
+    format!(
+        "download {id} is {}; it cannot be {} now",
+        state.as_str().replace('_', " "),
+        match action {
+            JobAction::Pause => "paused",
+            JobAction::Resume | JobAction::Retry => "continued",
+            JobAction::Start => "started ahead of the queue",
+            JobAction::Cancel => "cancelled",
+            JobAction::Remove => "removed",
+        }
+    )
 }
 
 impl Job {

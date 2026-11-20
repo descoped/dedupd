@@ -62,7 +62,12 @@ pub async fn cmd_serve(o: &Opened, listen: Option<String>) -> Result<()> {
             .exec();
         return Err(failed).with_context(|| format!("starting {}", exe.display()));
     }
-    Ok(())
+    // Asked to stop: leave now. Returning would drop the runtime, which
+    // waits without limit for work on its blocking threads (a store check
+    // takes hours), so the process would stay and a second Ctrl-C would do
+    // nothing. The work is cut as a kill would cut it, which every such
+    // operation already has to survive.
+    std::process::exit(0)
 }
 
 pub fn cmd_env(o: &Opened) -> Result<()> {

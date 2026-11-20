@@ -86,11 +86,13 @@ impl PullWatch for JobWatch {
                 self.queue
                     .set(&self.job, JobState::WaitingServer, Some(wait_text(seconds)));
             }
-            Wait::Network => self.queue.set(
-                &self.job,
-                JobState::WaitingNetwork,
-                Some("the download server cannot be reached".to_string()),
-            ),
+            Wait::Network => {
+                self.queue.set(
+                    &self.job,
+                    JobState::WaitingNetwork,
+                    Some("the download server cannot be reached".to_string()),
+                );
+            }
         }
     }
 

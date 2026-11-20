@@ -348,7 +348,10 @@ impl Fetcher {
                 Some(size) if size > self.part_size => {
                     match self.in_parts(store, url, &part, size, &watch).await {
                         Err(Failure::NoRanges) => {
+                            // Starting over: what the parts reported is
+                            // taken back before it is counted again.
                             self.discard(store, expect);
+                            watch.undo();
                             self.in_one(store, url, &part, Some(size), &watch).await
                         }
                         other => other,
@@ -368,13 +371,30 @@ impl Fetcher {
 
             watch.verifying();
             let path = part.clone();
-            let hashes = tokio::task::spawn_blocking(move || hash_file(&path, want_git)).await??;
+            // A failure from here on takes the count back too, as promised.
+            let hashed = tokio::task::spawn_blocking(move || hash_file(&path, want_git)).await;
+            let hashes = match hashed {
+                Ok(Ok(hashes)) => hashes,
+                Ok(Err(e)) => {
+                    watch.undo();
+                    return Err(
+                        anyhow::Error::new(e).context(format!("reading {}", part.display()))
+                    );
+                }
+                Err(e) => {
+                    watch.undo();
+                    return Err(e.into());
+                }
+            };
             let ok = match expect {
                 Expect::Sha256(h) => &hashes.sha256 == h,
                 Expect::GitOid(o) => hashes.git_oid.as_deref() == Some(o.as_str()),
             };
             if ok {
-                store.add_tmp(&part, &hashes.sha256)?;
+                if let Err(e) = store.add_tmp(&part, &hashes.sha256) {
+                    watch.undo();
+                    return Err(e);
+                }
                 let _ = std::fs::remove_file(parts_path(&part));
                 return Ok(Fetched {
                     sha256: hashes.sha256,
