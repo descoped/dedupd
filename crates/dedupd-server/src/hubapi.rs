@@ -175,7 +175,12 @@ pub(crate) async fn api(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Res
         Asked::Info(repo, rev) => info(server, call, &repo, rev).await,
         Asked::Listing(repo, rev, path) => listing(server, call, &repo, rev, path.as_deref()).await,
         Asked::Refs(repo) => refs(server, call, &repo).await,
-        Asked::Model(_) | Asked::Other => pass_through(server, call).await,
+        Asked::Model(_) => pass_through(server, call).await,
+        // The one other read a client needs to fetch a model's files. The
+        // rest (the list of models, which shows private ones; a token to
+        // write with; discussions, commits) is the client's own business.
+        Asked::Other if rest.contains(&"xet-read-token") => pass_through(server, call).await,
+        Asked::Other => crate::proxy::pass_through_as_client(server, call).await,
     }
 }
 

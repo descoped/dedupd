@@ -138,4 +138,5 @@ All other functions operate with the archive disk detached.
   daemon for a model without a token of its own (Ollama, for a gated model) is served with dedupd's token; any other
   request the daemon passes on to Hugging Face carries the client's own token or none.
 - **Gated and private models.** A stored file of a gated or private model is served to a client only after Hugging
-  Face has been asked whether that client may have it, so it is not served while Hugging Face is unreachable.
+  Face has been asked whether it may be had, with the client's token or with dedupd's when the client has none, so it
+  is not served while Hugging Face is unreachable.

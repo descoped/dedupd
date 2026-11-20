@@ -47,6 +47,17 @@ pub(crate) async fn upstream(
     .await
 }
 
+/// Ask upstream as `upstream` does, but take a redirect as the answer and do
+/// not follow it.
+pub(crate) async fn upstream_unfollowed(
+    server: &Server,
+    call: &Call,
+    url: &str,
+) -> Result<reqwest::Response, reqwest::Error> {
+    let http = server.engine.fetcher.http_no_redirect();
+    send(http, server, call, url, true, true).await
+}
+
 async fn send(
     http: &reqwest::Client,
     server: &Server,

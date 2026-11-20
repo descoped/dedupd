@@ -55,6 +55,8 @@ pub struct Server {
     pub(crate) searches: Mutex<HashMap<String, (Instant, discover::Found)>>,
     /// The favorites file, and the reading of the likes on Hugging Face.
     pub(crate) favorites: favorites::State,
+    /// What the Hub said yes to lately, for layers that are not open to all.
+    pub(crate) permits: registry::Permits,
     /// Seconds since the epoch when this daemon started.
     pub started_at: i64,
     /// Cancelled when the daemon is stopping; ends the long-lived answers.
@@ -98,6 +100,7 @@ impl Server {
                 .map(|d| d.as_secs() as i64)
                 .unwrap_or(0),
             favorites: Default::default(),
+            permits: Default::default(),
             shutdown: CancellationToken::new(),
             restart: AtomicBool::new(false),
         });
@@ -141,9 +144,10 @@ impl Server {
         self.restart.load(Ordering::Relaxed)
     }
 
-    /// Forget which commits branch names were last seen at, so the next
-    /// request asks upstream again.
+    /// Forget which commits branch names were last seen at, and what the
+    /// Hub said yes to lately, so the next request asks upstream again.
     pub fn forget_refs(&self) {
+        self.permits.clear();
         self.commits.lock().expect("lock").clear();
     }
 }

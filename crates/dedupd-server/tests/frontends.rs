@@ -308,19 +308,26 @@ async fn a_gated_models_stored_layer_is_not_served_without_asking() {
     wait_for_store(&fx, &sha).await;
     wait_for_info(&fx).await;
 
-    // While the Hub says this client may have it, the stored copy answers.
+    // While the Hub says yes, the stored copy answers. The Hub's yes is a
+    // redirect to its download server, whose address is made for a GET and
+    // refuses anything else: the Hub's own answer decides, and the redirect
+    // is not followed (the address here answers nothing at all).
     Mock::given(method("HEAD"))
         .and(path(&asked))
-        .respond_with(ResponseTemplate::new(200))
+        .respond_with(
+            ResponseTemplate::new(307).insert_header("location", "http://127.0.0.1:1/signed"),
+        )
         .with_priority(2)
         .mount(&fx.upstream)
         .await;
     let before = upstream_hits(&fx, &asked).await;
-    let served = whole().await.unwrap();
-    assert_eq!(served.status(), 206);
-    assert_eq!(served.bytes().await.unwrap(), fx.template);
-    assert_eq!(head().await.unwrap().status(), 200);
-    // Each was asked about upstream, and no bytes were fetched again.
+    for _ in 0..3 {
+        let served = whole().await.unwrap();
+        assert_eq!(served.status(), 206);
+        assert_eq!(served.bytes().await.unwrap(), fx.template);
+    }
+    // The Hub was asked once for the three parts, and no bytes were
+    // fetched again.
     let asked_about = fx.upstream.received_requests().await.unwrap();
     let asked_about: Vec<_> = asked_about[..]
         .iter()
@@ -328,7 +335,9 @@ async fn a_gated_models_stored_layer_is_not_served_without_asking() {
         .skip(before)
         .map(|r| r.method.to_string())
         .collect();
-    assert_eq!(asked_about, ["HEAD", "HEAD"]);
+    assert_eq!(asked_about, ["HEAD"]);
+    // A yes stands for a minute; from here on the Hub is asked each time.
+    fx.server.forget_refs();
 
     // The Hub says no: holding the bytes is not reason enough.
     Mock::given(method("HEAD"))
@@ -345,6 +354,7 @@ async fn a_gated_models_stored_layer_is_not_served_without_asking() {
     assert!(no.headers().get("www-authenticate").is_none());
     assert!(no.bytes().await.unwrap().is_empty());
     assert_eq!(head().await.unwrap().status(), 401);
+    fx.server.forget_refs();
     // Nor under no name, or under a name that is not a model's.
     for name in ["", "..%2F.."] {
         let nameless = format!("{}/dedupd/blob/sha256:{sha}?repo={name}", fx.base);
@@ -723,6 +733,9 @@ async fn the_daemons_token_is_lent_only_to_read_a_model() {
     // The rest of the Hub: the account, datasets, spaces, anything unknown.
     for other in [
         "/api/whoami-v2",
+        "/api/models",
+        "/api/models/org/repo/discussions",
+        "/api/models/org/repo/xet-write-token/main",
         "/api/datasets/org/data",
         "/datasets/org/data/resolve/main/f",
         "/spaces/org/space",
@@ -764,7 +777,7 @@ async fn the_daemons_token_is_lent_only_to_read_a_model() {
         .await
         .unwrap();
     assert_eq!(upstream_auth(&fx, "/manifests/latest").await[0], owner);
-    let about = format!("/api/models/{REPO}/discussions");
+    let about = format!("/api/models/{REPO}/xet-read-token/main");
     fx.http
         .get(format!("{}{about}", fx.base))
         .send()
