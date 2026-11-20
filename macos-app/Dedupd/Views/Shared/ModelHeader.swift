@@ -18,15 +18,17 @@ struct ModelHeader: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(RepoName.name(repo))
-                .font(.title3.weight(.semibold))
-                .textSelection(.enabled)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                FavoriteButton(repo: repo)
+                Text(RepoName.name(repo))
+                    .font(.title3.weight(.semibold))
+                    .textSelection(.enabled)
+            }
             HStack(spacing: 6) {
                 Text(meta.author ?? RepoName.organisation(repo))
                     .foregroundStyle(.secondary)
                 FormatBadges(formats: meta.formats)
                 Spacer()
-                FavoriteButton(repo: repo)
                 if let page = HuggingFace.page(repo) {
                     Link(destination: page) {
                         Label("Hugging Face", systemImage: "arrow.up.right.square")

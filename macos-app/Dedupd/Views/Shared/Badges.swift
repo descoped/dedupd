@@ -105,7 +105,8 @@ struct InspectorSection<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         // The same column for the names of the facts in every section and
         // for every model, so the values stay where they are when the
-        // owner goes from one model to the next.
+        // owner goes from one model to the next. Sized for the longest
+        // name today, "Revisions kept"; a longer one needs a wider column.
         .environment(\.factLabelWidth, 104)
     }
 }
