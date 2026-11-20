@@ -83,6 +83,152 @@ struct ServicesTests {
         #expect(state.log == "/Users/example/.dedupd/daemon.log")
     }
 
+    @Test("The canned daemon's library changes with what is done to it, and every screen's figures agree")
+    func cannedLibrary() async throws {
+        let client = FixtureDaemonClient(scenario: .running)
+        func model(_ repo: String) async throws -> LibraryModel {
+            try #require(try await client.models(at: "a").first { $0.repo == repo })
+        }
+        /// The status, the places and the library say the same.
+        func agree() async throws {
+            let models = try await client.models(at: "a")
+            let status = try await client.status(at: "a")
+            let places = try await client.locations(at: "a")
+            #expect(places.store.files == status.storeFiles && places.store.bytes == status.storeBytes)
+            #expect(places.store.sharedBytes == 0 && places.archive?.bytes == 0, "as the daemon counts them")
+            for place in places.apps {
+                let held = models.compactMap { model in model.apps.first { $0.app == place.app } }
+                #expect(place.files == held.map(\.files).reduce(0, +))
+                #expect(place.bytes == held.map(\.bytes).reduce(0, +))
+                #expect(place.models == UInt64(held.count))
+                let usage = status.apps.first { $0.app == place.app }
+                #expect((usage?.files ?? 0, usage?.bytes ?? 0) == (place.files, place.bytes))
+            }
+            #expect(status.sharedBytes == places.sharedBytes)
+        }
+        try await agree()
+        #expect(try await client.status(at: "a").storeFiles == 61)
+
+        // Deactivated: the app no longer has it, and the history says so
+        // in the daemon's sentence.
+        _ = try await client.unplace(FixtureData.smolGGUF, app: .ollama, paths: nil, apply: false, at: "a")
+        #expect(try await model(FixtureData.smolGGUF).appNames == [.bionic, .ollama], "a plan changes nothing")
+        let removed = try await client.unplace(FixtureData.smolGGUF, app: .ollama, paths: nil, apply: true, at: "a")
+        #expect(removed.removed == 4)
+        #expect(try await model(FixtureData.smolGGUF).appNames == [.bionic])
+        #expect(try await model(FixtureData.smolGGUF).ollamaTags.isEmpty)
+        #expect(try await client.activity(at: "a").first?.text == "Deactivated in Ollama")
+        try await agree()
+
+        // Activated: the apps that take it have it; the job reads as an
+        // activation, and the history has the app's own reason for a no.
+        let asked = try await client.enqueue(
+            PullRequest(model: FixtureData.smolMLX, apps: [.huggingFace, .ollama]), at: "a"
+        )
+        let job = try await client.download(asked.id, at: "a").job
+        #expect(job.kind == .activation && job.state == .done)
+        #expect(try await model(FixtureData.smolMLX).appNames == job.activated)
+        let lines = try await client.activity(at: "a").prefix(2).map(\.text)
+        #expect(lines.contains("Activated in the Hugging Face cache"))
+        try await agree()
+
+        // Archived: in no app, off the internal disk. Restored: in the
+        // store again, in no app.
+        let before = try await client.status(at: "a").storeBytes
+        try await client.archive(FixtureData.qwen, at: "a")
+        #expect(try await client.activity(at: "a").first?.text == "Moved to the archive disk: 13 files, 16.08 GB freed on this Mac")
+        #expect(try await client.status(at: "a").storeBytes == before - 16_080_000_000)
+        #expect(try await client.hubModel(FixtureData.qwen, at: "a").variants.allSatisfy { !$0.weightsStored })
+        try await agree()
+        try await client.restore(FixtureData.qwen, at: "a")
+        #expect(try await client.activity(at: "a").first?.text == "Brought back from the archive disk: 13 files, 16.08 GB")
+        #expect(try await model(FixtureData.qwen).apps.isEmpty)
+        #expect(try await client.status(at: "a").storeBytes == before)
+
+        // Forgotten: gone from the library.
+        try await client.forget(FixtureData.qwen, at: "a")
+        #expect(try await client.models(at: "a").count == 4)
+        await #expect(throws: ClientError.self) { try await client.model(FixtureData.qwen, at: "a") }
+        try await agree()
+
+        // Cleaned up: what was removed is not offered again.
+        let plan = try await client.gcPlan(offload: false, at: "a")
+        let done = try await client.gcApply(orphans: plan.orphans.map(\.sha256), offload: [], at: "a")
+        #expect(done.freed == FixtureData.orphanBytes)
+        #expect(try await client.gcPlan(offload: false, at: "a").orphans.isEmpty)
+        try await agree()
+    }
+
+    @Test("A clean-up that moves a model's weights off this Mac changes the store and the model")
+    func cannedOffload() async throws {
+        let client = FixtureDaemonClient(scenario: .running)
+        let before = try await client.status(at: "a")
+        let plan = try await client.gcPlan(offload: true, at: "a")
+        #expect(plan.offload.map(\.size) == [FixtureData.offloadBytes])
+        let done = try await client.gcApply(orphans: [], offload: plan.offload.map(\.sha256), at: "a")
+        #expect(done.freed == FixtureData.offloadBytes)
+
+        // The store holds one file less, in every answer about it.
+        let status = try await client.status(at: "a")
+        #expect(status.storeFiles == before.storeFiles - 1)
+        #expect(status.storeBytes == before.storeBytes - FixtureData.offloadBytes)
+        let places = try await client.locations(at: "a")
+        #expect((places.store.files, places.store.bytes) == (status.storeFiles, status.storeBytes))
+        let check = try await client.storeCheck(at: "a")
+        #expect((check.checked, check.bytes) == (status.storeFiles, status.storeBytes))
+
+        // The model's weights are not in the store, and are not offered again.
+        let detail = try await client.model(FixtureData.smolMLX, at: "a")
+        #expect(detail.variants.allSatisfy { !$0.weightsStored })
+        #expect(detail.revisions.first?.files.filter { !$0.stored }.map(\.path) == ["model.safetensors"])
+        #expect(try await client.hubModel(FixtureData.smolMLX, at: "a").variants.allSatisfy { !$0.weightsStored })
+        #expect(try await client.gcPlan(offload: true, at: "a").offload.isEmpty)
+
+        // Archiving it moves only what was left; then nothing can be offered.
+        try await client.archive(FixtureData.smolMLX, at: "a")
+        #expect(try await client.activity(at: "a").first?.text == "Moved to the archive disk: 7 files, 10.00 KB freed on this Mac")
+        #expect(try await client.gcPlan(offload: true, at: "a").offload.isEmpty)
+        try await client.restore(FixtureData.smolMLX, at: "a")
+        #expect(try await client.model(FixtureData.smolMLX, at: "a").variants.allSatisfy(\.weightsStored))
+        #expect(try await client.status(at: "a").storeBytes == before.storeBytes)
+    }
+
+    @Test("The canned daemon starts no archive or restore of a model with a job that is not finished")
+    func cannedMoveWaitsForTheQueue() async throws {
+        let client = FixtureDaemonClient(scenario: .downloading)
+        let busy = try #require(FixtureData.jobs.first { !$0.state.isFinished })
+        do {
+            try await client.archive(busy.repo, at: "a")
+            Issue.record("a model that is being downloaded was archived")
+        } catch {
+            #expect(describe(error) == FixtureData.busy(busy.repo))
+        }
+    }
+
+    @Test("The queue's refusal names every state as the daemon does")
+    func cannedRefusalWords() {
+        #expect(FixtureData.notNow(7, .needsAttention, .start)
+            == "download 7 is needs attention; it cannot be started ahead of the queue now")
+        #expect(FixtureData.notNow(7, .waitingServer, .retry) == "download 7 is waiting server; it cannot be continued now")
+    }
+
+    @Test("The canned history agrees with the canned library")
+    func cannedHistory() {
+        for entry in FixtureData.activity where entry.action == .activate {
+            let model = FixtureData.models.first { $0.repo == entry.repo }
+            #expect(model?.appNames.contains { $0 == entry.app } == entry.ok, "\(entry.text)")
+        }
+    }
+
+    @Test("A canned download that finished left its model in the library, in the apps it names")
+    func cannedFinishedDownloads() {
+        for job in FixtureData.jobs where job.state == .done {
+            let model = FixtureData.models.first { $0.repo == job.repo }
+            #expect(model != nil, "\(job.model)")
+            #expect(job.activated.allSatisfy { model?.appNames.contains($0) == true }, "\(job.model)")
+        }
+    }
+
     @Test("The canned daemon refuses where the real one does")
     func cannedRefusals() async throws {
         let client = FixtureDaemonClient(scenario: .running)
@@ -111,5 +257,12 @@ struct ServicesTests {
         }
         try await client.archive(FixtureData.smolGGUF, at: "a")
         try await client.forget(FixtureData.smolGGUF, at: "a")
+        // An action a job's state does not allow, in the queue's words.
+        do {
+            try await client.downloadAction(.pause, id: done.id, at: "a")
+            Issue.record("a finished job was paused")
+        } catch {
+            #expect(describe(error) == "download \(done.id) is done; it cannot be paused now")
+        }
     }
 }

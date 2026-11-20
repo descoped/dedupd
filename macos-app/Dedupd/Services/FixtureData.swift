@@ -14,24 +14,79 @@ enum FixtureData {
 
     // MARK: - Status
 
-    static func status(jobs: [Job] = []) -> DaemonStatus {
+    /// The files nothing refers to, until the owner cleans up.
+    static let orphanFiles: UInt64 = 2
+    static let orphanBytes: UInt64 = 4_920_001_840
+
+    /// What the internal disk's store holds of a library: every model that
+    /// is not archived, and the orphans while they are there.
+    static func stored(of library: [LibraryModel], cleaned: Bool, offloaded: Bool = false) -> (files: UInt64, bytes: UInt64) {
+        let here = library.filter { !$0.isArchived }
+        // A weights file whose local copy went in a clean-up is not counted:
+        // the daemon counts what the store holds.
+        let away = here.contains { weightsAway($0, offloaded: offloaded) }
+        return (
+            here.map(\.storedFiles).reduce(0, +) + (cleaned ? 0 : orphanFiles) - (away ? 1 : 0),
+            here.map(\.storedBytes).reduce(0, +) + (cleaned ? 0 : orphanBytes) - (away ? offloadBytes : 0)
+        )
+    }
+
+    /// The one file a clean-up can move off this Mac: the weights of the
+    /// model no app has, which the archive disk holds too.
+    static let offloadBytes: UInt64 = 79_210_000
+
+    /// Whether a clean-up may offer that file: its model is in the store
+    /// and in no app.
+    static func canOffload(_ model: LibraryModel) -> Bool {
+        model.repo == smolMLX && !model.isArchived && model.apps.isEmpty
+    }
+
+    /// Whether a model's weights left the internal disk in a clean-up.
+    static func weightsAway(_ model: LibraryModel, offloaded: Bool) -> Bool {
+        offloaded && model.repo == smolMLX && !model.isArchived
+    }
+
+    /// What one app holds of a library.
+    struct Held {
+        var files: UInt64
+        var bytes: UInt64
+        var models: UInt64
+    }
+
+    /// What one app holds of a library, as the daemon adds its files up.
+    static func usage(of app: ModelApp, in library: [LibraryModel]) -> Held {
+        let held = library.compactMap { model in model.apps.first { $0.app == app } }
+        return Held(
+            files: held.map(\.files).reduce(0, +), bytes: held.map(\.bytes).reduce(0, +), models: UInt64(held.count)
+        )
+    }
+
+    /// The status of a daemon that holds this library. Every figure is
+    /// added up from the models, as the real daemon adds up its records.
+    static func status(
+        jobs: [Job] = [], library: [LibraryModel] = models, cleaned: Bool = false, offloaded: Bool = false
+    ) -> DaemonStatus {
         let active = jobs.filter { $0.state.isActive }
+        let store = stored(of: library, cleaned: cleaned, offloaded: offloaded)
+        // By the app's name, as the daemon lists them; an app with nothing
+        // is not listed.
+        let apps: [AppUsage] = [ModelApp.bionic, .huggingFace, .ollama].compactMap { app in
+            let held = usage(of: app, in: library)
+            return held.files == 0 ? nil : AppUsage(app: app, files: held.files, bytes: held.bytes)
+        }
         return DaemonStatus(
             version: "0.1.0",
             home: "/Users/example/.dedupd",
             endpoint: "https://huggingface.co",
             archivePath: archiveFolder,
             archiveAttached: true,
-            storeFiles: 61,
-            storeBytes: 290_040_000_000,
-            sharedBytes: 290_070_000_000,
+            storeFiles: store.files,
+            storeBytes: store.bytes,
+            // Every canned app file is a clone of the stored one.
+            sharedBytes: apps.map(\.bytes).reduce(0, +),
             downloadingTotal: active.map(\.bytesTotal).reduce(0, +),
             downloadingDone: active.map(\.bytesDone).reduce(0, +),
-            apps: [
-                AppUsage(app: .bionic, files: 61, bytes: 290_070_000_000),
-                AppUsage(app: .huggingFace, files: 8, bytes: 79_220_000),
-                AppUsage(app: .ollama, files: 4, bytes: 105_460_000),
-            ],
+            apps: apps,
             repositories: [],
             daemon: DaemonInfo(
                 pid: 4242,
@@ -88,7 +143,7 @@ enum FixtureData {
         short + String(repeating: "0", count: 40 - short.count)
     }
 
-    private static func presence(_ app: ModelApp, files: UInt64, bytes: UInt64) -> AppPresence {
+    static func presence(_ app: ModelApp, files: UInt64, bytes: UInt64) -> AppPresence {
         AppPresence(app: app, files: files, bytes: bytes, sharedBytes: bytes)
     }
 
@@ -227,10 +282,19 @@ extension FixtureData {
         ("LICENSE", 3160),
     ]
 
+    /// One of the fixed models in full, as it is before anything is done
+    /// to it.
     static func detail(_ repo: String) -> ModelDetail? {
-        guard let model = models.first(where: { $0.repo == repo }) else {
-            return nil
-        }
+        models.first { $0.repo == repo }.map { detail(of: $0) }
+    }
+
+    /// A model in full, as the daemon holds it now: its files are where the
+    /// model's own figures say (in the store unless it is archived, in the
+    /// apps it lists).
+    static func detail(of model: LibraryModel, offloaded: Bool = false) -> ModelDetail {
+        let repo = model.repo
+        let here = !model.isArchived
+        let away = weightsAway(model, offloaded: offloaded)
         let isGGUF = model.meta.formats.contains("gguf")
         let files: [RevisionFile] = isGGUF
             ? ggufFiles.map { name, size in
@@ -240,7 +304,7 @@ extension FixtureData {
                     sha256: sha(name),
                     gitOid: String(sha(name).prefix(40)),
                     lfs: name.hasSuffix(".gguf"),
-                    stored: true,
+                    stored: here,
                     archived: true,
                     apps: model.appNames
                 )
@@ -252,7 +316,7 @@ extension FixtureData {
                     sha256: sha(name),
                     gitOid: String(sha(name).prefix(40)),
                     lfs: name == "model.safetensors",
-                    stored: true,
+                    stored: here && !(away && name == "model.safetensors"),
                     archived: true,
                     apps: model.appNames
                 )
@@ -283,19 +347,25 @@ extension FixtureData {
                 ),
             ],
             placements: placements,
-            variants: variants(of: model),
+            variants: variants(of: model, offloaded: offloaded),
             infoJson: #"{"id":"\#(repo)","pipeline_tag":"text-generation","private":false,"gated":false}"#,
             readme: readme
         )
     }
 
-    private static func variants(of model: LibraryModel) -> [Variant] {
+    private static func variants(of model: LibraryModel, offloaded: Bool) -> [Variant] {
         let judged = judged(model.repo, formats: model.meta.formats, stored: true)
+        // An archived model has nothing in the store: the daemon then says
+        // no bytes are stored and the weights are not there.
+        // One whose weights went in a clean-up keeps its small files only.
+        let away = weightsAway(model, offloaded: offloaded)
+        let here = !model.isArchived && !away
+        let stored = model.isArchived ? 0 : model.storedBytes - (away ? offloadBytes : 0)
         if model.meta.formats.contains("gguf") {
             return [
                 Variant(
                     kind: .gguf, format: judged.format, name: "Q4_K_M", spec: "\(model.repo):Q4_K_M", files: 4,
-                    bytes: model.storedBytes, storedBytes: model.storedBytes, weightsStored: true, usableBy: judged.usableBy,
+                    bytes: model.storedBytes, storedBytes: stored, weightsStored: here, usableBy: judged.usableBy,
                     placedIn: model.appNames, decisions: judged.decisions
                 ),
             ]
@@ -303,7 +373,7 @@ extension FixtureData {
         return [
             Variant(
                 kind: .files, format: judged.format, name: "all files", spec: model.repo, files: model.storedFiles,
-                bytes: model.storedBytes, storedBytes: model.storedBytes, weightsStored: true, usableBy: judged.usableBy,
+                bytes: model.storedBytes, storedBytes: stored, weightsStored: here, usableBy: judged.usableBy,
                 placedIn: model.appNames, decisions: judged.decisions
             ),
         ]
@@ -352,62 +422,6 @@ extension FixtureData {
         let seed = name.utf8.reduce(UInt64(1469598103934665603)) { ($0 ^ UInt64($1)) &* 1099511628211 }
         return String(repeating: String(seed, radix: 16), count: 4).prefix(64).padding(toLength: 64, withPad: "0", startingAt: 0)
     }
-
-    // MARK: - Storage
-
-    static let locations = Locations(
-        volumeTotal: 994_660_000_000,
-        volumeFree: 412_300_000_000,
-        store: Location(
-            kind: .store, app: nil, path: "/Users/example/.dedupd/store", present: true, files: 61,
-            bytes: 290_040_000_000, sharedBytes: 290_040_000_000, models: 5
-        ),
-        archive: Location(
-            kind: .archive, app: nil, path: archiveFolder, present: true, files: 61,
-            bytes: 290_040_000_000, sharedBytes: 0, models: 5
-        ),
-        apps: [
-            Location(
-                kind: .app, app: .bionic, path: "/Users/example/.lmstudio/models", present: true, files: 51,
-                bytes: 270_725_460_000, sharedBytes: 270_725_460_000, models: 4
-            ),
-            Location(
-                kind: .app, app: .ollama, path: "/Users/example/.ollama/models", present: true, files: 4,
-                bytes: 105_460_000, sharedBytes: 105_460_000, models: 1
-            ),
-            Location(
-                kind: .app, app: .huggingFace, path: "/Users/example/.cache/huggingface/hub", present: true, files: 0,
-                bytes: 0, sharedBytes: 0, models: 0
-            ),
-        ]
-    )
-
-    static func gcPlan(offload: Bool, freed: UInt64? = nil) -> GcPlan {
-        let orphans = [
-            StoredFile(sha256: sha("orphan-one"), size: 4_920_000_000, gitOid: nil, knownAs: nil),
-            StoredFile(sha256: sha("orphan-two"), size: 1840, gitOid: String(sha("orphan-two").prefix(40)), knownAs: nil),
-        ]
-        let away = offload
-            ? [
-                StoredFile(
-                    sha256: sha("model.safetensors"), size: 79_210_000, gitOid: nil,
-                    knownAs: "\(smolMLX): model.safetensors"
-                ),
-            ]
-            : []
-        return GcPlan(
-            orphans: orphans,
-            offload: away,
-            orphanBytes: orphans.map(\.size).reduce(0, +),
-            offloadBytes: away.map(\.size).reduce(0, +),
-            freed: freed
-        )
-    }
-
-    static let storeCheck = StoreCheck(
-        running: false, startedAt: 1_793_899_000, finishedAt: 1_793_900_000, checked: 61,
-        bytes: 290_040_000_000, damaged: [], missing: [], onlyInArchive: 0, archiveAway: 0, error: nil
-    )
 
     // MARK: - Daemon
 

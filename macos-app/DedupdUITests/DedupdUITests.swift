@@ -249,8 +249,8 @@ final class DedupdUITests: XCTestCase {
         let window = launch(arguments: ["-uiTestFixture", "downloading", "-panelWindow", "YES"])
 
         XCTAssertTrue(text("Running, version 0.1.0", in: window).waitForExistence(timeout: 5))
-        XCTAssertEqual(element("tile-store", in: window).label, "Store, 290.04 GB, 61 files")
-        XCTAssertEqual(element("tile-shared", in: window).label, "Shared with apps, 290.07 GB, not stored twice")
+        XCTAssertEqual(element("tile-store", in: window).label, "Store, 275.72 GB, 61 files")
+        XCTAssertEqual(element("tile-shared", in: window).label, "Shared with apps, 270.83 GB, not stored twice")
         XCTAssertEqual(element("tile-archive", in: window).label, "Archive, Attached, dedupd")
         XCTAssertTrue(labelled("Downloading, 41.94 MB of 106.07 MB", in: window).exists, "the download in flight")
         XCTAssertTrue(element("open-main", in: window).isEnabled)
@@ -281,7 +281,7 @@ final class DedupdUITests: XCTestCase {
         XCTAssertTrue(shown.waitForExistence(timeout: 10), "Discover shows the model")
         let main = app.windows.containing(.any, identifier: "pane-discover").firstMatch
         XCTAssertTrue(main.exists)
-        screenshot(main, "16-discover-from-panel")
+        screenshot(main, "24-discover-from-panel")
     }
 
     /// The real thing: the app, the Rust client and a running daemon. Skipped
