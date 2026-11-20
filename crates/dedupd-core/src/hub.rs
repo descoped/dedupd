@@ -341,6 +341,19 @@ impl HubClient {
             let raw = RawEntry::deserialize(value)
                 .map_err(|e| HubError::Malformed(format!("tree entry: {e}")))?;
             if raw.kind == "file" {
+                // These become file names on this Mac (in an app's folder,
+                // in the store), so a listing that holds anything but a
+                // plain path and plain hashes is refused whole.
+                let hash_ok = match &raw.lfs {
+                    Some(lfs) => crate::names::is_sha256(&lfs.oid),
+                    None => crate::names::is_git_oid(&raw.oid),
+                };
+                if !crate::names::is_file_path(&raw.path) || !hash_ok {
+                    return Err(HubError::Malformed(format!(
+                        "the file listing of {repo} holds a path or hash that is not one: {:?}",
+                        raw.path
+                    )));
+                }
                 entries.push(TreeEntry {
                     path: raw.path,
                     size: raw.size,
@@ -530,7 +543,7 @@ mod tests {
                     )
                     .set_body_json(json!([
                         {"type": "directory", "oid": "d", "size": 0, "path": "sub"},
-                        {"type": "file", "oid": "g1", "size": 5, "path": "config.json"}
+                        {"type": "file", "oid": "1111111111111111111111111111111111111111", "size": 5, "path": "config.json"}
                     ])),
             )
             .mount(&server)
@@ -540,7 +553,7 @@ mod tests {
             .and(query_param("cursor", "p2"))
             .respond_with(ResponseTemplate::new(200).set_body_json(json!([
                 {"type": "file", "oid": "g2", "size": 9, "path": "sub/model.gguf",
-                 "lfs": {"oid": "sha", "size": 9, "pointerSize": 134}, "xetHash": "x"}
+                 "lfs": {"oid": "5555555555555555555555555555555555555555555555555555555555555555", "size": 9, "pointerSize": 134}, "xetHash": "x"}
             ])))
             .mount(&server)
             .await;
@@ -554,14 +567,16 @@ mod tests {
                 TreeEntry {
                     path: "config.json".into(),
                     size: 5,
-                    git_oid: "g1".into(),
+                    git_oid: "1111111111111111111111111111111111111111".into(),
                     lfs_sha256: None
                 },
                 TreeEntry {
                     path: "sub/model.gguf".into(),
                     size: 9,
                     git_oid: "g2".into(),
-                    lfs_sha256: Some("sha".into())
+                    lfs_sha256: Some(
+                        "5555555555555555555555555555555555555555555555555555555555555555".into()
+                    )
                 },
             ]
         );
@@ -569,6 +584,48 @@ mod tests {
         let archived: serde_json::Value = serde_json::from_str(&snap.tree_json).unwrap();
         assert_eq!(archived.as_array().unwrap().len(), 3);
         assert_eq!(archived[2]["xetHash"], "x");
+    }
+
+    #[tokio::test]
+    async fn a_listing_with_a_path_or_hash_that_is_not_one_is_refused() {
+        let good_oid = "1".repeat(40);
+        let good_sha = "5".repeat(64);
+        let cases = [
+            json!({"type": "file", "oid": good_oid, "size": 1, "path": "../../outside"}),
+            json!({"type": "file", "oid": good_oid, "size": 1, "path": "/etc/hosts"}),
+            json!({"type": "file", "oid": good_oid, "size": 1, "path": "a/../../b"}),
+            json!({"type": "file", "oid": "../../x", "size": 1, "path": "config.json"}),
+            json!({"type": "file", "oid": good_oid, "size": 1, "path": "m.gguf",
+                   "lfs": {"oid": "../../../x", "size": 1, "pointerSize": 134}}),
+            json!({"type": "file", "oid": good_oid, "size": 1, "path": "m.gguf",
+                   "lfs": {"oid": "/Users/example/.ssh/id_ed25519", "size": 1, "pointerSize": 134}}),
+        ];
+        for bad in cases {
+            let server = MockServer::start().await;
+            Mock::given(method("GET"))
+                .and(path("/api/models/org/repo/revision/main"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!({"sha": COMMIT})))
+                .mount(&server)
+                .await;
+            Mock::given(method("GET"))
+                .and(path(format!("/api/models/org/repo/tree/{COMMIT}")))
+                .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                    {"type": "file", "oid": good_oid, "size": 1, "path": "ok.json"},
+                    {"type": "file", "oid": good_oid, "size": 1, "path": "big.gguf",
+                     "lfs": {"oid": good_sha, "size": 1, "pointerSize": 134}},
+                    bad.clone()
+                ])))
+                .mount(&server)
+                .await;
+            let hub = HubClient::new(server.uri(), None).unwrap();
+            assert!(
+                matches!(
+                    hub.snapshot("org/repo", "main").await,
+                    Err(HubError::Malformed(_))
+                ),
+                "{bad}"
+            );
+        }
     }
 
     #[tokio::test]

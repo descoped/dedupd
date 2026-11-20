@@ -96,7 +96,12 @@ impl Store {
     }
 
     /// A path in the store's own temp folder, on the store's volume.
+    /// Only the last part of `name` is used, so the path stays in that
+    /// folder whatever the name holds.
     pub fn tmp_path(&self, name: &str) -> PathBuf {
+        let name = Path::new(name)
+            .file_name()
+            .unwrap_or(std::ffi::OsStr::new("unnamed"));
         self.home.tmp_dir().join(name)
     }
 

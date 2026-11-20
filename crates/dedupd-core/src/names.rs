@@ -32,6 +32,30 @@ pub fn is_repo_name(repo: &str) -> bool {
     )
 }
 
+/// Whether the text is a sha256 as dedupd names files by it: 64 lower-case
+/// hex digits. A hash from outside (the provider's listing, a request) is
+/// checked with this before it names a file.
+pub fn is_sha256(text: &str) -> bool {
+    text.len() == 64 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Whether the text is a git object id: 40 lower-case hex digits.
+pub fn is_git_oid(text: &str) -> bool {
+    text.len() == 40 && text.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
+/// Whether the text is the path of a file inside a repository, as a git tree
+/// can hold it: relative, with `/` between its parts, and no part that is
+/// empty, `.` or `..`. Joined to a folder, such a path stays inside it.
+pub fn is_file_path(path: &str) -> bool {
+    !path.is_empty()
+        && path.len() <= 4096
+        && !path.contains(['\\', '\0'])
+        && path
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
 /// Split `org/repo[:quant][@revision]` as typed on the command line. Every
 /// part is checked: a quantization is a short word, and a revision is a
 /// branch, tag or commit with nothing in it that climbs out of a path.
@@ -73,6 +97,46 @@ pub fn parse_model(spec: &str) -> Result<(String, Option<String>, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn file_paths_and_hashes_from_outside_are_checked() {
+        for good in [
+            "model.gguf",
+            "sub/config.json",
+            "a/b/c.d",
+            ".gitattributes",
+            "a..b/c",
+        ] {
+            assert!(is_file_path(good), "{good}");
+        }
+        for bad in [
+            "",
+            "/etc/passwd",
+            "../x",
+            "a/../../x",
+            "a/./b",
+            "a//b",
+            "a/",
+            "a\\b",
+            "a\0b",
+            "..",
+        ] {
+            assert!(!is_file_path(bad), "{bad:?}");
+        }
+        let sha = "ab".repeat(32);
+        assert!(is_sha256(&sha));
+        assert!(is_git_oid(&sha[..40]));
+        for bad in [
+            "",
+            "../../x",
+            &sha[..63],
+            &sha.to_uppercase(),
+            &format!("/{}", &sha[1..]),
+        ] {
+            assert!(!is_sha256(bad), "{bad:?}");
+            assert!(!is_git_oid(bad), "{bad:?}");
+        }
+    }
 
     #[test]
     fn a_model_name_is_read_and_checked() {

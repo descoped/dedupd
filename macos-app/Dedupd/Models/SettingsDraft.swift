@@ -67,9 +67,16 @@ struct SettingsDraft: Equatable, Sendable {
         number(.scanInterval, scanInterval, original.scanInterval)
         number(.maxConnections, maxConnections, original.maxConnections)
         if speedLimit != original.speedLimit {
-            let bytes = UInt64(max(0, speedLimit) * 1_000_000)
+            // What was typed can be any number: one that is not a number, or
+            // too large to count in bytes, is cut to the largest limit.
+            let megabytes = speedLimit.isNaN ? 0 : min(max(0, speedLimit), Self.largestSpeedLimit)
+            let bytes = UInt64((megabytes * 1_000_000).rounded())
             changes.append(SettingChange(key: .speedLimit, value: .number(value: bytes)))
         }
         return changes
     }
+
+    /// The largest speed limit that is sent, in megabytes a second. Far above
+    /// any connection; it only keeps the number countable.
+    static let largestSpeedLimit: Double = 1_000_000
 }

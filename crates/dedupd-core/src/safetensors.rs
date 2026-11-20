@@ -32,7 +32,7 @@ pub struct Tensor {
 
 impl Tensor {
     pub fn bytes(&self) -> u64 {
-        self.data_offsets[1] - self.data_offsets[0]
+        self.data_offsets[1].saturating_sub(self.data_offsets[0])
     }
 }
 
@@ -76,7 +76,7 @@ pub fn read_index(path: &Path) -> Result<Index> {
         .context("the file is too short to be safetensors")?;
     let length = u64::from_le_bytes(length);
     ensure!(
-        length <= INDEX_MAX && 8 + length <= size,
+        length <= INDEX_MAX && length <= size.saturating_sub(8),
         "{} is not a safetensors file",
         path.display()
     );
@@ -95,8 +95,10 @@ pub fn read_index(path: &Path) -> Result<Index> {
         let tensor: Tensor = serde_json::from_value(value)
             .with_context(|| format!("the index entry for {name} is not valid"))?;
         ensure!(
+            // Numbers from the file: compared without adding, so a huge one
+            // cannot wrap round and pass.
             tensor.data_offsets[0] <= tensor.data_offsets[1]
-                && 8 + length + tensor.data_offsets[1] <= size,
+                && tensor.data_offsets[1] <= size - 8 - length,
             "{name} lies outside {}",
             path.display()
         );
@@ -357,6 +359,37 @@ mod tests {
         let notes = Notes::from([("format".to_string(), "mlx".to_string())]);
         write(path, Some(&notes), &tensors).unwrap();
         tensors
+    }
+
+    #[test]
+    fn an_index_whose_numbers_lie_outside_the_file_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = |name: &str, index: &str, data: &[u8]| {
+            let path = dir.path().join(name);
+            let mut bytes = (index.len() as u64).to_le_bytes().to_vec();
+            bytes.extend_from_slice(index.as_bytes());
+            bytes.extend_from_slice(data);
+            std::fs::write(&path, bytes).unwrap();
+            path
+        };
+        let good = file(
+            "good",
+            r#"{"t":{"dtype":"U8","shape":[4],"data_offsets":[0,4]}}"#,
+            &[1, 2, 3, 4],
+        );
+        assert_eq!(read_index(&good).unwrap().tensors.len(), 1);
+        // An end so large that adding it to the index length wraps round.
+        for end in [u64::MAX, u64::MAX - 8, u64::MAX - 60, 5, 1 << 40] {
+            let index = format!(r#"{{"t":{{"dtype":"U8","shape":[4],"data_offsets":[0,{end}]}}}}"#);
+            let path = file("bad", &index, &[1, 2, 3, 4]);
+            assert!(read_index(&path).is_err(), "end {end}");
+        }
+        // An index length larger than the file, also one that wraps.
+        for length in [u64::MAX, u64::MAX - 7, 1000] {
+            let path = dir.path().join("short");
+            std::fs::write(&path, length.to_le_bytes()).unwrap();
+            assert!(read_index(&path).is_err(), "length {length}");
+        }
     }
 
     fn all(tensors: &[(String, Tensor, Vec<u8>)]) -> BTreeSet<String> {

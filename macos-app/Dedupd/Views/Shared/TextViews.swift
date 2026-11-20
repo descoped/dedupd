@@ -12,6 +12,17 @@ enum MarkdownBlock: Equatable, Sendable {
 /// Enough of Markdown to read a model card: headings, paragraphs, lists
 /// and code. Anything else is kept as written.
 enum Markdown {
+    /// Whether a link in a README may be opened. A README is written by
+    /// whoever published the model, and a link shows only its words: only an
+    /// address on the web is opened, never a file, a network share or
+    /// another app's own kind of address.
+    static func mayOpen(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(), let host = url.host(), !host.isEmpty else {
+            return false
+        }
+        return scheme == "https" || scheme == "http"
+    }
+
     /// Split a README into blocks. The metadata block Hugging Face keeps at
     /// the top of the file is left out; the app shows it as fields.
     static func parse(_ source: String) -> [MarkdownBlock] {
@@ -99,6 +110,9 @@ struct MarkdownText: View {
         .font(.callout)
         .textSelection(.enabled)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .environment(\.openURL, OpenURLAction { url in
+            Markdown.mayOpen(url) ? .systemAction : .discarded
+        })
     }
 
     /// Emphasis, code and links inside a line.

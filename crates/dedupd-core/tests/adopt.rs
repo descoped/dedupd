@@ -66,8 +66,8 @@ async fn fake_hub(models: &Path) -> MockServer {
              "lfs": {"oid": weights.sha256, "size": weights.size, "pointerSize": 134},
              "xetHash": "feed"},
             {"type": "file", "path": "config.json", "size": config.size, "oid": config.git_oid},
-            {"type": "file", "path": "tokenizer.json", "size": 99, "oid": "some-other-oid"},
-            {"type": "file", "path": "README.md", "size": 10, "oid": "readme-oid"}
+            {"type": "file", "path": "tokenizer.json", "size": 99, "oid": "2222222222222222222222222222222222222222"},
+            {"type": "file", "path": "README.md", "size": 10, "oid": "3333333333333333333333333333333333333333"}
         ])))
         .mount(&server)
         .await;

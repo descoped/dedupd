@@ -59,6 +59,12 @@ pub fn scan(hub_dir: &Path) -> Result<Vec<LocalRepo>> {
             continue;
         };
         let name = name.replacen("--", "/", 1);
+        // Only a link into this repository's own `blobs` folder is a cache
+        // file. People also link files they keep elsewhere into a snapshot;
+        // such a file is not the cache's to share or to remove.
+        let Ok(blobs) = std::fs::canonicalize(repo_dir.join("blobs")) else {
+            continue;
+        };
         let mut seen = HashSet::new();
         for (commit, snapshot) in dirs(&repo_dir.join("snapshots")) {
             let mut files = Vec::new();
@@ -72,7 +78,7 @@ pub fn scan(hub_dir: &Path) -> Result<Vec<LocalRepo>> {
                 let Ok(blob) = std::fs::canonicalize(entry.path()) else {
                     continue;
                 };
-                if !blob.is_file() || !seen.insert(blob.clone()) {
+                if !blob.starts_with(&blobs) || !blob.is_file() || !seen.insert(blob.clone()) {
                     continue;
                 }
                 files.push(LocalFile {
@@ -118,6 +124,14 @@ mod tests {
         std::os::unix::fs::symlink(
             "../../blobs/gone",
             repo.join("snapshots").join(commit).join("dangling"),
+        )
+        .unwrap();
+        // A file kept elsewhere and linked into the snapshot is not the
+        // cache's: it is left out, so nothing later treats it as an app file.
+        fs::write(hub.join("kept-elsewhere.gguf"), b"someone's own").unwrap();
+        std::os::unix::fs::symlink(
+            hub.join("kept-elsewhere.gguf"),
+            repo.join("snapshots").join(commit).join("linked.gguf"),
         )
         .unwrap();
         fs::create_dir_all(hub.join("datasets--x--y/snapshots/c")).unwrap();
