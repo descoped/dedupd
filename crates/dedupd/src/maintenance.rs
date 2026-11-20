@@ -92,7 +92,18 @@ pub fn cmd_gc(o: &Opened, offload: bool, apply: bool) -> Result<()> {
         );
     }
     if apply {
-        let freed = maintain::gc_apply(&o.engine.db, &o.engine.store, &plan)?;
+        let freed = match crate::daemon_here(o) {
+            // The daemon removes exactly what was listed here, as far as
+            // it is still removable.
+            Some(address) => {
+                eprintln!("The dedupd daemon is running; it does the work.");
+                let shas = |blobs: &[BlobRow]| blobs.iter().map(|b| b.sha256.clone()).collect();
+                dedupd_client::gc_apply(address, shas(&plan.orphans), shas(&plan.offload))?
+                    .freed
+                    .unwrap_or(0)
+            }
+            None => maintain::gc_apply(&o.engine.db, &o.engine.store, &plan)?,
+        };
         println!("Removed. Freed {} on the local disk.", human(freed));
     } else if !plan.orphans.is_empty() || !plan.offload.is_empty() {
         println!("Nothing was removed. Run again with --apply to remove these.");
@@ -100,8 +111,34 @@ pub fn cmd_gc(o: &Opened, offload: bool, apply: bool) -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_forget(o: &Opened, repo: &str) -> Result<()> {
-    maintain::forget(&o.engine.db, repo)?;
+pub fn cmd_forget(o: &Opened, repo: &str, apply: bool) -> Result<()> {
+    let e = &o.engine;
+    if !apply {
+        maintain::forget_check(&e.db, repo)?;
+        let installed = dedupd_core::profile::Installed::detect(&e.dirs);
+        let kept = dedupd_core::library::model(&e.db, &e.store, repo, &installed)?;
+        let revisions = kept.as_ref().map_or(0, |m| m.revisions.len());
+        let files: usize = kept
+            .iter()
+            .flat_map(|m| &m.revisions)
+            .map(|r| r.files.len())
+            .sum();
+        println!(
+            "Forgetting {repo} would drop its records: {revisions} revisions that list {files} files, its branch names, and the Ollama manifests kept for it, which exist nowhere else."
+        );
+        println!(
+            "No file is removed; `dedupd gc` then lists the stored files nothing refers to any more."
+        );
+        println!("Nothing was changed. Run again with --apply to forget the model.");
+        return Ok(());
+    }
+    match crate::daemon_here(o) {
+        Some(address) => {
+            eprintln!("The dedupd daemon is running; it does the work.");
+            dedupd_client::forget(address, repo.to_string())?;
+        }
+        None => maintain::forget(&e.db, repo)?,
+    }
     println!("{repo} is no longer in the library. `dedupd gc` shows the files this frees.");
     Ok(())
 }

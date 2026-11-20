@@ -64,6 +64,12 @@ impl Home {
     }
 
     /// Held while an entry is added to the activity file.
+    /// Held by the daemon for as long as it serves, so a second one does
+    /// not open the same home.
+    pub fn daemon_lock_path(&self) -> PathBuf {
+        self.root.join("daemon.lock")
+    }
+
     pub fn activity_lock_path(&self) -> PathBuf {
         self.root.join("activity.lock")
     }

@@ -249,6 +249,31 @@ pub struct LogTail {
     pub lines: Vec<String>,
 }
 
+/// What `dedupd agent --json` prints: the launchd agent that runs the
+/// daemon at login, and the program it runs. The app's Daemon screen reads
+/// it from the command it carries, not from the daemon, which may not run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AgentState {
+    /// The launchd label.
+    pub label: String,
+    /// The agent's file under `~/Library/LaunchAgents`.
+    pub plist: String,
+    /// The agent's file is there.
+    pub installed: bool,
+    /// launchd has the agent loaded.
+    pub running: bool,
+    pub home: String,
+    /// The copy of dedupd the agent runs, under the home.
+    pub program: String,
+    /// The version that copy reports; `None` when it is not there.
+    pub installed_version: Option<String>,
+    /// That copy is the same file, byte for byte, as the program asked.
+    pub same_build: bool,
+    /// The version of the program asked.
+    pub version: String,
+    pub log: String,
+}
+
 /// One line of the daemon's event stream: everything that changes often.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]

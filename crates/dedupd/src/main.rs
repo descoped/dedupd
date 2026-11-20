@@ -167,10 +167,13 @@ enum Command {
         #[arg(long)]
         apply: bool,
     },
-    /// Drop a model from the library, so gc can remove its files
+    /// Drop a model's records from the library, so gc can remove its files; drops them with --apply
     Forget {
         /// The repository, as org/repo
         repo: String,
+        /// Drop it. Without this, it only says what would be dropped
+        #[arg(long)]
+        apply: bool,
     },
     /// Start the daemon at login, as a launchd agent
     Install {
@@ -209,7 +212,7 @@ enum Command {
 
 /// The first twelve characters of a commit id, as people quote it.
 fn short(commit: &str) -> &str {
-    &commit[..12]
+    commit.get(..12).unwrap_or(commit)
 }
 
 pub use dedupd_core::human;
@@ -283,7 +286,30 @@ pub(crate) fn same_folder(a: &Path, b: &Path) -> bool {
     }
 }
 
-async fn cmd_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> Result<()> {
+/// The settings of this command that a running daemon does not take over:
+/// it downloads with its own.
+struct Own {
+    endpoint: bool,
+    jobs: bool,
+}
+
+/// The address of the daemon that runs on this home, when one answers
+/// there. Such a daemon does the downloading and the removing: it keeps
+/// its queue and a move apart, and tells whoever follows it.
+pub(crate) fn daemon_here(o: &Opened) -> Option<String> {
+    let address = o.config.listen().to_string();
+    dedupd_client::status(address.clone())
+        .is_ok_and(|s| same_folder(Path::new(&s.home), o.home.root()))
+        .then_some(address)
+}
+
+async fn cmd_pull(
+    o: &Opened,
+    model: ModelArgs,
+    jobs: usize,
+    offline: bool,
+    own: Own,
+) -> Result<()> {
     let model_spec = model.model.clone();
     let req = PullRequest::from_spec(&model.model, model.include, model.apps, offline, jobs)?;
     // When the daemon is running on this store it does the work, so one
@@ -331,6 +357,12 @@ async fn cmd_pull(o: &Opened, model: ModelArgs, jobs: usize, offline: bool) -> R
     };
     let result = if via_daemon {
         eprintln!("The dedupd daemon is running; it does the work.");
+        if own.endpoint {
+            eprintln!("It asks its own endpoint, not the one given here.");
+        }
+        if own.jobs {
+            eprintln!("It downloads with its own limits; --jobs has no effect.");
+        }
         let (model, apps, include) = (model_spec, req.apps.clone(), req.selection.include.clone());
         // `activate` is a pull from the kept copy: an activation.
         let kind = if offline {
@@ -634,24 +666,41 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     // The agent is looked at and stopped without opening the store, so
     // asking about a daemon that was never installed creates nothing.
-    match &cli.command {
-        Command::Uninstall { label } => return launchd::cmd_uninstall(label),
-        Command::Start { label } => return launchd::cmd_start(label),
-        Command::Stop { label } => return launchd::cmd_stop(label),
-        Command::Agent { json, label } => {
-            let root = cli
-                .home
-                .or_else(Home::default_root)
-                .context("HOME is not set; pass --home")?;
-            return launchd::cmd_agent(&root, label, *json);
-        }
-        _ => {}
+    if let Command::Uninstall { label }
+    | Command::Start { label }
+    | Command::Stop { label }
+    | Command::Agent { label, .. } = &cli.command
+    {
+        let root = cli
+            .home
+            .or_else(Home::default_root)
+            .context("HOME is not set; pass --home")?;
+        return match &cli.command {
+            Command::Uninstall { .. } => launchd::cmd_uninstall(&root, label),
+            Command::Start { .. } => launchd::cmd_start(label),
+            Command::Stop { .. } => launchd::cmd_stop(&root, label),
+            Command::Agent { json, .. } => launchd::cmd_agent(&root, label, *json),
+            _ => unreachable!("matched above"),
+        };
     }
+    let endpoint_given = cli.endpoint.is_some();
     let o = open(cli.home, cli.endpoint)?;
 
     match cli.command {
-        Command::Pull { model, jobs } => cmd_pull(&o, model, jobs, false).await,
-        Command::Activate { model } => cmd_pull(&o, model, 1, true).await,
+        Command::Pull { model, jobs } => {
+            let own = Own {
+                endpoint: endpoint_given,
+                jobs: jobs != pull::DEFAULT_JOBS,
+            };
+            cmd_pull(&o, model, jobs, false, own).await
+        }
+        Command::Activate { model } => {
+            let own = Own {
+                endpoint: endpoint_given,
+                jobs: false,
+            };
+            cmd_pull(&o, model, 1, true, own).await
+        }
         Command::Deactivate { repo, apps, apply } => {
             lifecycle::cmd_deactivate(&o, &repo, apps, apply)
         }
@@ -672,7 +721,7 @@ async fn main() -> Result<()> {
         Command::Reclaim { dry_run } => maintenance::cmd_reclaim(&o, dry_run),
         Command::Verify { archive, jobs } => maintenance::cmd_verify(&o, archive, jobs),
         Command::Gc { offload, apply } => maintenance::cmd_gc(&o, offload, apply),
-        Command::Forget { repo } => maintenance::cmd_forget(&o, &repo),
+        Command::Forget { repo, apply } => maintenance::cmd_forget(&o, &repo, apply),
         Command::Install { env, label } => launchd::cmd_install(&o, env, &label),
         Command::Uninstall { .. }
         | Command::Start { .. }

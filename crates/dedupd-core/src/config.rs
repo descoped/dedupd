@@ -46,6 +46,26 @@ const DEFAULT_VERIFY_DAYS: u64 = 7;
 /// otherwise.
 const DEFAULT_SCAN_INTERVAL: u64 = 300;
 
+/// Whether the address is one of this Mac itself: `127.0.0.1`, `[::1]` or
+/// `localhost`, with a port. The daemon listens nowhere else: its control
+/// API asks for no password, removes files and uses the owner's token, so
+/// it is not put on a network.
+pub fn is_loopback(address: &str) -> bool {
+    if let Ok(parsed) = address.parse::<std::net::SocketAddr>() {
+        return parsed.ip().is_loopback();
+    }
+    address
+        .strip_prefix("localhost:")
+        .is_some_and(|port| port.parse::<u16>().is_ok())
+}
+
+/// Why an address that is not this Mac's own is refused, in a sentence.
+pub fn not_loopback(address: &str) -> String {
+    format!(
+        "dedupd listens on this Mac only, and {address} is not an address of this Mac itself; use {DEFAULT_LISTEN}"
+    )
+}
+
 impl Config {
     /// Where the config file of `home` is.
     pub fn path(home: &Home) -> PathBuf {
@@ -110,6 +130,9 @@ impl Config {
         }
         let text = doc.to_string();
         let config: Self = toml::from_str(&text).context("the settings are not valid")?;
+        if !is_loopback(config.listen()) {
+            anyhow::bail!("{}", not_loopback(config.listen()));
+        }
         crate::paths::write_in_one_step(&path, text.as_bytes())
             .with_context(|| format!("writing {}", path.display()))?;
         Ok(config)
@@ -165,6 +188,35 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_address_of_this_mac_itself_is_listened_on() {
+        for ours in [
+            "127.0.0.1:8642",
+            "[::1]:8642",
+            "localhost:8642",
+            "127.0.0.1:0",
+        ] {
+            assert!(is_loopback(ours), "{ours}");
+        }
+        for other in [
+            "0.0.0.0:8642",
+            "192.168.1.5:8642",
+            "[::]:8642",
+            "localhost",
+            "example.com:80",
+            "",
+        ] {
+            assert!(!is_loopback(other), "{other}");
+        }
+        // The setting is refused, and the file stays as it was.
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        let changes = BTreeMap::from([(Setting::Listen, serde_json::json!("0.0.0.0:8642"))]);
+        let refused = Config::update(&home, &changes).unwrap_err();
+        assert!(refused.to_string().contains("this Mac only"), "{refused:#}");
+        assert!(!Config::path(&home).exists());
+    }
 
     #[test]
     fn update_keeps_the_rest_of_the_file() {

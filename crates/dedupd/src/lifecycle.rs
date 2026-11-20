@@ -85,12 +85,29 @@ pub fn cmd_deactivate(o: &Opened, repo: &str, apps: Vec<App>, apply: bool) -> Re
         println!("{repo} is in none of these apps. Nothing to do.");
         return Ok(());
     }
+    // A running daemon removes: it tells the app, and nothing it has in
+    // hand for the model is cut under it by a second process.
+    let daemon = if apply { crate::daemon_here(o) } else { None };
+    if daemon.is_some() {
+        eprintln!("The dedupd daemon is running; it does the work.");
+    }
     let mut pending = false;
     for app in apps {
         let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, repo, app)?;
-        let done = match apply {
-            true => Some(maintain::deactivate(&e.db, &e.store, &e.dirs, &plan)?),
-            false => None,
+        let done = match (apply, &daemon) {
+            (false, _) => None,
+            (true, Some(address)) => {
+                let paths = plan.remove.iter().map(|f| f.path.clone()).collect();
+                let did = dedupd_client::unplace(
+                    address.clone(),
+                    repo.to_string(),
+                    app,
+                    true,
+                    Some(paths),
+                )?;
+                Some(usize::try_from(did.removed.unwrap_or(0)).unwrap_or(usize::MAX))
+            }
+            (true, None) => Some(maintain::deactivate(&e.db, &e.store, &e.dirs, &plan)?),
         };
         pending |= !plan.remove.is_empty() || !plan.links.is_empty();
         print_unplace(&plan, done);
@@ -111,12 +128,9 @@ pub fn cmd_deactivate(o: &Opened, repo: &str, apps: Vec<App>, apply: bool) -> Re
 /// returns it; `None` when no daemon answers for this home, and the
 /// command then does the work itself.
 fn moved_by_daemon(o: &Opened, repo: &str, kind: MoveKind) -> Result<Option<ModelMove>> {
-    let address = o.config.listen().to_string();
-    let runs_here = dedupd_client::status(address.clone())
-        .is_ok_and(|s| crate::same_folder(std::path::Path::new(&s.home), o.home.root()));
-    if !runs_here {
+    let Some(address) = crate::daemon_here(o) else {
         return Ok(None);
-    }
+    };
     eprintln!("The dedupd daemon is running; it does the work.");
     match kind {
         MoveKind::Archive => dedupd_client::archive_model(address.clone(), repo.to_string())?,
@@ -171,7 +185,7 @@ pub fn cmd_archive(o: &Opened, repo: &str, apply: bool) -> Result<()> {
             println!(
                 "  stays: {} {} ({})",
                 human(kept.size),
-                &kept.sha256[..12],
+                kept.sha256.get(..12).unwrap_or(&kept.sha256),
                 kept.why
             );
         }
@@ -212,7 +226,7 @@ pub fn cmd_archive(o: &Opened, repo: &str, apply: bool) -> Result<()> {
         println!(
             "  stays: {} {} ({})",
             human(kept.size),
-            &kept.sha256[..12],
+            kept.sha256.get(..12).unwrap_or(&kept.sha256),
             kept.why
         );
     }
