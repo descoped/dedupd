@@ -11,9 +11,14 @@ extension FixtureData {
 
     /// Where a library's files are, counted as the daemon counts them: the
     /// store by what it holds, each app by its own files, and the archive
-    /// by its folder alone (the daemon does not count what is on it).
+    /// disk by what it holds: the backup has every file the daemon knows,
+    /// also of an archived model, and so every model whole.
     static func locations(of library: [LibraryModel], cleaned: Bool, offloaded: Bool = false) -> Locations {
         let store = stored(of: library, cleaned: cleaned, offloaded: offloaded)
+        let backup = (
+            files: library.map(\.storedFiles).reduce(0, +) + (cleaned ? 0 : orphanFiles),
+            bytes: library.map(\.storedBytes).reduce(0, +) + (cleaned ? 0 : orphanBytes)
+        )
         return Locations(
             volumeTotal: 994_660_000_000,
             volumeFree: 412_300_000_000,
@@ -22,8 +27,8 @@ extension FixtureData {
                 bytes: store.bytes, sharedBytes: 0, models: UInt64(library.count)
             ),
             archive: Location(
-                kind: .archive, app: nil, path: archiveFolder, present: true, files: 0, bytes: 0, sharedBytes: 0,
-                models: 0
+                kind: .archive, app: nil, path: archiveFolder, present: true, files: backup.files,
+                bytes: backup.bytes, sharedBytes: 0, models: UInt64(library.count)
             ),
             apps: ModelApp.allCases.map { app in
                 let held = usage(of: app, in: library)

@@ -288,6 +288,18 @@ impl Db {
         Ok(names)
     }
 
+    /// Every stored file each repository refers to, as pairs of the
+    /// repository's id and the file's sha256, by the rule `stored_of` counts
+    /// by. For asking a disk about them after the lock is given back.
+    pub fn files_by_repo(&self) -> Result<Vec<(i64, String)>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT r.id, b.sha256 FROM repos r JOIN blobs b ON {}",
+            used_by("= r.id")
+        ))?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        Ok(rows.collect::<rusqlite::Result<_>>()?)
+    }
+
     /// How many repositories the database knows.
     pub fn repo_count(&self) -> Result<u64> {
         let n: i64 = self

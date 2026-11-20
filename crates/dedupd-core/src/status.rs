@@ -32,11 +32,16 @@ pub fn status(db: &Db, store: &Store) -> Result<Status> {
 /// that is only on the archive disk (offloaded, or of an archived model) is
 /// known to the database but takes no room here.
 pub fn store_totals(db: &Db, store: &Store) -> Result<(u64, u64)> {
-    let here: Vec<u64> = db
-        .all_blobs()?
-        .into_iter()
+    Ok(store_totals_of(&db.all_blobs()?, store))
+}
+
+/// The same count for files already read from the database, for a caller
+/// that looks at the disk after the database's lock is given back.
+pub fn store_totals_of(blobs: &[crate::db::BlobRow], store: &Store) -> (u64, u64) {
+    let here: Vec<u64> = blobs
+        .iter()
         .filter(|b| store.contains(&b.sha256))
         .map(|b| b.size)
         .collect();
-    Ok((here.len() as u64, here.iter().sum()))
+    (here.len() as u64, here.iter().sum())
 }
