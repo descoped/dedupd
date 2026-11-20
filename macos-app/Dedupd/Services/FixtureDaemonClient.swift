@@ -165,8 +165,7 @@ actor FixtureDaemonClient: DaemonClient {
         return FixtureData.models.map(asHeld)
     }
 
-    /// The model as the canned daemon holds it now: an archived one is in
-    /// no app.
+    /// As the daemon holds it now: an archived one is in no app or store.
     private func asHeld(_ model: LibraryModel) -> LibraryModel {
         guard archived.contains(model.repo) else {
             return model
@@ -188,7 +187,7 @@ actor FixtureDaemonClient: DaemonClient {
             detail.variants = detail.variants.map { variant in
                 var variant = variant
                 variant.placedIn = []
-                variant.storedBytes = 0
+                (variant.storedBytes, variant.weightsStored) = (0, false)
                 return variant
             }
         }
