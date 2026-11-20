@@ -103,7 +103,18 @@ struct InspectorSection<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        // The same column for the names of the facts in every section and
+        // for every model, so the values stay where they are when the
+        // owner goes from one model to the next. Sized for the longest
+        // name today, "Revisions kept"; a longer one needs a wider column.
+        .environment(\.factLabelWidth, 104)
     }
+}
+
+extension EnvironmentValues {
+    /// The least width of the column of names in a list of facts; nil
+    /// where the column is as wide as its longest name.
+    @Entry var factLabelWidth: CGFloat?
 }
 
 /// One fact about a model: its name on the left, its value on the right.
@@ -119,10 +130,13 @@ struct FactRow: View {
         self.monospaced = monospaced
     }
 
+    @Environment(\.factLabelWidth) private var labelWidth
+
     var body: some View {
         GridRow(alignment: .firstTextBaseline) {
             Text(label)
                 .foregroundStyle(.secondary)
+                .frame(minWidth: labelWidth, alignment: .trailing)
                 .gridColumnAlignment(.trailing)
             Text(value)
                 .font(monospaced ? .callout.monospaced() : .callout)

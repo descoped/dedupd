@@ -161,6 +161,12 @@ final class DedupdUITests: XCTestCase {
         screenshot(window, "08-download-queued")
     }
 
+    func testDownloadsWithNothingToDownloadSaySo() {
+        let window = launch("running", pane: "downloads")
+        XCTAssertTrue(text("Nothing is being downloaded", in: window).waitForExistence(timeout: 5))
+        screenshot(window, "23-downloads-idle")
+    }
+
     func testDownloadsShowProgressAndCanBePaused() {
         let window = launch("downloading", pane: "downloads")
 

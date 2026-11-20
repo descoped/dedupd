@@ -60,18 +60,31 @@ struct DownloadsView: View {
                     Divider()
                 }
                 if daemon.downloadJobs.isEmpty {
-                    ContentUnavailableView {
-                        Label("Nothing is being downloaded", systemImage: "arrow.down.circle")
-                    } description: {
+                    // At the top, under the strip, not in the middle of
+                    // what is left of the window.
+                    VStack(spacing: 10) {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.secondary)
+                            .accessibilityHidden(true)
+                        Text("Nothing is being downloaded")
+                            .font(.title2.weight(.semibold))
                         Text(
                             "Downloads start from Discover. They continue when the app is closed, "
                                 + "and pick up where they stopped after a restart."
                         )
-                    } actions: {
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 420)
                         Button("Search Hugging Face") {
                             navigation.pane = .discover
                         }
+                        .padding(.top, 6)
                     }
+                    .padding(.top, 48)
+                    .padding(.horizontal, 20)
+                    .frame(maxWidth: .infinity)
+                    Spacer(minLength: 0)
                 } else {
                     List(daemon.downloadJobs, selection: $selection) { job in
                         DownloadRow(job: job)
