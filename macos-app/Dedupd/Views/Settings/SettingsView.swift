@@ -28,6 +28,12 @@ struct SettingsView: View {
                         }
                     }
                     .onAppear { addressDraft = settings.customAddress }
+                    .onChange(of: settings.customAddress) { _, address in
+                        // Changed elsewhere while this window is open.
+                        if !addressFocused {
+                            addressDraft = address
+                        }
+                    }
                     .onDisappear(perform: applyAddress)
                     .accessibilityIdentifier("settings-address")
                 Text("Leave empty for \(settings.defaultAddress). Change it only if the daemon listens somewhere else.")

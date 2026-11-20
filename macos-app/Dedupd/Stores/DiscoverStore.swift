@@ -53,6 +53,10 @@ final class DiscoverStore {
             if selection != oldValue {
                 detail = .idle
             }
+            // Another choice ends the hold on a model opened by name.
+            if selection != opened {
+                opened = nil
+            }
         }
     }
 
@@ -160,8 +164,8 @@ final class DiscoverStore {
     /// Show a model by name, whether the list has it or not. The screen
     /// reads its details when the selection changes.
     func open(_ repo: String) {
-        opened = repo
         selection = repo
+        opened = repo
     }
 
     /// Show one model in place of the list, as if its name had been typed

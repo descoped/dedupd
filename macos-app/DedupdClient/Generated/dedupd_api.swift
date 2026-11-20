@@ -4806,6 +4806,9 @@ public func FfiConverterTypeSearchPage_lower(_ value: SearchPage) -> RustBuffer 
 }
 
 
+/**
+ * What to search the provider for. Empty fields are not asked about.
+ */
 public struct SearchQuery: Equatable, Hashable {
     public var text: String
     /**
@@ -6640,7 +6643,6 @@ public func FfiConverterTypeOrigin_lower(_ value: Origin) -> RustBuffer {
 
 
 /**
- * What to search the provider for. Empty fields are not asked about.
  * The orders a search can be listed in. The app, the client and the daemon
  * share this one list, so none of them can ask for an order the others do
  * not know.

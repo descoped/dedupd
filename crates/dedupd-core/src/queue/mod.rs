@@ -82,8 +82,8 @@ pub struct Queue {
     ticked: AtomicU64,
     started: Instant,
     meter: Meter,
-    /// Called when a run put files into apps, so the daemon can say the
-    /// library changed and update the archive.
+    /// Called when a job is done or a run put files into apps, so the
+    /// daemon can say the library changed and update the archive.
     on_placed: Mutex<Option<Arc<dyn Fn() + Send + Sync>>>,
 }
 
@@ -132,9 +132,10 @@ impl Queue {
         }))
     }
 
-    /// Have `call` run whenever a run put a model into at least one app:
-    /// when the job is done, and when it then waits for the owner because
-    /// another app could not be asked.
+    /// Have `call` run when a job is done (its files are stored, so the
+    /// archive has something to take, whether or not an app took the
+    /// model), and when a run put the model into at least one app and the
+    /// job then waits for the owner because another app could not be asked.
     pub fn on_placed(&self, call: impl Fn() + Send + Sync + 'static) {
         *self.on_placed.lock().expect("lock") = Some(Arc::new(call));
     }

@@ -65,7 +65,15 @@ impl Kept {
         match serde_json::from_slice(&bytes) {
             Ok(kept) => Ok(kept),
             Err(e) => {
-                let aside = home.root().join("favorites.unreadable.json");
+                // A name that is free, so an earlier one set aside stays.
+                let aside = (1u32..)
+                    .map(|n| match n {
+                        1 => "favorites.unreadable.json".to_string(),
+                        n => format!("favorites.unreadable-{n}.json"),
+                    })
+                    .map(|name| home.root().join(name))
+                    .find(|candidate| !candidate.exists())
+                    .expect("a free name among four thousand million");
                 std::fs::rename(&path, &aside)
                     .with_context(|| format!("moving {} aside", path.display()))?;
                 eprintln!(
@@ -231,7 +239,14 @@ mod tests {
         set(&home, "org/b", true, 20).unwrap();
         assert_eq!(Kept::load(&home).favorites.len(), 1);
         let aside = home.root().join("favorites.unreadable.json");
-        assert_eq!(std::fs::read(aside).unwrap(), &whole[..whole.len() / 2]);
+        assert_eq!(std::fs::read(&aside).unwrap(), &whole[..whole.len() / 2]);
+
+        // It happens again: the first one set aside is kept.
+        std::fs::write(home.favorites_path(), b"{").unwrap();
+        set(&home, "org/c", true, 30).unwrap();
+        assert_eq!(std::fs::read(&aside).unwrap(), &whole[..whole.len() / 2]);
+        let second = home.root().join("favorites.unreadable-2.json");
+        assert_eq!(std::fs::read(second).unwrap(), b"{");
     }
 
     #[test]

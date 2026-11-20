@@ -26,7 +26,6 @@ pub struct SearchPage {
     pub next: Option<String>,
 }
 
-/// What to search the provider for. Empty fields are not asked about.
 /// The orders a search can be listed in. The app, the client and the daemon
 /// share this one list, so none of them can ask for an order the others do
 /// not know.
@@ -67,6 +66,7 @@ impl SearchSort {
     }
 }
 
+/// What to search the provider for. Empty fields are not asked about.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SearchQuery {

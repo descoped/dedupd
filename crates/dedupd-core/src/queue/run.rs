@@ -191,7 +191,8 @@ impl Queue {
         }
     }
 
-    /// Tell whoever asked to hear that a run put files into apps.
+    /// Tell whoever asked to hear that a job is done or a run put files
+    /// into apps.
     fn tell_placed(&self) {
         let call = self.on_placed.lock().expect("lock").clone();
         if let Some(call) = call {
