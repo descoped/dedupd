@@ -1,6 +1,6 @@
 //! Placement: putting stored files where each app looks for them, as clones.
 
-use crate::clone::clone_into_place;
+use crate::clone::{already_there, clone_into_new_place};
 use crate::db::{Db, NewPlacement, ORIGIN_ADOPTED, ORIGIN_PLACED, lock};
 use crate::hash::hash_file;
 use crate::ollama;
@@ -221,7 +221,10 @@ pub(crate) fn place_clone(
         );
     }
     let mut cloned = false;
-    let placed = clone_into_place(&blob, dst, |tmp| {
+    // Nothing was at `dst` when it was looked at above, but bringing the
+    // file back from the archive disk can take minutes: the clone is placed
+    // only if still nothing is there.
+    let placed = clone_into_new_place(&blob, dst, |tmp| {
         cloned = true;
         // Store files are read-only; an app's own file is not.
         fs::set_permissions(tmp, fs::Permissions::from_mode(0o644))?;
@@ -229,6 +232,11 @@ pub(crate) fn place_clone(
     });
     match placed {
         Ok(()) => {}
+        Err(e) if already_there(&e) => {
+            out.conflicts
+                .push(format!("{dst_str} appeared while it was being placed"));
+            return Ok(());
+        }
         Err(e) if cloned => return Err(e),
         Err(e) => return Err(e.context(format!("cloning into {}", parent.display()))),
     }

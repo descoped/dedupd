@@ -193,6 +193,11 @@ struct StoreCheckCard: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
+            if check.archiveAway > 0 {
+                Text("\(ByteFormat.files(check.archiveAway)) are not on this Mac and were not looked for: the archive disk is away.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
         } else {
             Text("Never checked.")
                 .foregroundStyle(.secondary)

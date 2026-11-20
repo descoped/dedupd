@@ -306,6 +306,7 @@ pub async fn check_store(server: Arc<Server>) {
                 check.checked = r.checked as u64;
                 check.bytes = r.bytes;
                 check.only_in_archive = r.only_in_archive as u64;
+                check.archive_away = r.archive_away as u64;
                 check.damaged = r.damaged;
                 check.missing = r.missing;
             }

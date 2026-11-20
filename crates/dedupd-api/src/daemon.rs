@@ -121,6 +121,10 @@ pub struct StoreCheck {
     /// sha256 of the files that are in neither the store nor the archive.
     pub missing: Vec<String>,
     pub only_in_archive: u64,
+    /// Files that are not in the store while the archive disk is away, so
+    /// nothing says whether it has them.
+    #[serde(default)]
+    pub archive_away: u64,
     pub error: Option<String>,
 }
 

@@ -399,7 +399,7 @@ extension FixtureData {
 
     static let storeCheck = StoreCheck(
         running: false, startedAt: 1_793_899_000, finishedAt: 1_793_900_000, checked: 61,
-        bytes: 290_040_000_000, damaged: [], missing: [], onlyInArchive: 0, error: nil
+        bytes: 290_040_000_000, damaged: [], missing: [], onlyInArchive: 0, archiveAway: 0, error: nil
     )
 
     // MARK: - Daemon

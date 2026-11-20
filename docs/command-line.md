@@ -42,7 +42,7 @@ The apps are named `bionic`, `ollama` and `hf` (the Hugging Face cache; `mlx` an
 |---|---|
 | `dedupd status` | What the store holds and which app files it covers. `--json` for scripts. |
 | `dedupd apps` | How each app can be given a model. With `org/repo`: each app's answer for that stored model. |
-| `dedupd verify` | Hash every stored file and compare it with its name. `--archive` checks the copies on the archive disk. |
+| `dedupd verify` | Hash every stored file and compare it with its name. `--archive` checks the copies on the archive disk. A file that is not on this Mac while the archive disk is away is reported as not looked for, not as missing. |
 
 ## The archive disk
 

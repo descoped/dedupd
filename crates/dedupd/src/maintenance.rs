@@ -43,6 +43,12 @@ pub fn cmd_verify(o: &Opened, archive: bool, jobs: usize) -> Result<()> {
             report.only_in_archive
         );
     }
+    if report.archive_away > 0 {
+        println!(
+            "{} files are not on this Mac and the archive disk is away, so they were not looked for.",
+            report.archive_away
+        );
+    }
     if report.not_backed_up > 0 {
         println!(
             "{} files are not on the archive disk yet; `dedupd backup` copies them.",
