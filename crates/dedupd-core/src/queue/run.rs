@@ -257,7 +257,11 @@ impl Queue {
     /// Tell whoever asked to hear that a job is done or a run put files
     /// into apps.
     fn tell_placed(&self) {
-        let call = self.on_placed.lock().expect("lock").clone();
+        let call = self
+            .on_placed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
         if let Some(call) = call {
             call();
         }

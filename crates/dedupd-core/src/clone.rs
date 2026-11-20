@@ -151,7 +151,7 @@ pub fn clear_leftovers_beside(dst: &Path) {
 /// Rename `from` to `to`, failing when `to` exists: the check and the rename
 /// are one step, so nothing can appear in between and be replaced.
 #[cfg(target_os = "macos")]
-fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;
     let from = CString::new(from.as_os_str().as_bytes())?;
@@ -166,7 +166,7 @@ fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
+pub(crate) fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     use std::os::unix::ffi::OsStrExt;
     let c = |p: &Path| {
         std::ffi::CString::new(p.as_os_str().as_bytes())
@@ -193,7 +193,7 @@ fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-fn rename_new(_from: &Path, _to: &Path) -> io::Result<()> {
+pub(crate) fn rename_new(_from: &Path, _to: &Path) -> io::Result<()> {
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "this system has no rename that keeps an existing file",

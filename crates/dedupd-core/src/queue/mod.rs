@@ -179,7 +179,7 @@ impl Queue {
     /// model), and when a run put the model into at least one app and the
     /// job then waits for the owner because another app could not be asked.
     pub fn on_placed(&self, call: impl Fn() + Send + Sync + 'static) {
-        *self.on_placed.lock().expect("lock") = Some(Arc::new(call));
+        *self.on_placed.lock().unwrap_or_else(|e| e.into_inner()) = Some(Arc::new(call));
     }
 
     /// The list of jobs, also after a task panicked while it held the
@@ -385,7 +385,7 @@ impl Queue {
                 r.state = JobState::Paused;
             }
         }
-        let handle = job.task.lock().expect("lock").take();
+        let handle = job.task.lock().unwrap_or_else(|e| e.into_inner()).take();
         Ok((Settling(job), handle))
     }
 

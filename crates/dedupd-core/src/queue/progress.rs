@@ -30,7 +30,7 @@ impl Meter {
 
     /// Bytes per second since the last look that was at least a second ago.
     pub(super) fn rate(&self) -> u64 {
-        let mut sample = self.sample.lock().expect("lock");
+        let mut sample = self.sample.lock().unwrap_or_else(|e| e.into_inner());
         let elapsed = sample.0.elapsed();
         if elapsed >= Duration::from_secs(1) {
             let count = self.count.load(Ordering::Relaxed);

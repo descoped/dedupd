@@ -715,7 +715,13 @@ async fn in_state(queue: &Arc<Queue>, id: i64, states: &[JobState]) -> JobState 
     );
 }
 
-const AT_WORK: [JobState; 2] = [JobState::Resolving, JobState::WaitingNetwork];
+/// What a job is while the Hub only answers "try later": asking, or waiting
+/// for the network or the server, as the governor reads the answers.
+const AT_WORK: [JobState; 3] = [
+    JobState::Resolving,
+    JobState::WaitingNetwork,
+    JobState::WaitingServer,
+];
 
 #[tokio::test]
 async fn three_jobs_work_at_once_and_the_next_starts_when_one_ends() {

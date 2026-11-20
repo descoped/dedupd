@@ -682,12 +682,20 @@ fn a_manifest_that_is_there_and_is_none_is_left_alone() {
         .join(REPO)
         .join("latest");
     fs::create_dir_all(manifest.parent().unwrap()).unwrap();
-    fs::write(&manifest, "not a manifest").unwrap();
-    let placed = place_with(&e, &items, &command).unwrap().unwrap();
-    assert_eq!(placed.conflicts.len(), 1, "{:?}", placed.conflicts);
-    assert!(placed.conflicts[0].contains("was not written by dedupd"));
-    assert_eq!(fs::read_to_string(&manifest).unwrap(), "not a manifest");
-    assert!(!e.dirs.ollama.join("blobs").exists());
+    // Also a manifest whose digests are none dedupd writes (upper case):
+    // a conflict, not a failure that Try Again could never get past.
+    let odd = format!(
+        r#"{{"schemaVersion":2,"config":{{"digest":"sha256:{0}","size":1}},"layers":[{{"mediaType":"application/vnd.ollama.image.tensor","digest":"sha256:{0}","size":1}}]}}"#,
+        "AB".repeat(32)
+    );
+    for body in ["not a manifest", odd.as_str()] {
+        fs::write(&manifest, body).unwrap();
+        let placed = place_with(&e, &items, &command).unwrap().unwrap();
+        assert_eq!(placed.conflicts.len(), 1, "{:?}", placed.conflicts);
+        assert!(placed.conflicts[0].contains("was not written by dedupd"));
+        assert_eq!(fs::read_to_string(&manifest).unwrap(), body);
+        assert!(!e.dirs.ollama.join("blobs").exists());
+    }
 }
 
 #[test]

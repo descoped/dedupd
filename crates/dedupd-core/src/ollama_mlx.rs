@@ -579,7 +579,12 @@ fn standing(dest: &Dest<'_>, manifest_path: &Path, sources: &BTreeSet<&str>) -> 
     };
     let mut named = BTreeSet::new();
     for layer in manifest.all() {
-        named.insert(layer.sha256()?.to_string());
+        // A digest that is none (upper case, another algorithm) is not
+        // something dedupd wrote.
+        let Ok(sha) = layer.sha256() else {
+            return Ok(Standing::Foreign);
+        };
+        named.insert(sha.to_string());
     }
     // The database is asked under its lock; the files are looked at after
     // it is given back.
@@ -832,23 +837,27 @@ pub fn place(
                 }
                 let rel = format!("blobs/sha256-{}", hashes.sha256);
                 let placed = dest.dirs.ollama.join(&rel);
-                match fs::metadata(&placed) {
-                    // The name is the sha256 of the bytes; a file of
-                    // another length there is not this clone.
-                    Ok(there) if there.is_file() && there.len() == hashes.size => {
+                // A rename that fails when something is there: what
+                // appears at the name while dedupd works is never replaced.
+                match crate::clone::rename_new(&work, &placed) {
+                    Ok(()) => out.cloned += 1,
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        // The name is the sha256 of the bytes; a file of
+                        // another length there is not this clone.
+                        let same = fs::metadata(&placed)
+                            .is_ok_and(|there| there.is_file() && there.len() == hashes.size);
+                        if !same {
+                            out.conflicts.push(format!(
+                                "{} exists with different content",
+                                placed.display()
+                            ));
+                            return Ok(None);
+                        }
                         fs::remove_file(&work)?;
                         out.present += 1;
                     }
-                    Ok(_) => {
-                        out.conflicts.push(format!(
-                            "{} exists with different content",
-                            placed.display()
-                        ));
-                        return Ok(None);
-                    }
-                    Err(_) => {
-                        fs::rename(&work, &placed)?;
-                        out.cloned += 1;
+                    Err(e) => {
+                        return Err(e).with_context(|| format!("placing {}", placed.display()));
                     }
                 }
                 Ok(Some((hashes, rel, placed)))
