@@ -393,6 +393,20 @@ async fn links_and_manifests_stay_with_the_files_that_stay() {
     fs::remove_dir_all(e.dirs.ollama.join("manifests-v2")).unwrap();
     fs::remove_file(&manifest_blob).unwrap();
 
+    // The model itself in both trees, as Ollama's own pull leaves one: each
+    // of its two manifests is listed once.
+    let twin = e
+        .dirs
+        .ollama
+        .join("manifests-v2/hf.co")
+        .join(REPO)
+        .join("Q4_K_M");
+    fs::create_dir_all(twin.parent().unwrap()).unwrap();
+    fs::copy(&manifest, &twin).unwrap();
+    let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, REPO, App::Ollama).unwrap();
+    assert_eq!(plan.link_paths().len(), 2, "{:?}", plan.link_paths());
+    fs::remove_dir_all(e.dirs.ollama.join("manifests-v2")).unwrap();
+
     // The owner agrees to some of the layers only: the model stays whole.
     let plan = maintain::unplace_plan(&e.db, &e.store, &e.dirs, REPO, App::Ollama).unwrap();
     assert_eq!((plan.remove.len(), plan.link_paths().len()), (3, 1));

@@ -520,6 +520,9 @@ fn ollama_use(dirs: &AppDirs, repo: &str) -> (Vec<String>, HashSet<String>) {
             );
         }
     }
+    // A model Ollama pulled itself is in both trees, and was found twice.
+    own.sort();
+    own.dedup();
     (own, elsewhere)
 }
 

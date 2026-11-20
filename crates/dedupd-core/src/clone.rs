@@ -103,11 +103,39 @@ fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
     }
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "linux")]
 fn rename_new(from: &Path, to: &Path) -> io::Result<()> {
-    // A link fails when the name is taken; the temporary name then goes.
-    std::fs::hard_link(from, to)?;
-    std::fs::remove_file(from)
+    use std::os::unix::ffi::OsStrExt;
+    let c = |p: &Path| {
+        std::ffi::CString::new(p.as_os_str().as_bytes())
+            .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "path contains NUL"))
+    };
+    let (from, to) = (c(from)?, c(to)?);
+    // SAFETY: both paths are valid NUL-terminated strings for the call.
+    // The system call is used directly: not every C library has the wrapper.
+    let done = unsafe {
+        libc::syscall(
+            libc::SYS_renameat2,
+            libc::AT_FDCWD,
+            from.as_ptr(),
+            libc::AT_FDCWD,
+            to.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if done == 0 {
+        Ok(())
+    } else {
+        Err(io::Error::last_os_error())
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn rename_new(_from: &Path, _to: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "this system has no rename that keeps an existing file",
+    ))
 }
 
 /// True when both paths are on the same volume, which clones require.

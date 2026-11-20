@@ -326,8 +326,9 @@ fn secure(store: &Store, archive: &Home, blob: &BlobRow) -> Result<bool> {
     copy_in(store, archive, &blob.sha256, there)?;
     // The copy is the only one once the local file is removed, so it is
     // read back from the archive disk itself: what was hashed on the way
-    // there is what the store held, not what the disk kept.
-    let kept = hash_file(&dst, false)
+    // there is what the store held, not what the disk kept. The copy was
+    // written past the system's cache and is read past it.
+    let kept = crate::hash::hash_file_from_disk(&dst)
         .with_context(|| format!("reading back {}", dst.display()))?
         .sha256;
     if kept != blob.sha256 {

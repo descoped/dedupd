@@ -18,7 +18,36 @@ pub struct FileHashes {
 /// Hash a file in one pass. `with_git_oid` also computes the git blob id,
 /// which costs a second hash and is only useful for small, non-LFS files.
 pub fn hash_file(path: &Path, with_git_oid: bool) -> io::Result<FileHashes> {
-    let mut file = File::open(path)?;
+    hash_opened(File::open(path)?, path, with_git_oid)
+}
+
+/// Hash a file as the disk holds it: the bytes are read from the medium,
+/// not from what the system still has in memory after writing them. For a
+/// copy that must be known good before the other one is removed. It tells
+/// the truth only for a file written by `copy_hashing`, which keeps its
+/// bytes out of the system's memory too.
+pub fn hash_file_from_disk(path: &Path) -> io::Result<FileHashes> {
+    let file = File::open(path)?;
+    uncached(&file);
+    hash_opened(file, path, false)
+}
+
+/// Have reads and writes of `file` go past the system's cache.
+#[cfg(target_os = "macos")]
+fn uncached(file: &File) {
+    use std::os::fd::AsRawFd;
+    // SAFETY: the descriptor is open for as long as `file` is borrowed, and
+    // `F_NOCACHE` takes an integer. A failure leaves the cache on, which
+    // costs the check its strength on that disk and nothing else.
+    unsafe {
+        libc::fcntl(file.as_raw_fd(), libc::F_NOCACHE, 1);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn uncached(_file: &File) {}
+
+fn hash_opened(mut file: File, path: &Path, with_git_oid: bool) -> io::Result<FileHashes> {
     let expected = file.metadata()?.len();
 
     let mut sha256 = Sha256::new();
@@ -56,7 +85,9 @@ pub fn hash_file(path: &Path, with_git_oid: bool) -> io::Result<FileHashes> {
 }
 
 /// Copy `src` to `dst` (which must not exist), returning the sha256 of the
-/// bytes written. Used between disks, where a clone is not possible.
+/// bytes written. Used between disks, where a clone is not possible. The
+/// bytes written are not kept in the system's memory, so reading the copy
+/// afterwards (`hash_file_from_disk`) asks the disk.
 pub fn copy_hashing(src: &Path, dst: &Path) -> io::Result<String> {
     use std::io::{Read, Write};
     let mut input = std::fs::File::open(src)?;
@@ -64,6 +95,7 @@ pub fn copy_hashing(src: &Path, dst: &Path) -> io::Result<String> {
         .write(true)
         .create_new(true)
         .open(dst)?;
+    uncached(&output);
     let mut hasher = Sha256::new();
     let mut buf = vec![0u8; 4 * 1024 * 1024];
     loop {
