@@ -901,6 +901,16 @@ impl Db {
         )?)
     }
 
+    /// Whether `body` is a manifest kept for this repository, under any
+    /// tag: one dedupd fetched, or one it found in Ollama's folder.
+    pub fn keeps_manifest(&self, repo_id: i64, body: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM ollama_manifests WHERE repo_id = ?1 AND body = ?2)",
+            params![repo_id, body],
+            |r| r.get(0),
+        )?)
+    }
+
     /// An archived Ollama manifest as `(media type, body)`: the one fetched
     /// with this User-Agent, else the most recent one for the tag.
     pub fn manifest(

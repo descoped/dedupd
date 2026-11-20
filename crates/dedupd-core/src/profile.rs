@@ -12,7 +12,7 @@ use crate::store::Store;
 use dedupd_api::app::{App, AppInfo, Taken};
 use dedupd_api::library::{Cost, Decision, DecisionState, Format, VersionState};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
@@ -43,7 +43,20 @@ pub struct Detect {
     pub command: Option<String>,
 }
 
+/// A trait of a model that can rule a method out. A profile names one by
+/// its lower-case word; a word that is not here does not parse, so a
+/// misspelt one cannot leave a model offered that the app cannot take.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Trait {
+    /// A GGUF in several parts.
+    Split,
+}
+
 /// One way of putting a model into an app.
+///
+/// `dedupd apps --json` prints this as it is: a field renamed here is
+/// renamed in that output.
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Method {
@@ -63,7 +76,7 @@ pub struct Method {
     pub needs_app: bool,
     /// What rules the method out: a trait of the model and the reason.
     #[serde(default)]
-    pub unless: BTreeMap<String, String>,
+    pub unless: BTreeMap<Trait, String>,
     /// What to tell the owner when this is the answer.
     pub says: String,
     /// The versions of the app it was run against.
@@ -122,10 +135,9 @@ impl Traits {
         self
     }
 
-    fn has(&self, name: &str) -> bool {
-        match name {
-            "split" => self.split,
-            _ => false,
+    fn has(&self, which: Trait) -> bool {
+        match which {
+            Trait::Split => self.split,
         }
     }
 }
@@ -139,17 +151,15 @@ fn quantization_of(path: &Path) -> Option<Vec<u32>> {
 
 /// The quantization widths an MLX model's `config.json` names: its default
 /// and those of the layers that differ.
+///
+/// Read by the reader the placer uses (`ollama_mlx::Ways`), so the two
+/// never judge by different widths. A width too large to be one is given
+/// as the largest number, which no app runs.
 pub fn quantization_bits(config: &serde_json::Value) -> Vec<u32> {
-    let Some(q) = config.get("quantization").and_then(|q| q.as_object()) else {
-        return Vec::new();
-    };
-    let bits = |v: &serde_json::Value| v.get("bits").and_then(|b| b.as_u64()).map(|b| b as u32);
-    let mut out: Vec<u32> = q
-        .get("bits")
-        .and_then(|b| b.as_u64())
-        .map(|b| b as u32)
+    let mut out: Vec<u32> = crate::ollama_mlx::Ways::from_config(config)
+        .bits()
         .into_iter()
-        .chain(q.values().filter_map(bits))
+        .map(|bits| u32::try_from(bits).unwrap_or(u32::MAX))
         .collect();
     out.sort_unstable();
     out.dedup();
@@ -245,6 +255,13 @@ impl Profile {
 
     /// The method for a model, given the app's installed version.
     pub fn decide(&self, traits: &Traits, version: Option<&str>) -> Decision {
+        self.decide_as_found(traits, version, version.is_some())
+    }
+
+    /// The method for a model, given the app's installed version and
+    /// whether the app is `there`: an app can be installed and not say its
+    /// version in a way dedupd reads.
+    pub fn decide_as_found(&self, traits: &Traits, version: Option<&str>, there: bool) -> Decision {
         let answer = |state: DecisionState, method: Option<&Method>, reason: String| Decision {
             app: self.app,
             state,
@@ -272,15 +289,22 @@ impl Profile {
                     self.name,
                     version.unwrap_or_default()
                 ))
-            } else if let Some((_, reason)) = method.unless.iter().find(|(t, _)| traits.has(t)) {
+            } else if let Some((_, reason)) = method.unless.iter().find(|(t, _)| traits.has(**t)) {
                 Some(reason.clone())
             } else if let Some(reason) = self.width_refusal(method, traits, version) {
                 Some(reason)
             } else if method.needs_app && version.is_none() {
-                Some(format!(
-                    "{} was not found on this Mac, and dedupd asks it about the model first",
-                    self.name
-                ))
+                Some(if there {
+                    format!(
+                        "The version of {} could not be read, and dedupd asks it about the model first",
+                        self.name
+                    )
+                } else {
+                    format!(
+                        "{} was not found on this Mac, and dedupd asks it about the model first",
+                        self.name
+                    )
+                })
             } else {
                 None
             };
@@ -338,6 +362,9 @@ pub fn profile(app: App) -> &'static Profile {
 pub struct Installed {
     versions: BTreeMap<&'static str, String>,
     commands: BTreeMap<&'static str, PathBuf>,
+    /// The apps whose bundle is there, whether or not its version could
+    /// be read.
+    bundles: BTreeSet<&'static str>,
 }
 
 /// The value of `CFBundleShortVersionString` in an XML property list.
@@ -358,7 +385,13 @@ impl Installed {
     pub fn detect(dirs: &AppDirs) -> Self {
         let mut found = BTreeMap::new();
         let mut commands = BTreeMap::new();
+        let mut bundles = BTreeSet::new();
         for p in profiles() {
+            if let Some(bundle) = &p.detect.bundle
+                && dirs.apps.join(bundle).join("Contents").is_dir()
+            {
+                bundles.insert(p.app.as_str());
+            }
             if let (Some(bundle), Some(command)) = (&p.detect.bundle, &p.detect.command) {
                 let command = dirs.apps.join(bundle).join(command);
                 if command.is_file() {
@@ -382,7 +415,14 @@ impl Installed {
         Self {
             versions: found,
             commands,
+            bundles,
         }
+    }
+
+    /// Whether the app is installed: its version was read, or its bundle
+    /// is there.
+    pub fn is_there(&self, app: App) -> bool {
+        self.versions.contains_key(app.as_str()) || self.bundles.contains(app.as_str())
     }
 
     pub fn with(mut self, app: App, version: &str) -> Self {
@@ -404,7 +444,7 @@ impl Installed {
 fn decisions(traits: &Traits, installed: &Installed) -> Vec<Decision> {
     profiles()
         .iter()
-        .map(|p| p.decide(traits, installed.version(p.app)))
+        .map(|p| p.decide_as_found(traits, installed.version(p.app), installed.is_there(p.app)))
         .collect()
 }
 
@@ -613,6 +653,54 @@ mod tests {
             profile(App::Ollama).decide(&t, None).reason,
             "Ollama was not found on this Mac, and dedupd asks it about the model first"
         );
+        // Installed, with a version dedupd cannot read: said as it is.
+        assert_eq!(
+            profile(App::Ollama).decide_as_found(&t, None, true).reason,
+            "The version of Ollama could not be read, and dedupd asks it about the model first"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let mut dirs = AppDirs::under(dir.path());
+        dirs.apps = dir.path().join("Applications");
+        let contents = dirs.apps.join("Ollama.app/Contents");
+        std::fs::create_dir_all(&contents).unwrap();
+        std::fs::write(contents.join("Info.plist"), b"bplist00\x01\x02").unwrap();
+        let installed = Installed::detect(&dirs);
+        assert!(installed.is_there(App::Ollama) && installed.version(App::Ollama).is_none());
+        assert!(!installed.is_there(App::Bionic));
+        assert!(
+            decisions(&t, &installed)[1]
+                .reason
+                .starts_with("The version of Ollama could not be read")
+        );
+    }
+
+    #[test]
+    fn a_trait_the_code_does_not_know_does_not_parse() {
+        let known = SOURCES
+            .iter()
+            .find(|text| text.contains("[method.unless]"))
+            .expect("a profile rules something out");
+        assert!(toml::from_str::<Profile>(known).is_ok());
+        let misspelt = known.replacen("\nsplit = ", "\nsplitt = ", 1);
+        assert_ne!(&misspelt, known);
+        let said = toml::from_str::<Profile>(&misspelt)
+            .unwrap_err()
+            .to_string();
+        assert!(said.contains("splitt"), "{said}");
+    }
+
+    #[test]
+    fn the_widths_are_the_placers_and_one_too_large_is_none_an_app_runs() {
+        let config = serde_json::json!({"quantization": {
+            "group_size": 64, "bits": 4,
+            "a.b": {"group_size": 64, "bits": 8},
+            // No group size: the placer does not use this entry, so the
+            // profile does not judge by it.
+            "c.d": {"bits": 5},
+            "e.f": {"group_size": 64, "bits": 4_294_967_300u64},
+        }});
+        assert_eq!(quantization_bits(&config), [4, 8, u32::MAX]);
+        assert_eq!(quantization_bits(&serde_json::json!({})), Vec::<u32>::new());
     }
 
     #[test]

@@ -72,7 +72,18 @@ impl Refusals {
 
     /// Keep `refusal` in `home`, in place of an earlier answer to the same
     /// question. The file is replaced in one step.
+    ///
+    /// Read, change and write are one step under `<home>/refusals.lock`:
+    /// the queue runs several jobs at once and the command line can record
+    /// beside the daemon, and neither loses the other's answer.
     pub fn record(home: &Home, refusal: Refusal) -> Result<()> {
+        let lock = std::fs::File::options()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(home.root().join("refusals.lock"))
+            .context("opening the refusals lock")?;
+        lock.lock().context("waiting for the refusals lock")?;
         let mut known = Self::load(home);
         known.list.retain(|r| {
             (&r.app, &r.version, &r.method, &r.config)
@@ -189,6 +200,38 @@ mod tests {
         );
         assert!(known.find(App::Ollama, "0.40.16", method, "c1").is_none());
         assert!(known.find(App::Bionic, "0.40.16", method, "c0").is_none());
+    }
+
+    #[test]
+    fn answers_kept_at_the_same_moment_are_all_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        std::thread::scope(|scope| {
+            for i in 0..16 {
+                let home = &home;
+                scope.spawn(move || {
+                    let refusal = Refusal {
+                        app: App::Ollama,
+                        version: "0.40.16".into(),
+                        method: "m".into(),
+                        config: format!("c{i}"),
+                        reason: "unsupported architecture".into(),
+                        lasting: true,
+                        at: 0,
+                    };
+                    Refusals::record(home, refusal).unwrap();
+                });
+            }
+        });
+        let known = Refusals::load(&home);
+        for i in 0..16 {
+            assert!(
+                known
+                    .find(App::Ollama, "0.40.16", "m", &format!("c{i}"))
+                    .is_some(),
+                "c{i} was lost"
+            );
+        }
     }
 
     #[test]

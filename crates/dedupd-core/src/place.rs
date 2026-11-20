@@ -215,10 +215,7 @@ pub(crate) fn place_clone(
     fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     let blob = store.blob_path(t.sha256);
     if !crate::clone::same_volume(parent, &blob)? {
-        bail!(
-            "{} is on a different volume from the store; clones need one APFS volume",
-            parent.display()
-        );
+        return Err(crate::clone::OtherVolume(parent.to_path_buf()).into());
     }
     let mut cloned = false;
     // Nothing was at `dst` when it was looked at above, but bringing the
@@ -270,10 +267,18 @@ pub fn hf_repo_dir(dirs: &AppDirs, repo: &str) -> PathBuf {
 
 /// The Hugging Face cache: `blobs/<etag>`, a `snapshots/<commit>/<path>` link
 /// to each blob, and `refs/<branch>` naming the commit.
+///
+/// The branch file is written last, in one step, and only when every file
+/// was placed: a branch never names a commit whose snapshot is not whole.
+/// A branch that already names another commit is moved only when the
+/// commit is `fresh`, the provider's answer of this moment; a placement
+/// from the kept copy leaves it, so it never moves a branch back from a
+/// newer commit the owner's own tools fetched.
 pub fn place_hf(
     dest: &Dest<'_>,
     commit: &str,
     ref_name: Option<&str>,
+    fresh: bool,
     items: &[Item],
 ) -> Result<Placed> {
     let mut out = Placed::default();
@@ -300,10 +305,24 @@ pub fn place_hf(
                 .with_context(|| format!("linking {}", link.display()))?;
         }
     }
-    if let Some(name) = ref_name {
+    if let Some(name) = ref_name
+        && out.conflicts.is_empty()
+    {
         let path = base.join("refs").join(name);
-        fs::create_dir_all(path.parent().expect("ref has a parent"))?;
-        fs::write(&path, commit)?;
+        let names = fs::read_to_string(&path).ok();
+        let names = names.as_deref().map(str::trim);
+        let write = match names {
+            Some(there) if there == commit => false,
+            // Another commit: only the provider's answer of now moves it.
+            Some(there) if crate::hub::is_commit(there) => fresh,
+            // Nothing there, or nothing that is a commit.
+            _ => true,
+        };
+        if write {
+            fs::create_dir_all(path.parent().expect("ref has a parent"))?;
+            crate::clone::clear_leftovers_beside(&path);
+            crate::paths::write_in_one_step(&path, commit.as_bytes())?;
+        }
     }
     Ok(out)
 }
@@ -321,6 +340,12 @@ pub fn ollama_manifest_path(dirs: &AppDirs, repo: &str, tag: &str) -> PathBuf {
 /// them. The manifest is written last so Ollama never sees a model whose
 /// layers are missing. `manifest` is `manifest_body` parsed; the body is
 /// written as it is.
+///
+/// A manifest that is there with another body is replaced only when it is
+/// this model's: it names the same layers, or it is a manifest dedupd
+/// keeps for the model (one it wrote before, or one Ollama pulled and
+/// dedupd adopted). Any other is the owner's, a model made under the same
+/// name, and is left alone as a conflict, as a layer with other content is.
 pub fn place_ollama(
     dest: &Dest<'_>,
     tag: &str,
@@ -349,7 +374,24 @@ pub fn place_ollama(
         return Ok(out);
     }
     let path = ollama_manifest_path(dest.dirs, dest.repo, tag);
-    if fs::read_to_string(&path).ok().as_deref() != Some(manifest_body) {
+    let there = match fs::read_to_string(&path) {
+        Ok(there) => Some(there),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
+    };
+    if let Some(there) = there.as_deref().filter(|there| *there != manifest_body) {
+        let layers = |m: &ollama::Manifest| -> std::collections::BTreeSet<String> {
+            m.all().map(|l| l.digest.clone()).collect()
+        };
+        let same_layers =
+            ollama::Manifest::parse(there).is_ok_and(|m| layers(&m) == layers(manifest));
+        if !same_layers && !lock(dest.db).keeps_manifest(dest.repo_id, there)? {
+            out.conflicts
+                .push(format!("{} exists and names another model", path.display()));
+            return Ok(out);
+        }
+    }
+    if there.as_deref() != Some(manifest_body) {
         let parent = path.parent().expect("manifest has a parent");
         fs::create_dir_all(parent)?;
         // What a write that was cut off left in Ollama's folder.

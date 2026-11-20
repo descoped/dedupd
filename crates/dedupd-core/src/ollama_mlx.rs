@@ -126,6 +126,16 @@ impl Ways {
         }
     }
 
+    /// Every bit width the model's layers are quantized with: its default
+    /// and those of the layers that differ.
+    pub fn bits(&self) -> Vec<u64> {
+        self.default
+            .iter()
+            .chain(self.per_layer.values())
+            .map(|way| way.bits)
+            .collect()
+    }
+
     fn of(&self, layer: &str) -> Option<&Way> {
         self.per_layer
             .get(layer)
@@ -795,10 +805,7 @@ pub fn place(
     let mut layers = Vec::new();
     for ((item, (source, _)), groups) in weights.iter().zip(&files).zip(split) {
         if !crate::clone::same_volume(&blobs, source)? {
-            bail!(
-                "{} is on a different volume from the store; clones need one APFS volume",
-                blobs.display()
-            );
+            return Err(crate::clone::OtherVolume(blobs.clone()).into());
         }
         for (n, (way, wanted)) in groups.into_iter().enumerate() {
             let note = match &way {

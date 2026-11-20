@@ -462,6 +462,23 @@ mod tests {
     }
 
     #[test]
+    fn a_folder_ollama_was_asked_in_goes_when_its_process_is_gone() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let store = Store::open(&home).unwrap();
+        let gone = home.tmp_dir().join("ollama-asked-4000000007-2");
+        let mine = home
+            .tmp_dir()
+            .join(format!("ollama-asked-{}-2", std::process::id()));
+        for folder in [&gone, &mine] {
+            fs::create_dir_all(folder.join("models")).unwrap();
+            fs::write(folder.join("models/x"), b"x").unwrap();
+        }
+        assert_eq!(store.clear_leftovers(), 1);
+        assert!(!gone.exists() && mine.exists());
+    }
+
+    #[test]
     fn a_copy_whose_process_still_runs_is_left_however_old_it_looks() {
         let dir = tempfile::tempdir().unwrap();
         let home = Home::new(dir.path().join("home"));
