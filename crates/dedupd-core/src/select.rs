@@ -135,6 +135,15 @@ pub fn variants(entries: &[TreeEntry]) -> Vec<Variant> {
     for e in ggufs {
         groups.entry(gguf_group(&e.path)).or_default().push(e);
     }
+    // Two files can carry one quantization (two base models in one
+    // repository). Their label would name both, so each is then named by
+    // its file, which `select` reads as exactly that file.
+    let mut labelled: BTreeMap<String, usize> = BTreeMap::new();
+    for group in groups.keys() {
+        *labelled
+            .entry(quant_label(group).to_lowercase())
+            .or_default() += 1;
+    }
     let mut out: Vec<Variant> = groups
         .iter()
         .map(|(group, parts)| {
@@ -144,7 +153,10 @@ pub fn variants(entries: &[TreeEntry]) -> Vec<Variant> {
                 .map(|e| (*e).clone())
                 .collect();
             files.sort_by(|a, b| a.path.cmp(&b.path));
-            let label = quant_label(group);
+            let label = match quant_label(group) {
+                label if labelled[&label.to_lowercase()] == 1 => label,
+                _ => file_name(group).to_string(),
+            };
             Variant {
                 kind: VariantKind::Gguf,
                 name: label.clone(),
@@ -205,6 +217,14 @@ pub fn select(entries: &[TreeEntry], sel: &Selection) -> Result<Vec<TreeEntry>> 
     // merely contain it: `Q4_K` is not `Q4_K_M`.
     let wanted = |q: &str| -> Vec<&String> {
         let q = q.to_lowercase();
+        // A whole file name is that file and no other.
+        let named: Vec<&String> = groups
+            .keys()
+            .filter(|g| file_name(g).to_lowercase() == q)
+            .collect();
+        if named.len() == 1 {
+            return named;
+        }
         let exact: Vec<&String> = groups
             .keys()
             .filter(|g| quant_label(g).to_lowercase() == q)
@@ -339,6 +359,40 @@ mod tests {
         let e = [entry("m-Q5_K_M.gguf"), entry("m-Q8_0.gguf")];
         let err = select(&e, &Selection::default()).unwrap_err().to_string();
         assert!(err.contains("m-Q5_K_M") && err.contains("m-Q8_0"));
+    }
+
+    #[test]
+    fn two_files_with_one_quantization_can_each_be_chosen() {
+        let e = [
+            entry("README.md"),
+            entry("Small-Q4_K_M.gguf"),
+            entry("Large-Q4_K_M.gguf"),
+            entry("Large-Q4_K_M-GGUF-Q4_K_M.gguf"),
+            entry("Large-Q8_0.gguf"),
+        ];
+        let found = variants(&e);
+        let quants: Vec<&str> = found.iter().filter_map(|v| v.quant.as_deref()).collect();
+        assert_eq!(quants.len(), 4);
+        // Every variant's own spec selects that variant's files, and no other's.
+        for variant in &found {
+            let sel = Selection {
+                quant: variant.quant.clone(),
+                include: vec![],
+            };
+            let chosen = select(&e, &sel).unwrap_or_else(|e| panic!("{:?}: {e}", variant.quant));
+            let mut want: Vec<&str> = variant.files.iter().map(|f| f.path.as_str()).collect();
+            want.sort_unstable();
+            assert_eq!(paths(&chosen), want, "{:?}", variant.quant);
+        }
+        // The one that is alone with its quantization keeps the short name.
+        assert!(quants.contains(&"Q8_0"));
+        // A spec made of such a name passes the check on what a person types.
+        for quant in quants {
+            assert!(
+                crate::names::parse_model(&format!("org/repo:{quant}")).is_ok(),
+                "{quant}"
+            );
+        }
     }
 
     #[test]

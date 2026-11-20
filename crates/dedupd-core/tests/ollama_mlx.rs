@@ -108,7 +108,14 @@ async fn model_of(dir: &Path, architecture: &str, model_type: &str) -> Model {
     }))
     .unwrap();
     let readme = b"# Tiny\n".to_vec();
-    let small: [(&str, &Vec<u8>); 2] = [("config.json", &config), ("README.md", &readme)];
+    // A model may ship a file named `Modelfile` of its own; dedupd's is
+    // written beside the stand-in folder, not over it.
+    let modelfile = b"FROM ./somewhere-else\n".to_vec();
+    let small: [(&str, &Vec<u8>); 3] = [
+        ("config.json", &config),
+        ("README.md", &readme),
+        ("Modelfile", &modelfile),
+    ];
     let names = [
         "model-00001-of-00002.safetensors",
         "model-00002-of-00002.safetensors",

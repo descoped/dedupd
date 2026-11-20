@@ -277,7 +277,11 @@ impl Scratch {
     /// Have Ollama import the model folder `work` under `name`. `Err` in
     /// the inner result is Ollama's refusal, or trouble asking it.
     fn import(&self, name: &str, work: &Path) -> Result<Result<Value, NotPlaced>> {
-        let modelfile = work.join("Modelfile");
+        // Beside the folder, not in it: the model may hold a file named
+        // `Modelfile` of its own, cloned read-only into the folder.
+        let mut beside = work.as_os_str().to_owned();
+        beside.push(".Modelfile");
+        let modelfile = PathBuf::from(beside);
         fs::write(&modelfile, format!("FROM {}\n", work.display()))?;
         let done = Command::new(&self.command)
             .args(["create", name, "-f"])

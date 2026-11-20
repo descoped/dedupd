@@ -62,6 +62,12 @@ final class ActivityStore {
             return
         }
         entries = answer
+        // The mark is the newest entry seen. A newest entry below it means
+        // the history started over (another home, or the file was removed),
+        // and nothing in the new one has been seen.
+        if let newest = answer.first?.id, newest < daemon.settings.activitySeen {
+            daemon.settings.activitySeen = 0
+        }
     }
 
     /// The owner is looking at the list: what is in it now is seen.

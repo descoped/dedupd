@@ -282,7 +282,10 @@ final class LibraryStore {
             return true
         }
         if done == true {
-            selection = nil
+            // Only if the owner still looks at the model that was forgotten.
+            if selected?.repo == model.repo {
+                selection = nil
+            }
             await reload()
         }
     }

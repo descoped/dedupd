@@ -10,7 +10,7 @@ use crate::{Call, Server, plain};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
 use dedupd_api::app::App;
-use dedupd_api::hub::{HubFile, HubModel, SearchHit, SearchPage};
+use dedupd_api::hub::{HubFile, HubModel, SearchHit, SearchPage, SearchSort};
 use dedupd_api::library::ModelMeta;
 use dedupd_api::url::{decode_path, decode_query, encode_component, encode_path};
 use dedupd_core::db::PROVIDER_HF;
@@ -69,12 +69,14 @@ fn search_query(call: &Call) -> String {
     if !base.is_empty() {
         add("filter", &format!("base_model:{base}"));
     }
-    let sort = match param("sort").as_str() {
-        "likes" => "likes",
-        "modified" => "lastModified",
-        "created" => "createdAt",
-        "trending" => "trendingScore",
-        _ => "downloads",
+    // The provider's own word for the order asked for; no word, or one that
+    // names no order, is the most downloaded first.
+    let sort = match SearchSort::from_word(&param("sort")).unwrap_or_default() {
+        SearchSort::Downloads => "downloads",
+        SearchSort::Likes => "likes",
+        SearchSort::Modified => "lastModified",
+        SearchSort::Created => "createdAt",
+        SearchSort::Trending => "trendingScore",
     };
     add("sort", sort);
     add("direction", "-1");

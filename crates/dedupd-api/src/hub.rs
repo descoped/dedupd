@@ -27,6 +27,46 @@ pub struct SearchPage {
 }
 
 /// What to search the provider for. Empty fields are not asked about.
+/// The orders a search can be listed in. The app, the client and the daemon
+/// share this one list, so none of them can ask for an order the others do
+/// not know.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
+pub enum SearchSort {
+    #[default]
+    Downloads,
+    Likes,
+    Modified,
+    Created,
+    Trending,
+}
+
+impl SearchSort {
+    pub const ALL: [Self; 5] = [
+        Self::Trending,
+        Self::Downloads,
+        Self::Likes,
+        Self::Modified,
+        Self::Created,
+    ];
+
+    /// The word for this order in a `hub/search` request.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Downloads => "downloads",
+            Self::Likes => "likes",
+            Self::Modified => "modified",
+            Self::Created => "created",
+            Self::Trending => "trending",
+        }
+    }
+
+    /// The order a request's word names. `None` for a word that names none.
+    pub fn from_word(word: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|sort| sort.word() == word)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SearchQuery {
@@ -37,8 +77,7 @@ pub struct SearchQuery {
     pub task: String,
     pub license: String,
     pub author: String,
-    /// `downloads`, `likes`, `modified`, `created` or `trending`.
-    pub sort: String,
+    pub sort: SearchSort,
     pub cursor: Option<String>,
 }
 

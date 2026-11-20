@@ -62,7 +62,8 @@ an hour and with Sync Now. Signing in or out takes effect without restarting the
 read at once. Likes are only read: Hugging Face does not let a program like a model. Taking the star off a liked
 model keeps it off, and a model that is no longer liked on Hugging Face leaves the favorites unless it was starred
 in dedupd. Without a token the liked models stay among the favorites as they were last read. The favorites are kept
-in `~/.dedupd/favorites.json`.
+in `~/.dedupd/favorites.json`. If that file cannot be read, dedupd moves it to `favorites.unreadable.json` before
+it writes a new one.
 
 ## Downloads
 

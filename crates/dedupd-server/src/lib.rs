@@ -111,7 +111,7 @@ impl Server {
         // disk current after its own downloads, as the command line does
         // after its.
         let weak = Arc::downgrade(&server);
-        server.queue.on_done(move || {
+        server.queue.on_placed(move || {
             if let Some(server) = weak.upgrade() {
                 server.touch();
                 tokio::spawn(async move {

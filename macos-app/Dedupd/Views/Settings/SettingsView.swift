@@ -8,16 +8,27 @@ struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(DaemonStore.self) private var daemon
     @Environment(ServiceStore.self) private var service
+    /// The address as it is being typed. It becomes the setting on Return
+    /// and when the field is left, so the app does not try to reach every
+    /// half-typed address.
+    @State private var addressDraft = ""
+    @FocusState private var addressFocused: Bool
 
     var body: some View {
         @Bindable var settings = settings
         Form {
             Section("Daemon") {
-                TextField("Address", text: $settings.customAddress, prompt: Text(settings.defaultAddress))
+                TextField("Address", text: $addressDraft, prompt: Text(settings.defaultAddress))
                     .autocorrectionDisabled()
-                    .onSubmit {
-                        daemon.start()
+                    .focused($addressFocused)
+                    .onSubmit(applyAddress)
+                    .onChange(of: addressFocused) { _, focused in
+                        if !focused {
+                            applyAddress()
+                        }
                     }
+                    .onAppear { addressDraft = settings.customAddress }
+                    .onDisappear(perform: applyAddress)
                     .accessibilityIdentifier("settings-address")
                 Text("Leave empty for \(settings.defaultAddress). Change it only if the daemon listens somewhere else.")
                     .font(.caption)
@@ -72,6 +83,14 @@ struct SettingsView: View {
             await service.loadAgent()
         }
         .modifier(MainWindowOpener())
+    }
+
+    /// Take the typed address into use. Following starts again through the
+    /// change of `settings.address`.
+    private func applyAddress() {
+        if settings.customAddress != addressDraft {
+            settings.customAddress = addressDraft
+        }
     }
 
     private func binding(_ app: ModelApp, _ format: ModelFormat) -> Binding<Bool> {

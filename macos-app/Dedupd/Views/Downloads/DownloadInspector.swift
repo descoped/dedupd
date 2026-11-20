@@ -9,6 +9,8 @@ struct DownloadInspector: View {
     @Environment(DiscoverStore.self) private var discover
     @Environment(Navigation.self) private var navigation
     @State private var detail: JobDetail?
+    /// Why the files and the history could not be read, for the job named.
+    @State private var failure: (job: Int64, message: String)?
 
     /// What makes the files and the history worth reading again: another
     /// download, another state, another file done, or two per cent more.
@@ -50,6 +52,8 @@ struct DownloadInspector: View {
                     if let detail, detail.job.id == job.id {
                         files(detail)
                         history(detail)
+                    } else if let failure, failure.job == job.id {
+                        FailureLabel(message: failure.message)
                     } else {
                         ProgressView()
                             .frame(maxWidth: .infinity)
@@ -58,7 +62,21 @@ struct DownloadInspector: View {
                 .padding(16)
             }
             .task(id: Key(job)) {
-                detail = try? await daemon.client.download(job.id, at: daemon.address)
+                // An answer that comes after the owner chose another
+                // download, or after a newer read began, is dropped.
+                do {
+                    let answer = try await daemon.client.download(job.id, at: daemon.address)
+                    guard !Task.isCancelled else {
+                        return
+                    }
+                    detail = answer
+                    failure = nil
+                } catch {
+                    guard !Task.isCancelled else {
+                        return
+                    }
+                    failure = (job.id, describe(error))
+                }
             }
             .accessibilityIdentifier("download-inspector")
         } else {

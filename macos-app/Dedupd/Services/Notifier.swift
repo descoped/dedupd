@@ -10,12 +10,19 @@ struct Notice: Equatable, Sendable {
 
     /// What changed between two states of the download queue that the owner
     /// wants to hear about: a download that finished, and one that cannot
-    /// go on without them. A download that was already in that state when
-    /// the app first saw it is old news.
-    static func notices(from before: [Job], to after: [Job]) -> [Notice] {
+    /// go on without them. `before` is nil when the app had no list (it
+    /// has just started, or the daemon was away): what is finished then is
+    /// old news. A job that is not in a list the app did have is new, and
+    /// is told about also when it was finished the first time it was seen
+    /// (the daemon reports a change once it has settled, so a quick job is
+    /// never seen running).
+    static func notices(from before: [Job]?, to after: [Job]) -> [Notice] {
+        guard let before else {
+            return []
+        }
         let known = Dictionary(before.map { ($0.id, $0.state) }, uniquingKeysWith: { first, _ in first })
         return after.compactMap { job in
-            guard let earlier = known[job.id], earlier != job.state else {
+            guard known[job.id] != job.state else {
                 return nil
             }
             switch job.state {
@@ -63,7 +70,7 @@ final class Notifier {
         self.isLive = isLive
     }
 
-    func jobsChanged(from before: [Job], to after: [Job]) {
+    func jobsChanged(from before: [Job]?, to after: [Job]) {
         let notices = Notice.notices(from: before, to: after)
         guard isLive, !notices.isEmpty else {
             return
