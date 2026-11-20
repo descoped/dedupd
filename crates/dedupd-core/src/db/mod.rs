@@ -331,7 +331,25 @@ impl Db {
     fn init(conn: Connection) -> Result<Self> {
         // First, so that everything below waits its turn.
         conn.busy_timeout(std::time::Duration::from_secs(30))?;
-        conn.pragma_update(None, "journal_mode", "WAL")?;
+        // A new database is switched to WAL by whoever opens it first, and
+        // for that switch SQLite does not wait for another connection that
+        // is making the same one: it answers "locked" at once, whatever
+        // the busy timeout. So that one step is tried again here.
+        let waited = std::time::Instant::now();
+        loop {
+            match conn.pragma_update(None, "journal_mode", "WAL") {
+                Ok(()) => break,
+                Err(rusqlite::Error::SqliteFailure(e, _))
+                    if matches!(
+                        e.code,
+                        rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked
+                    ) && waited.elapsed() < std::time::Duration::from_secs(30) =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(e) => return Err(e.into()),
+            }
+        }
         conn.pragma_update(None, "foreign_keys", "ON")?;
         // The look and the creation are one step, under the write lock: two
         // processes that open a new home at the same moment (the daemon and
