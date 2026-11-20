@@ -32,7 +32,7 @@ pub fn cmd_apps(o: &Opened, repo: Option<String>, as_json: bool) -> Result<()> {
     let Some(repo) = repo else {
         return overview(o, &installed, as_json);
     };
-    let detail = library::model(&o.engine.db(), &o.engine.store, &repo, &installed)?
+    let detail = library::model(&o.engine.db, &o.engine.store, &repo, &installed)?
         .with_context(|| format!("{repo} is not in the store"))?;
     if as_json {
         println!("{}", serde_json::to_string_pretty(&detail.variants)?);

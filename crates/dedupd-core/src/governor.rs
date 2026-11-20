@@ -68,6 +68,10 @@ struct State {
     refilled: Instant,
 }
 
+/// Paces every request to the provider: how many downloads run at once,
+/// how long to hold back when the provider says so, and the owner's
+/// ceilings on connections and bytes per second. One per engine, shared by
+/// the hub client and the fetcher.
 pub struct Governor {
     state: Mutex<State>,
     freed: Notify,
@@ -90,7 +94,13 @@ enum Wait {
     Slot,
 }
 
+/// The longest one sleep for the speed limit, so a limit the owner raises
+/// or takes away is noticed within this time.
+const THROTTLE_STEP: Duration = Duration::from_secs(1);
+
 impl Governor {
+    /// A governor with the owner's ceilings. No connections means one;
+    /// a speed limit of 0 is no limit.
     pub fn new(max_connections: usize, speed_limit: u64) -> Arc<Self> {
         let max = max_connections.max(1);
         Arc::new(Self {
@@ -116,6 +126,8 @@ impl Governor {
 
     /// Wait until a request of `class` may go out. For file content the
     /// returned permit holds one of the connections until it is dropped.
+    /// A caller that stops waiting (its future is dropped) takes no place,
+    /// and a permit can be dropped at any time: its place goes to a waiter.
     pub async fn permit(self: &Arc<Self>, class: Class) -> Permit {
         loop {
             let wait = {
@@ -188,6 +200,10 @@ impl Governor {
             .filter(|(n, _)| *n == name)
             .map(|(_, q)| q);
         let mut s = self.lock();
+        // The server names its budgets; ones that have reset are let go,
+        // so the map holds only what is in force.
+        let now = Instant::now();
+        s.budgets.retain(|_, b| b.resets_at > now);
         let known = s.budgets.get(&name).map(|b| b.quota);
         s.budgets.insert(
             name,
@@ -201,24 +217,34 @@ impl Governor {
     }
 
     /// Wait as long as the speed limit asks for `bytes` that just arrived.
+    /// The wait is taken in steps, and the limit is read again at each: a
+    /// limit that was raised or taken away meanwhile shortens or ends it.
     pub async fn throttle(&self, bytes: usize) {
-        let wait = {
-            let mut s = self.lock();
-            if s.speed_limit == 0 {
+        // Counted once, on the first turn.
+        let mut arrived = bytes as f64;
+        loop {
+            let wait = {
+                let mut s = self.lock();
+                if s.speed_limit == 0 {
+                    return;
+                }
+                let limit = s.speed_limit as f64;
+                let now = Instant::now();
+                let gained = now.duration_since(s.refilled).as_secs_f64() * limit;
+                s.tokens = (s.tokens + gained).min(limit);
+                s.refilled = now;
+                s.tokens -= std::mem::take(&mut arrived);
+                if s.tokens >= 0.0 {
+                    return;
+                }
+                Duration::from_secs_f64(-s.tokens / limit)
+            };
+            if wait <= THROTTLE_STEP {
+                tokio::time::sleep(wait).await;
                 return;
             }
-            let limit = s.speed_limit as f64;
-            let now = Instant::now();
-            let gained = now.duration_since(s.refilled).as_secs_f64() * limit;
-            s.tokens = (s.tokens + gained).min(limit);
-            s.refilled = now;
-            s.tokens -= bytes as f64;
-            if s.tokens >= 0.0 {
-                return;
-            }
-            Duration::from_secs_f64(-s.tokens / limit)
-        };
-        tokio::time::sleep(wait).await;
+            tokio::time::sleep(THROTTLE_STEP).await;
+        }
     }
 
     /// Change the owner's limits while running.
@@ -232,6 +258,7 @@ impl Governor {
         self.freed.notify_one();
     }
 
+    /// The owner's ceiling on downloads at once; at least 1.
     pub fn max_connections(&self) -> usize {
         self.lock().max
     }
@@ -423,6 +450,94 @@ mod tests {
         drop(a);
         let _c = third.await.unwrap();
         assert_eq!(g.state().connections, 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_owner_s_ceiling_bounds_the_window() {
+        let g = Governor::new(1, 0);
+        let _a = g.permit(Class::Files).await;
+        let waiting = tokio::spawn({
+            let g = g.clone();
+            async move { g.permit(Class::Files).await }
+        });
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(!waiting.is_finished(), "the ceiling is one");
+        // A higher ceiling does not open more connections by itself: the
+        // window grows as downloads finish cleanly, up to the new ceiling.
+        g.configure(8, 0);
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        assert!(!waiting.is_finished());
+        g.succeeded();
+        let _b = waiting.await.unwrap();
+        assert_eq!(g.state().connections, 2);
+        // A lower one cuts the window at once, and never below one.
+        g.configure(0, 0);
+        assert_eq!((g.max_connections(), g.state().window), (1, 1));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_waiter_that_goes_away_takes_no_place_and_a_dropped_permit_gives_its_own() {
+        let g = Governor::new(1, 0);
+        let held = g.permit(Class::Files).await;
+        let gone = tokio::spawn({
+            let g = g.clone();
+            async move { g.permit(Class::Files).await }
+        });
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        gone.abort();
+        let _ = gone.await;
+        assert_eq!(g.state().connections, 1);
+        // A download that is ended drops its permit; the next one runs.
+        let running = tokio::spawn(async move {
+            let _held = held;
+            tokio::time::sleep(Duration::from_secs(3600)).await;
+        });
+        tokio::time::sleep(Duration::from_secs(1)).await;
+        running.abort();
+        let _ = running.await;
+        let _next = g.permit(Class::Files).await;
+        assert_eq!(g.state().connections, 1);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_download_waiting_out_the_speed_limit_notices_a_new_one() {
+        // 10 bytes a second, and 1000 bytes just arrived: 99 seconds owed.
+        let g = Governor::new(8, 10);
+        let started = Instant::now();
+        let waiting = tokio::spawn({
+            let g = g.clone();
+            async move { g.throttle(1000).await }
+        });
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        assert!(!waiting.is_finished());
+        // The owner takes the limit away.
+        g.configure(8, 0);
+        waiting.await.unwrap();
+        assert!(
+            started.elapsed() < Duration::from_secs(6),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_budget_that_has_reset_is_let_go() {
+        let g = Governor::new(8, 0);
+        let headers = |name: &str| {
+            let mut h = reqwest::header::HeaderMap::new();
+            h.insert(
+                "ratelimit",
+                format!(r#""{name}";r=5;t=10"#).parse().unwrap(),
+            );
+            h
+        };
+        g.observe(&headers("pages"));
+        g.observe(&headers("api"));
+        assert_eq!(g.lock().budgets.len(), 2);
+        tokio::time::sleep(Duration::from_secs(11)).await;
+        g.observe(&headers("resolvers"));
+        let names: Vec<String> = g.lock().budgets.keys().cloned().collect();
+        assert_eq!(names, ["resolvers"]);
     }
 
     #[tokio::test(start_paused = true)]

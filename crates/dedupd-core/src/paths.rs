@@ -21,9 +21,13 @@ impl Home {
     }
 
     /// For a home on another disk, such as the archive: the disk is
-    /// attached (the folder, or the folder it goes in, is there).
+    /// attached (the folder, or the folder it goes in, is there). A home
+    /// that is a disk's own mount point (`/Volumes/Archive`) is attached
+    /// only when it is there itself: `/Volumes` always is.
     pub fn attached(&self) -> bool {
-        self.root.is_dir() || self.root.parent().is_some_and(Path::is_dir)
+        let parent = self.root.parent();
+        let is_mount_point = parent == Some(Path::new("/Volumes"));
+        self.root.is_dir() || (!is_mount_point && parent.is_some_and(Path::is_dir))
     }
 
     pub fn db_path(&self) -> PathBuf {
@@ -91,9 +95,67 @@ impl Home {
     }
 }
 
+/// Write `bytes` as the whole of `target`, in one step: to a temporary
+/// name beside it (with this process's id, so two processes do not share
+/// one), synced to the disk, then renamed. A reader sees the old file or
+/// the new one, never part of one, also after a power loss.
+pub fn write_in_one_step(target: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let name = target
+        .file_name()
+        .ok_or_else(|| std::io::Error::other("the file has no name"))?
+        .to_string_lossy();
+    let tmp = target.with_file_name(format!(".{name}.{}.tmp", std::process::id()));
+    let written = (|| {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, target)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
+}
+
+/// Whether a process with this id is running (also one of another user).
+pub(crate) fn process_is_alive(pid: u32) -> bool {
+    let Ok(pid) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    if pid <= 0 {
+        return false;
+    }
+    // SAFETY: signal 0 sends nothing; the call only asks whether the
+    // process can be signalled.
+    let rc = unsafe { libc::kill(pid, 0) };
+    rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Home;
+    use super::*;
+
+    #[test]
+    fn a_mount_point_that_is_not_there_is_a_disk_that_is_detached() {
+        assert!(!Home::new("/Volumes/no-such-disk-for-this-test").attached());
+        // A folder on a disk: its disk is attached when the disk's folder is.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(Home::new(dir.path().join("dedupd")).attached());
+        assert!(!Home::new(dir.path().join("gone/dedupd")).attached());
+    }
+
+    #[test]
+    fn a_file_written_in_one_step_leaves_no_temporary_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("favorites.json");
+        write_in_one_step(&target, b"one").unwrap();
+        write_in_one_step(&target, b"two").unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"two");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+        assert!(process_is_alive(std::process::id()));
+        assert!(!process_is_alive(4_000_000_000));
+    }
 
     #[test]
     fn a_stored_files_path_cannot_leave_the_store() {

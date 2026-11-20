@@ -360,11 +360,11 @@ fn record_hashed(
                         mtime_ns: file.fingerprint.mtime_ns,
                     },
                     verify: v,
-                    shared: added == Added::Cloned,
+                    shared: added == Added::Stored,
                 },
             ))?;
             match added {
-                Added::Cloned => Action::Cloned,
+                Added::Stored => Action::Cloned,
                 Added::AlreadyPresent => Action::AlreadyInStore,
             }
         }

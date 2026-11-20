@@ -378,7 +378,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 let repo = repo.clone();
                 blocking(move || {
                     let installed = Installed::detect(&engine.dirs);
-                    library::model(&engine.db(), &engine.store, &repo, &installed)
+                    library::model(&engine.db, &engine.store, &repo, &installed)
                 })
                 .await
             };

@@ -22,6 +22,8 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// The database, locked until the guard is dropped. Not held across
+    /// an `.await`, and not while a disk that may be slow is read.
     pub fn db(&self) -> std::sync::MutexGuard<'_, Db> {
         db::lock(&self.db)
     }

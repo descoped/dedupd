@@ -607,6 +607,8 @@ pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Resu
             continue;
         }
         fs::remove_file(path).with_context(|| format!("removing {path}"))?;
+        // And what a placement that was cut off left beside it.
+        crate::clone::clear_leftovers_beside(Path::new(path));
         lock(db).delete_placement(path)?;
         removed.insert(path);
     }

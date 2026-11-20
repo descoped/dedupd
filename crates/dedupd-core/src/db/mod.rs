@@ -7,7 +7,7 @@ use crate::store::Fingerprint;
 use anyhow::{Context, Result};
 use dedupd_api::app::App;
 use dedupd_api::jobs::JobState;
-use dedupd_api::library::Origin;
+use dedupd_api::library::{Origin, VerifyState};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::Path;
 use std::sync::{Mutex, MutexGuard};
@@ -16,6 +16,37 @@ pub mod library;
 
 /// `repos.provider` for Hugging Face repositories.
 pub const PROVIDER_HF: &str = "hf";
+/// What `repos.upstream` holds once the provider was asked: it has the
+/// model, or it answered that it does not.
+pub const UPSTREAM_OK: &str = "ok";
+pub const UPSTREAM_GONE: &str = "gone";
+
+/// A size or a count on its way into the database, which keeps whole
+/// numbers as `i64`. No file is 2^63 bytes; one that claimed to be is kept
+/// as the largest number there is, not as a negative one.
+pub(super) fn stored(n: u64) -> i64 {
+    i64::try_from(n).unwrap_or(i64::MAX)
+}
+
+/// A size or a count on its way out: a negative number, which nothing
+/// here writes, reads as 0 and never as a huge size.
+pub(super) fn count(n: i64) -> u64 {
+    u64::try_from(n).unwrap_or(0)
+}
+
+/// `COALESCE(sum(<column> = '<state>'), 0)` for each verify state, in the
+/// order verified, mismatch, not upstream, unchecked: the words come from
+/// the enum, so a spelling changes in one place.
+pub(super) fn verify_counts(column: &str) -> String {
+    [
+        VerifyState::Verified,
+        VerifyState::Mismatch,
+        VerifyState::NotUpstream,
+        VerifyState::Unchecked,
+    ]
+    .map(|state| format!("COALESCE(sum({column} = '{}'), 0)", state.as_str()))
+    .join(",\n")
+}
 /// `repos.provider` for models from an Ollama registry other than Hugging
 /// Face's.
 pub const PROVIDER_OLLAMA: &str = "ollama";
@@ -38,8 +69,14 @@ pub(crate) fn app_column(r: &rusqlite::Row<'_>, i: usize) -> rusqlite::Result<Ap
 }
 
 /// Lock the shared database handle.
+///
+/// A panic on another thread while it held the lock does not stop every
+/// later caller: the lock is taken all the same. That is safe because `Db`
+/// has no state of its own that a panic can leave half changed; a
+/// transaction that was open is rolled back when it is dropped. The panic
+/// itself is in the log.
 pub fn lock(db: &Mutex<Db>) -> MutexGuard<'_, Db> {
-    db.lock().expect("database lock")
+    db.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 /// The schema's number, kept in the database as `user_version`. There are
@@ -178,6 +215,9 @@ impl std::fmt::Display for NotInLibrary {
 
 impl std::error::Error for NotInLibrary {}
 
+/// The database of one home: what the provider listed, what the store
+/// holds, and every app file dedupd knows. All SQL is in this module; the
+/// connection is private to it.
 pub struct Db {
     conn: Connection,
 }
@@ -222,6 +262,7 @@ pub struct PlacedFile {
     pub derived_sha256: Option<String>,
 }
 
+/// One app file of a model, as the library shows it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlacementRow {
     pub sha256: String,
@@ -252,6 +293,8 @@ impl PlacementRow {
     }
 }
 
+/// An app file to record: where it is, which stored file it is, and how
+/// it came to be there.
 pub struct NewPlacement<'a> {
     pub app: &'a str,
     pub path: &'a str,
@@ -336,6 +379,8 @@ impl Db {
         Ok(self.conn.last_insert_rowid())
     }
 
+    /// Save a job of the download queue: its state as a word, and the
+    /// whole job as the queue wrote it.
     pub fn save_download(&self, id: i64, state: &str, job_json: &str) -> Result<()> {
         self.conn.execute(
             "UPDATE downloads SET state = ?2, job_json = ?3, updated_at = ?4 WHERE id = ?1",
@@ -364,9 +409,18 @@ impl Db {
             .prepare("SELECT job_json FROM downloads WHERE state NOT IN (?1, ?2)")?;
         let finished = [JobState::Done.as_str(), JobState::Cancelled.as_str()];
         let rows = stmt.query_map(finished, |r| r.get::<_, String>(0))?;
+        // Only the model's name is read, so a row another build saved
+        // still answers. A row with no name (not JSON, or one just made
+        // and not yet saved by the queue) is an error: the caller is about
+        // to move a model's files and must not take "cannot tell" for no.
+        #[derive(serde::Deserialize)]
+        struct Named {
+            repo: String,
+        }
         for json in rows {
-            let job: serde_json::Value = serde_json::from_str(&json?).unwrap_or_default();
-            if job.get("repo").and_then(serde_json::Value::as_str) == Some(repo) {
+            let job: Named = serde_json::from_str(&json?)
+                .context("a job in the download queue cannot be read; try again in a moment")?;
+            if job.repo == repo {
                 return Ok(true);
             }
         }
@@ -383,7 +437,12 @@ impl Db {
     pub fn set_upstream(&self, provider: &str, repo: &str, gone: bool) -> Result<()> {
         self.conn.execute(
             "UPDATE repos SET upstream = ?3, checked_at = ?4 WHERE provider = ?1 AND name = ?2",
-            params![provider, repo, if gone { "gone" } else { "ok" }, now()],
+            params![
+                provider,
+                repo,
+                if gone { UPSTREAM_GONE } else { UPSTREAM_OK },
+                now()
+            ],
         )?;
         Ok(())
     }
@@ -438,7 +497,7 @@ impl Db {
                 lfs_sha256,
             } in &snap.entries
             {
-                stmt.execute(params![rev_id, path, *size as i64, git_oid, lfs_sha256])?;
+                stmt.execute(params![rev_id, path, stored(*size), git_oid, lfs_sha256])?;
             }
         }
         if let Some(ref_name) = ref_name {
@@ -486,7 +545,7 @@ impl Db {
         self.conn.execute(
             "INSERT INTO blobs (sha256, size, git_oid, added_at) VALUES (?1, ?2, ?3, ?4)
              ON CONFLICT (sha256) DO UPDATE SET git_oid = COALESCE(excluded.git_oid, blobs.git_oid)",
-            params![sha256, size as i64, git_oid, now()],
+            params![sha256, stored(size), git_oid, now()],
         )?;
         Ok(())
     }
@@ -510,7 +569,7 @@ impl Db {
                  ON CONFLICT (sha256) DO NOTHING",
                 used_by("IS NOT NULL")
             ),
-            params![sha256, size as i64, git_oid, now()],
+            params![sha256, stored(size), git_oid, now()],
         )?;
         Ok(added > 0)
     }
@@ -527,7 +586,7 @@ impl Db {
                     Ok(PlacementRow {
                         sha256: r.get(0)?,
                         git_oid: r.get(1)?,
-                        size: r.get::<_, i64>(2)? as u64,
+                        size: count(r.get(2)?),
                         mtime_ns: r.get(3)?,
                         verify_state: r.get(4)?,
                         shared: r.get(5)?,
@@ -558,7 +617,7 @@ impl Db {
                 p.repo_id,
                 p.rel_path,
                 p.sha256,
-                p.size as i64,
+                stored(p.size),
                 p.mtime_ns,
                 p.origin,
                 p.verify_state,
@@ -659,7 +718,7 @@ impl Db {
             .query_map([rev_id], |r| {
                 Ok(TreeEntry {
                     path: r.get(0)?,
-                    size: r.get::<_, i64>(1)? as u64,
+                    size: count(r.get(1)?),
                     git_oid: r.get(2)?,
                     lfs_sha256: r.get(3)?,
                 })
@@ -749,6 +808,8 @@ impl Db {
         Ok(())
     }
 
+    /// When the model was archived; `None` when it is not. Fails for a
+    /// repository id that is not in the database.
     pub fn archived_at(&self, repo_id: i64) -> Result<Option<i64>> {
         Ok(self.conn.query_row(
             "SELECT archived_at FROM repos WHERE id = ?1",
@@ -757,6 +818,8 @@ impl Db {
         )?)
     }
 
+    /// Drop a stored file's record. Fails while a placement still refers
+    /// to it; the callers check first.
     pub fn delete_blob(&self, sha256: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM blobs WHERE sha256 = ?1", [sha256])?;
@@ -836,7 +899,7 @@ impl Db {
                     repo: r.get(2)?,
                     rel_path: r.get(3)?,
                     sha256: r.get(4)?,
-                    size: r.get::<_, i64>(5)? as u64,
+                    size: count(r.get(5)?),
                     mtime_ns: r.get(6)?,
                     shared: r.get(7)?,
                     derived_sha256: r.get(8)?,
@@ -879,17 +942,24 @@ impl Db {
     /// Write a consistent copy of the whole database to `path`, which must
     /// not exist.
     pub fn vacuum_into(&self, path: &Path) -> Result<()> {
-        self.conn
-            .execute("VACUUM INTO ?1", [path.to_string_lossy().as_ref()])?;
+        // The path as text: one that is not UTF-8 is refused, not copied
+        // to a name that looks like it.
+        let path = path
+            .to_str()
+            .with_context(|| format!("{} is not a name SQLite can take", path.display()))?;
+        self.conn.execute("VACUUM INTO ?1", [path])?;
         Ok(())
     }
 
+    /// Drop the record of the app file at `path`; nothing when there is none.
     pub fn delete_placement(&self, path: &str) -> Result<()> {
         self.conn
             .execute("DELETE FROM placements WHERE path = ?1", [path])?;
         Ok(())
     }
 
+    /// Note that the app file at `path` is now a clone of the stored file
+    /// (reclaim replaced it), with the clone's time.
     pub fn set_placement_shared(&self, path: &str, mtime_ns: i64) -> Result<()> {
         self.conn.execute(
             "UPDATE placements SET shared = 1, mtime_ns = ?2 WHERE path = ?1",
@@ -902,7 +972,7 @@ impl Db {
 fn blob_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<BlobRow> {
     Ok(BlobRow {
         sha256: r.get(0)?,
-        size: r.get::<_, i64>(1)? as u64,
+        size: count(r.get(1)?),
         git_oid: r.get(2)?,
     })
 }
@@ -928,6 +998,92 @@ mod tests {
         for one in opening {
             one.join().unwrap().unwrap();
         }
+    }
+
+    /// A model whose kept Ollama manifest names one stored layer.
+    fn with_manifest(db: &Db, name: &str, layer: &str) -> i64 {
+        let id = db.upsert_repo(PROVIDER_HF, name).unwrap();
+        let body = format!(r#"{{"layers":[{{"digest":"sha256:{layer}"}}]}}"#);
+        db.save_manifest(id, "latest", "ollama/1", "application/json", &body)
+            .unwrap();
+        id
+    }
+
+    #[test]
+    fn the_manifest_of_the_one_asking_comes_first_then_the_newest() {
+        let db = Db::open_in_memory().unwrap();
+        let id = db.upsert_repo(PROVIDER_HF, "org/repo").unwrap();
+        for (agent, body) in [("ollama/1", "one"), ("ollama/2", "two")] {
+            db.save_manifest(id, "latest", agent, "application/json", body)
+                .unwrap();
+        }
+        let body = |agent| db.manifest(id, "latest", agent).unwrap().unwrap().1;
+        assert_eq!(body(Some("ollama/1")), "one");
+        assert_eq!(body(Some("ollama/2")), "two");
+        // An agent nothing was kept for, and no agent: the newest.
+        assert_eq!(body(Some("ollama/3")), "two");
+        assert_eq!(body(None), "two");
+        assert!(db.manifest(id, "other", None).unwrap().is_none());
+    }
+
+    #[test]
+    fn a_file_is_recorded_only_when_a_model_refers_to_it() {
+        let db = Db::open_in_memory().unwrap();
+        let (used, unused) = ("a".repeat(64), "b".repeat(64));
+        let id = with_manifest(&db, "org/repo", &used);
+        assert!(!db.record_blob_if_used(&unused, 3, None).unwrap());
+        assert!(db.record_blob_if_used(&used, 3, None).unwrap());
+        // Recorded once.
+        assert!(!db.record_blob_if_used(&used, 3, None).unwrap());
+        let known: Vec<String> = db
+            .all_blobs()
+            .unwrap()
+            .into_iter()
+            .map(|b| b.sha256)
+            .collect();
+        assert_eq!(known, [used]);
+        // What the library counts as stored is what archive and gc act on,
+        // a layer only a kept manifest names included.
+        assert_eq!(db.stored_of(id).unwrap(), (1, 3));
+        assert_eq!(db.repo_blobs(id).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_file_another_model_uses_keeps_it_unless_that_model_is_archived() {
+        let db = Db::open_in_memory().unwrap();
+        let layer = "c".repeat(64);
+        let one = with_manifest(&db, "org/one", &layer);
+        let other = with_manifest(&db, "org/other", &layer);
+        db.upsert_blob(&layer, 3, None).unwrap();
+        assert_eq!(db.repo_blobs_used_elsewhere(one).unwrap().len(), 1);
+        db.set_archived(other, Some(1)).unwrap();
+        assert!(db.repo_blobs_used_elsewhere(one).unwrap().is_empty());
+        assert_eq!(db.archived_at(other).unwrap(), Some(1));
+        assert_eq!(db.archived_at(one).unwrap(), None);
+    }
+
+    #[test]
+    fn a_job_that_cannot_be_read_is_not_taken_for_no_job() {
+        let db = Db::open_in_memory().unwrap();
+        assert!(!db.has_unfinished_job("org/repo").unwrap());
+        let id = db.insert_download(JobState::Queued.as_str()).unwrap();
+        // Just made, not yet saved by the queue: it names no model.
+        assert!(db.has_unfinished_job("org/repo").is_err());
+        // A row of another build still answers by the model's name.
+        db.save_download(id, "queued", r#"{"repo":"org/repo","new_field":1}"#)
+            .unwrap();
+        assert!(db.has_unfinished_job("org/repo").unwrap());
+        assert!(!db.has_unfinished_job("org/other").unwrap());
+        db.save_download(id, JobState::Done.as_str(), "not json")
+            .unwrap();
+        assert!(!db.has_unfinished_job("org/repo").unwrap());
+    }
+
+    #[test]
+    fn numbers_cross_into_the_database_and_back_by_one_rule() {
+        assert_eq!(stored(u64::MAX), i64::MAX);
+        assert_eq!((count(-1), count(7)), (0, 7));
+        assert!(verify_counts("p.verify_state").contains("p.verify_state = 'not_upstream'"));
     }
 
     #[test]

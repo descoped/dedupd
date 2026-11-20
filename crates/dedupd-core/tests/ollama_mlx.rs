@@ -288,7 +288,7 @@ async fn an_mlx_model_is_placed_into_ollama_as_clones_with_a_rewritten_index() {
 
     // The library counts the model as in Ollama, and the records say the
     // clones were made from the stored weights files.
-    let detail = library::model(&e.db(), &e.store, REPO, &installed)
+    let detail = library::model(&e.db, &e.store, REPO, &installed)
         .unwrap()
         .unwrap();
     let variant = &detail.variants[0];
@@ -478,7 +478,7 @@ async fn an_architecture_ollama_refuses_is_remembered_and_not_offered_again() {
     );
 
     // The library shows Ollama as unable to take it, with the reason.
-    let library = library::model(&e.db(), &e.store, REPO, &installed)
+    let library = library::model(&e.db, &e.store, REPO, &installed)
         .unwrap()
         .unwrap();
     let ollama = library.variants[0]

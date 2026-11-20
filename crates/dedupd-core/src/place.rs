@@ -352,9 +352,7 @@ pub fn place_ollama(
     if fs::read_to_string(&path).ok().as_deref() != Some(manifest_body) {
         let parent = path.parent().expect("manifest has a parent");
         fs::create_dir_all(parent)?;
-        let tmp = parent.join(format!(".{tag}.dedupd-tmp"));
-        fs::write(&tmp, manifest_body)?;
-        fs::rename(&tmp, &path)?;
+        crate::paths::write_in_one_step(&path, manifest_body.as_bytes())?;
     }
     Ok(out)
 }

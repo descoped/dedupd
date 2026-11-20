@@ -44,6 +44,7 @@ pub fn activated(app: App) -> String {
     format!("Activated in {}", app.title())
 }
 
+/// The sentence for a model taken out of `app`.
 pub fn deactivated(app: App) -> String {
     format!("Deactivated in {}", app.title())
 }
@@ -110,7 +111,10 @@ fn parse(text: &str) -> Vec<ActivityEntry> {
 
 /// The newest entries first, at most `limit` of them.
 pub fn recent(home: &Home, limit: usize) -> Vec<ActivityEntry> {
-    let mut entries = parse(&std::fs::read_to_string(path(home)).unwrap_or_default());
+    // Read as bytes: a line cut in the middle of a character must not
+    // make the whole file unreadable. It fails to parse and is skipped.
+    let bytes = std::fs::read(path(home)).unwrap_or_default();
+    let mut entries = parse(&String::from_utf8_lossy(&bytes));
     entries.reverse();
     entries.truncate(limit);
     entries
@@ -177,9 +181,10 @@ fn append(home: &Home, happened: Vec<Happened>) -> Result<()> {
         .append(true)
         .open(&target)
         .with_context(|| format!("opening {}", target.display()))?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)
         .with_context(|| format!("reading {}", target.display()))?;
+    let text = String::from_utf8_lossy(&bytes);
     let known = parse(&text);
 
     let now = std::time::SystemTime::now()
@@ -219,11 +224,8 @@ fn append(home: &Home, happened: Vec<Happened>) -> Result<()> {
             kept.push('\n');
         }
         kept.push_str(&lines);
-        let tmp = home
-            .root()
-            .join(format!(".activity.jsonl.{}.tmp", std::process::id()));
-        std::fs::write(&tmp, kept).with_context(|| format!("writing {}", tmp.display()))?;
-        std::fs::rename(&tmp, &target).with_context(|| format!("writing {}", target.display()))?;
+        crate::paths::write_in_one_step(&target, kept.as_bytes())
+            .with_context(|| format!("writing {}", target.display()))?;
         return Ok(());
     }
     // A line cut short by a crash gets its end, so the new entries start on
@@ -356,6 +358,21 @@ mod tests {
         let mut ids: Vec<i64> = entries.iter().map(|e| e.id).collect();
         ids.dedup();
         assert_eq!(ids.len(), 200);
+    }
+
+    #[test]
+    fn a_line_cut_in_the_middle_of_a_character_does_not_stop_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path());
+        record(&home, happened(ActivityAction::Restore, None, Ok(RESTORED)));
+        // A write cut after the first byte of "ø".
+        let mut bytes = std::fs::read(path(&home)).unwrap();
+        bytes.extend_from_slice(b"{\"id\":17,\"text\":\"bl\xc3");
+        std::fs::write(path(&home), bytes).unwrap();
+
+        assert_eq!(recent(&home, 10).len(), 1);
+        record(&home, happened(ActivityAction::Restore, None, Ok(RESTORED)));
+        assert_eq!(recent(&home, 10).len(), 2);
     }
 
     #[test]

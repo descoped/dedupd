@@ -243,7 +243,7 @@ async fn a_model_is_removed_from_an_app_and_placed_again() {
 
     // The library says where the model is and what it can be used as.
     let installed = Installed::detect(&e.dirs);
-    let detail = library::model(&e.db(), &e.store, REPO, &installed)
+    let detail = library::model(&e.db, &e.store, REPO, &installed)
         .unwrap()
         .unwrap();
     assert_eq!(detail.model.apps.len(), 3);
@@ -445,7 +445,7 @@ async fn a_model_is_archived_and_restored() {
         .unwrap();
     let installed = Installed::detect(&e.dirs);
     let archived_at = |e: &dedupd_core::engine::Engine| {
-        library::model(&e.db(), &e.store, REPO, &installed)
+        library::model(&e.db, &e.store, REPO, &installed)
             .unwrap()
             .unwrap()
             .model
@@ -510,7 +510,7 @@ async fn a_model_is_archived_and_restored() {
         assert!(!e.store.contains(sha));
         assert!(archive_home.blob_path(sha).is_file());
     }
-    let detail = library::model(&e.db(), &e.store, REPO, &installed)
+    let detail = library::model(&e.db, &e.store, REPO, &installed)
         .unwrap()
         .unwrap();
     assert!(detail.model.archived_at.is_some());
@@ -632,7 +632,7 @@ fn an_mlx_model_tells_each_app_what_it_can_do() {
     let installed = Installed::unknown().with(App::Ollama, "0.40.16");
     let formats = ["mlx".to_string(), "safetensors".to_string()];
     let variant = |entries: &[TreeEntry]| {
-        library::local_variants(&e.db(), &e.store, "org/m", entries, &formats, &installed)
+        library::local_variants(&e.db, &e.store, "org/m", entries, &formats, &installed)
             .unwrap()
             .remove(0)
     };
@@ -782,7 +782,7 @@ async fn files_only_the_store_has_are_recorded_again_after_the_database_is_remov
     .unwrap();
     let q4 = || {
         let installed = Installed::detect(&e.dirs);
-        library::model(&e.db(), &e.store, REPO, &installed)
+        library::model(&e.db, &e.store, REPO, &installed)
             .unwrap()
             .unwrap()
             .variants

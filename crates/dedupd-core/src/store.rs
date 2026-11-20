@@ -12,15 +12,19 @@ pub struct Store {
     /// A second copy of the store on another disk. Files missing here are
     /// brought back from it on demand.
     archive: Option<Home>,
-    /// One restore from the archive at a time: parallel requests for the same
-    /// file would otherwise write, and move, each other's temp file.
+    /// One restore from the archive at a time, on purpose: the archive is
+    /// one external disk, and two copies read from it at once are slower
+    /// than one after the other. A request for a small file therefore
+    /// waits for a large one that is being copied back. Files that are in
+    /// the store never wait here.
     restoring: std::sync::Mutex<()>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Added {
-    /// A clone of the source file was added to the store.
-    Cloned,
+    /// The file was added to the store: a clone of the source file, or a
+    /// finished temp file moved in.
+    Stored,
     /// The store already held this content; nothing was written.
     AlreadyPresent,
 }
@@ -46,6 +50,7 @@ impl Fingerprint {
         }
     }
 
+    /// The file's size and time as they are now.
     pub fn of(path: &Path) -> std::io::Result<Self> {
         let m = fs::metadata(path)?;
         Ok(Self {
@@ -56,10 +61,13 @@ impl Fingerprint {
 }
 
 impl Store {
+    /// The store in `home`, with its folders made. No archive disk yet;
+    /// see `with_archive`.
     pub fn open(home: &Home) -> Result<Self> {
         fs::create_dir_all(home.store_dir().join("sha256"))
             .with_context(|| format!("creating {}", home.store_dir().display()))?;
-        fs::create_dir_all(home.tmp_dir())?;
+        fs::create_dir_all(home.tmp_dir())
+            .with_context(|| format!("creating {}", home.tmp_dir().display()))?;
         Ok(Self {
             home: home.clone(),
             archive: None,
@@ -74,10 +82,13 @@ impl Store {
         self
     }
 
+    /// The home this store is in.
     pub fn home(&self) -> &Home {
         &self.home
     }
 
+    /// The home on the archive disk, when one is configured; its disk
+    /// may be detached.
     pub fn archive(&self) -> Option<&Home> {
         self.archive.as_ref()
     }
@@ -128,7 +139,7 @@ impl Store {
         fs::create_dir_all(dst.parent().expect("blob path has a parent"))?;
         fs::rename(tmp, &dst)
             .with_context(|| format!("moving {} into the store", tmp.display()))?;
-        Ok(Added::Cloned)
+        Ok(Added::Stored)
     }
 
     /// Make sure the file is in the local store, copying it back from the
@@ -176,8 +187,10 @@ impl Store {
     /// left in the temp folders, here and on the archive disk: a file
     /// cloned or copied into the store, copied back from the archive, or
     /// copied to it. A copy that is still being written was written to a
-    /// moment ago and is left alone; partial downloads, which are
-    /// continued, are never touched. Returns how many were removed.
+    /// moment ago and is left alone, and so is one whose process still
+    /// runs (a clone carries its source's time, so its age says nothing);
+    /// partial downloads, which are continued, are never touched. Returns
+    /// how many were removed.
     pub fn clear_leftovers(&self) -> usize {
         let quiet_for = std::time::Duration::from_secs(600);
         let mut dirs = vec![self.home.tmp_dir()];
@@ -195,7 +208,10 @@ impl Store {
             .flatten()
         {
             let name = entry.file_name();
-            if !is_leftover_copy(&name.to_string_lossy()) {
+            let Some(pid) = leftover_copy_of(&name.to_string_lossy()) else {
+                continue;
+            };
+            if crate::paths::process_is_alive(pid) {
                 continue;
             }
             let idle = entry
@@ -214,6 +230,9 @@ impl Store {
     /// The sha256 of every file in the store, read from the names in its
     /// folder (`sha256/ab/<hex>`). Anything else there is left out: a name
     /// that is not 64 lowercase hex digits, or one in the wrong subfolder.
+    /// A folder that cannot be read is left out too, without an error: the
+    /// caller only adds records for what is listed. Do not use the list to
+    /// decide what to remove.
     pub fn stored_hashes(&self) -> Vec<String> {
         let root = self.home.store_dir().join("sha256");
         let mut out = Vec::new();
@@ -231,10 +250,13 @@ impl Store {
         out
     }
 
+    /// Where the store keeps the file with this sha256, there or not.
     pub fn blob_path(&self, sha256: &str) -> PathBuf {
         self.home.blob_path(sha256)
     }
 
+    /// Whether the file is in the store on this disk (the archive disk
+    /// is not asked).
     pub fn contains(&self, sha256: &str) -> bool {
         self.blob_path(sha256).is_file()
     }
@@ -288,21 +310,27 @@ impl Store {
             let _ = fs::remove_file(&tmp);
             return Err(e);
         }
-        Ok(Added::Cloned)
+        Ok(Added::Stored)
     }
 }
 
 /// A temp file named as a copy on its way into the store or the archive:
 /// `<sha256>.<pid>` or `<sha256>.restore.<pid>`.
+#[cfg(test)]
 fn is_leftover_copy(name: &str) -> bool {
-    let Some((sha, rest)) = name.split_once('.') else {
-        return false;
-    };
+    leftover_copy_of(name).is_some()
+}
+
+/// The id of the process that made a half-made copy, when `name` is one.
+fn leftover_copy_of(name: &str) -> Option<u32> {
+    let (sha, rest) = name.split_once('.')?;
     let pid = rest.strip_prefix("restore.").unwrap_or(rest);
-    sha.len() == 64
+    let named_so = sha.len() == 64
         && sha.bytes().all(|b| b.is_ascii_hexdigit())
         && !pid.is_empty()
-        && pid.bytes().all(|b| b.is_ascii_digit())
+        && pid.bytes().all(|b| b.is_ascii_digit());
+    // A number too large for a process id is nobody's.
+    named_so.then(|| pid.parse().unwrap_or(0))
 }
 
 /// 64 lowercase hex digits: how the store names a file.
@@ -327,7 +355,7 @@ mod tests {
 
         assert_eq!(
             store.add_clone(&src, &h.sha256, seen).unwrap(),
-            Added::Cloned
+            Added::Stored
         );
         assert_eq!(
             store.add_clone(&src, &h.sha256, seen).unwrap(),
@@ -362,8 +390,11 @@ mod tests {
         let home = Home::new(dir.path().join("home"));
         let store = Store::open(&home).unwrap();
         let (old, new, part) = (
-            home.tmp_dir().join(format!("{}.restore.7", "b".repeat(64))),
-            home.tmp_dir().join(format!("{}.8", "c".repeat(64))),
+            // Ids no process has: the ones that made these are gone.
+            home.tmp_dir()
+                .join(format!("{}.restore.4000000007", "b".repeat(64))),
+            home.tmp_dir()
+                .join(format!("{}.4000000008", "c".repeat(64))),
             home.tmp_dir().join(format!("{}.part", "d".repeat(64))),
         );
         for path in [&old, &new, &part] {
@@ -380,6 +411,66 @@ mod tests {
         }
         assert_eq!(store.clear_leftovers(), 1);
         assert!(!old.exists() && new.exists() && part.exists());
+    }
+
+    #[test]
+    fn a_copy_whose_process_still_runs_is_left_however_old_it_looks() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let store = Store::open(&home).unwrap();
+        // A clone carries its source's time: it looks idle at once.
+        let mine = home
+            .tmp_dir()
+            .join(format!("{}.{}", "e".repeat(64), std::process::id()));
+        fs::write(&mine, b"x").unwrap();
+        let long_ago = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        fs::File::options()
+            .write(true)
+            .open(&mine)
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        assert_eq!(store.clear_leftovers(), 0);
+        assert!(mine.exists());
+    }
+
+    #[test]
+    fn a_damaged_copy_on_the_archive_disk_is_not_brought_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let archive = Home::new(dir.path().join("archive"));
+        let store = Store::open(&home)
+            .unwrap()
+            .with_archive(Some(archive.clone()));
+        let sha = "f".repeat(64);
+        let copy = archive.blob_path(&sha);
+        fs::create_dir_all(copy.parent().unwrap()).unwrap();
+        fs::write(&copy, b"not what the name says").unwrap();
+
+        let said = store.ensure_local(&sha).unwrap_err();
+        assert!(format!("{said:#}").contains("is damaged"), "{said:#}");
+        assert!(!store.contains(&sha));
+        // Nothing half-made stays behind.
+        assert_eq!(fs::read_dir(home.tmp_dir()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn a_stored_file_of_another_size_under_the_same_name_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        let store = Store::open(&home).unwrap();
+        let src = dir.path().join("f");
+        fs::write(&src, b"one").unwrap();
+        let h = hash_file(&src, false).unwrap();
+        let held = store.blob_path(&h.sha256);
+        fs::create_dir_all(held.parent().unwrap()).unwrap();
+        fs::write(&held, b"longer than one").unwrap();
+
+        let said = store
+            .add_clone(&src, &h.sha256, Fingerprint::of(&src).unwrap())
+            .unwrap_err();
+        assert!(said.to_string().contains("hashes to the same id"), "{said}");
+        assert_eq!(fs::read(&held).unwrap(), b"longer than one");
     }
 
     #[test]
