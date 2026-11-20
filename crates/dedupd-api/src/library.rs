@@ -112,6 +112,7 @@ pub struct RevisionFile {
     pub apps: Vec<App>,
 }
 
+/// A commit of a model that dedupd has kept the provider's listing for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Revision {
@@ -139,7 +140,10 @@ pub enum VerifyState {
     Unchecked,
 }
 
+crate::all_variants!(VerifyState: Verified, Mismatch, NotUpstream, Unchecked);
+
 impl VerifyState {
+    /// The state's word in the control API and in the database.
     pub const fn as_str(self) -> &'static str {
         match self {
             VerifyState::Verified => "verified",
@@ -151,14 +155,10 @@ impl VerifyState {
 
     /// The inverse of `as_str`. Anything unknown reads as unchecked.
     pub fn parse(s: &str) -> Self {
-        [
-            VerifyState::Verified,
-            VerifyState::Mismatch,
-            VerifyState::NotUpstream,
-        ]
-        .into_iter()
-        .find(|v| v.as_str() == s)
-        .unwrap_or(VerifyState::Unchecked)
+        Self::ALL
+            .into_iter()
+            .find(|v| v.as_str() == s)
+            .unwrap_or(VerifyState::Unchecked)
     }
 }
 
@@ -173,7 +173,10 @@ pub enum Origin {
     Placed,
 }
 
+crate::all_variants!(Origin: Adopted, Placed);
+
 impl Origin {
+    /// The origin's word in the control API and in the database.
     pub const fn as_str(self) -> &'static str {
         match self {
             Origin::Adopted => "adopted",
@@ -181,10 +184,9 @@ impl Origin {
         }
     }
 
+    /// The origin a database row's word names.
     pub fn parse(s: &str) -> Option<Self> {
-        [Origin::Adopted, Origin::Placed]
-            .into_iter()
-            .find(|o| o.as_str() == s)
+        Self::ALL.into_iter().find(|o| o.as_str() == s)
     }
 }
 
@@ -214,9 +216,9 @@ pub enum Format {
     Other,
 }
 
-impl Format {
-    pub const ALL: [Format; 3] = [Format::Gguf, Format::Mlx, Format::Other];
+crate::all_variants!(Format: Gguf, Mlx, Other);
 
+impl Format {
     /// The format's name in a sentence.
     pub const fn label(self) -> &'static str {
         match self {
@@ -366,6 +368,8 @@ pub struct Location {
     pub models: u64,
 }
 
+/// Where the files are: the store, the archive disk and each app's folder,
+/// with the room on the volume they share.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct Locations {
@@ -390,7 +394,9 @@ pub struct UpstreamCheck {
     pub changed: bool,
 }
 
-/// A model, named in an answer.
+/// A model by its name: the request body of `check` and `forget`, and the
+/// answer that names the model something was done to. Because it is also
+/// an answer, it does not refuse unknown fields.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RepoBody {
     pub repo: String,
@@ -402,12 +408,7 @@ mod tests {
 
     #[test]
     fn verify_states_read_back() {
-        for v in [
-            VerifyState::Verified,
-            VerifyState::Mismatch,
-            VerifyState::NotUpstream,
-            VerifyState::Unchecked,
-        ] {
+        for v in VerifyState::ALL {
             assert_eq!(VerifyState::parse(v.as_str()), v);
             assert_eq!(
                 serde_json::to_string(&v).unwrap(),
@@ -419,7 +420,7 @@ mod tests {
 
     #[test]
     fn origins_read_back() {
-        for o in [Origin::Adopted, Origin::Placed] {
+        for o in Origin::ALL {
             assert_eq!(Origin::parse(o.as_str()), Some(o));
             assert_eq!(
                 serde_json::to_string(&o).unwrap(),

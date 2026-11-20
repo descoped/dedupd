@@ -44,6 +44,9 @@ fn decode(text: &str, plus_is_space: bool) -> String {
         }
         i += 1;
     }
+    // An escape that is not UTF-8 becomes U+FFFD, on purpose: what is
+    // decoded here is a name or a search word, which its reader checks
+    // (`names::is_repo_name`, `is_file_path`) and refuses in that form.
     String::from_utf8_lossy(&out).into_owned()
 }
 

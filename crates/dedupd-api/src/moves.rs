@@ -38,6 +38,7 @@ pub struct UnplacePlan {
 
 /// What a request to take a model out of an app asks for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct UnplaceBody {
     pub repo: String,
     pub app: App,
@@ -57,7 +58,10 @@ pub enum MoveKind {
     Restore,
 }
 
+crate::all_variants!(MoveKind: Archive, Restore);
+
 impl MoveKind {
+    /// The kind's word in the control API, which is also its path.
     pub const fn as_str(self) -> &'static str {
         match self {
             MoveKind::Archive => "archive",
@@ -68,6 +72,7 @@ impl MoveKind {
 
 /// What a request to archive or restore a model asks for.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct MoveBody {
     pub repo: String,
     /// Do it. Without it the answer only says what would happen.
@@ -177,6 +182,7 @@ pub struct GcPlan {
 
 /// What a request to clean up stored files agrees to.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct GcBody {
     /// sha256 of the files nothing refers to that the owner agreed to remove.
     #[serde(default)]
@@ -184,4 +190,25 @@ pub struct GcBody {
     /// sha256 of the files whose local copy the owner agreed to remove.
     #[serde(default)]
     pub offload: Vec<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_word_is_spelled_one_way() {
+        crate::same_words(&MoveKind::ALL, MoveKind::as_str);
+    }
+
+    #[test]
+    fn a_request_with_a_misspelt_field_is_refused() {
+        // `aply` must not read as "only tell me the plan".
+        let misspelt = r#"{"repo": "org/repo", "aply": true}"#;
+        assert!(serde_json::from_str::<MoveBody>(misspelt).is_err());
+        assert!(serde_json::from_str::<MoveBody>(r#"{"repo": "org/repo"}"#).is_ok());
+        assert!(serde_json::from_str::<GcBody>(r#"{"orphan": []}"#).is_err());
+        let unplace = r#"{"repo": "org/repo", "app": "ollama", "path": []}"#;
+        assert!(serde_json::from_str::<UnplaceBody>(unplace).is_err());
+    }
 }

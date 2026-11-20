@@ -590,7 +590,10 @@ fileprivate struct FfiConverterString: FfiConverter {
 
 
 /**
- * Receives what the daemon says. Called on a background thread.
+ * Receives what the daemon says. Called on a background thread, with one
+ * exception: when the subscription's thread cannot be started,
+ * `on_connection(false)` is called once on the thread that subscribed,
+ * before `subscribe` returns. A listener must take a call from any thread.
  */
 public protocol EventListener: AnyObject, Sendable {
     
@@ -616,7 +619,10 @@ public protocol EventListener: AnyObject, Sendable {
     
 }
 /**
- * Receives what the daemon says. Called on a background thread.
+ * Receives what the daemon says. Called on a background thread, with one
+ * exception: when the subscription's thread cannot be started,
+ * `on_connection(false)` is called once on the thread that subscribed,
+ * before `subscribe` returns. A listener must take a call from any thread.
  */
 open class EventListenerImpl: EventListener, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -898,7 +904,9 @@ public func FfiConverterTypeEventListener_lower(_ value: EventListener) -> UInt6
 public protocol EventSubscriptionProtocol: AnyObject, Sendable {
     
     /**
-     * Stop following. Nothing is delivered after this returns.
+     * Stop following. The thread ends at its next step: at most one more
+     * call may reach the listener after this returns, and with a daemon
+     * that sends nothing the thread ends within the silence limit.
      */
     func cancel() 
     
@@ -961,7 +969,9 @@ open class EventSubscription: EventSubscriptionProtocol, @unchecked Sendable {
 
     
     /**
-     * Stop following. Nothing is delivered after this returns.
+     * Stop following. The thread ends at its next step: at most one more
+     * call may reach the listener after this returns, and with a daemon
+     * that sends nothing the thread ends within the silence limit.
      */
 open func cancel()  {try! rustCall() {
         uniffiCallStatus in
@@ -1039,6 +1049,15 @@ enum ClientError: Swift.Error, Equatable, Hashable, Foundation.LocalizedError {
      */
     case Protocol(message: String
     )
+    /**
+     * The daemon did not answer within the time a call may take.
+     */
+    case TimedOut
+    /**
+     * The address is not `host:port`, so nothing was asked.
+     */
+    case BadAddress(address: String
+    )
 
     
 
@@ -1077,6 +1096,10 @@ public struct FfiConverterTypeClientError: FfiConverterRustBuffer {
         case 3: return .Protocol(
             message: try FfiConverterString.read(from: &buf)
             )
+        case 4: return .TimedOut
+        case 5: return .BadAddress(
+            address: try FfiConverterString.read(from: &buf)
+            )
 
          default: throw UniffiInternalError.unexpectedEnumCase
         }
@@ -1102,6 +1125,15 @@ public struct FfiConverterTypeClientError: FfiConverterRustBuffer {
         case let .Protocol(message):
             writeInt(&buf, Int32(3))
             FfiConverterString.write(message, into: &buf)
+            
+        
+        case .TimedOut:
+            writeInt(&buf, Int32(4))
+        
+        
+        case let .BadAddress(address):
+            writeInt(&buf, Int32(5))
+            FfiConverterString.write(address, into: &buf)
             
         }
     }
@@ -1332,6 +1364,19 @@ public func activity(address: String)throws  -> [ActivityEntry]  {
 })
 }
 /**
+ * Whether `address` is where a daemon can be: `host:port`, with no
+ * scheme, no path and no name before the host. The one check for an
+ * address a person typed; every call makes it before it asks.
+ */
+public func addressIsValid(address: String) -> Bool  {
+    return try!  FfiConverterBool.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_address_is_valid(
+        FfiConverterString.lower(address),uniffiCallStatus
+    )
+})
+}
+/**
  * Every app with its installed version and the formats dedupd can put
  * into it, in the daemon's order.
  */
@@ -1458,6 +1503,18 @@ public func enqueue(address: String, model: String, apps: [ModelApp], include: [
         FfiConverterSequenceString.lower(include),
         FfiConverterBool.lower(offline),
         FfiConverterTypeJobKind_lower(kind),uniffiCallStatus
+    )
+})
+}
+/**
+ * The sentence for an error, as the command line prints it. The app shows
+ * the same words, so they are written once.
+ */
+public func errorMessage(error: ClientError) -> String  {
+    return try!  FfiConverterString.lift(try! rustCall() {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_error_message(
+        FfiConverterTypeClientError_lower(error),uniffiCallStatus
     )
 })
 }
@@ -1795,6 +1852,9 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_func_activity() != 9968) {
         return InitializationResult.apiChecksumMismatch
     }
+    if (uniffi_dedupd_client_checksum_func_address_is_valid() != 42907) {
+        return InitializationResult.apiChecksumMismatch
+    }
     if (uniffi_dedupd_client_checksum_func_apps() != 4438) {
         return InitializationResult.apiChecksumMismatch
     }
@@ -1823,6 +1883,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_enqueue() != 17010) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dedupd_client_checksum_func_error_message() != 37688) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_favorites() != 50348) {
@@ -1909,7 +1972,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_method_eventlistener_on_unreadable() != 53521) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_method_eventsubscription_cancel() != 31300) {
+    if (uniffi_dedupd_client_checksum_method_eventsubscription_cancel() != 57346) {
         return InitializationResult.apiChecksumMismatch
     }
 

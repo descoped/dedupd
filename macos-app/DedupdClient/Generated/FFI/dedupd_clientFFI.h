@@ -325,6 +325,11 @@ void uniffi_dedupd_client_fn_method_eventsubscription_cancel(uint64_t ptr, RustC
 RustBuffer uniffi_dedupd_client_fn_func_activity(RustBuffer address, RustCallStatus *_Nonnull out_status
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ADDRESS_IS_VALID
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ADDRESS_IS_VALID
+int8_t uniffi_dedupd_client_fn_func_address_is_valid(RustBuffer address, RustCallStatus *_Nonnull out_status
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_APPS
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_APPS
 RustBuffer uniffi_dedupd_client_fn_func_apps(RustBuffer address, RustCallStatus *_Nonnull out_status
@@ -374,6 +379,11 @@ RustBuffer uniffi_dedupd_client_fn_func_downloads(RustBuffer address, RustCallSt
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ENQUEUE
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ENQUEUE
 RustBuffer uniffi_dedupd_client_fn_func_enqueue(RustBuffer address, RustBuffer model, RustBuffer apps, RustBuffer include, int8_t offline, RustBuffer kind, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ERROR_MESSAGE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ERROR_MESSAGE
+RustBuffer uniffi_dedupd_client_fn_func_error_message(RustBuffer error, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_FAVORITES
@@ -767,6 +777,12 @@ uint16_t uniffi_dedupd_client_checksum_func_activity(void
     
 );
 #endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ADDRESS_IS_VALID
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ADDRESS_IS_VALID
+uint16_t uniffi_dedupd_client_checksum_func_address_is_valid(void
+    
+);
+#endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_APPS
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_APPS
 uint16_t uniffi_dedupd_client_checksum_func_apps(void
@@ -824,6 +840,12 @@ uint16_t uniffi_dedupd_client_checksum_func_downloads(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ENQUEUE
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ENQUEUE
 uint16_t uniffi_dedupd_client_checksum_func_enqueue(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ERROR_MESSAGE
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_ERROR_MESSAGE
+uint16_t uniffi_dedupd_client_checksum_func_error_message(void
     
 );
 #endif

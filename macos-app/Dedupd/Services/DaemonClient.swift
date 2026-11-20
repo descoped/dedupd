@@ -255,17 +255,16 @@ private final class SignalListener: EventListener {
 }
 
 extension ClientError {
-    /// The message to show a person. The generated description is the Swift
-    /// spelling of the case, which is of no use to them.
+    /// The message to show a person: the sentence the Rust client has for
+    /// the error (the command line prints the same one), with a capital
+    /// and a full stop. What the daemon said itself is shown as it came.
     var message: String {
-        switch self {
-        case let .NotRunning(address):
-            "The dedupd daemon is not running at \(address)."
-        case let .Failed(message):
-            message
-        case let .Protocol(message):
-            "Unexpected answer from the daemon: \(message)"
+        if case let .Failed(message) = self {
+            return message
         }
+        let sentence = errorMessage(error: self)
+        let capital = sentence.prefix(1).uppercased() + sentence.dropFirst()
+        return capital.hasSuffix(".") ? capital : capital + "."
     }
 }
 

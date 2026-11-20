@@ -1170,6 +1170,9 @@ public func FfiConverterTypeDaemonEvent_lower(_ value: DaemonEvent) -> RustBuffe
  */
 public struct DaemonInfo: Equatable, Hashable {
     public var pid: UInt32
+    /**
+     * Seconds since the epoch.
+     */
     public var startedAt: Int64
     public var listen: String
     public var executable: String?
@@ -1195,7 +1198,10 @@ public struct DaemonInfo: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(pid: UInt32, startedAt: Int64, listen: String, executable: String?, 
+    public init(pid: UInt32, 
+        /**
+         * Seconds since the epoch.
+         */startedAt: Int64, listen: String, executable: String?, 
         /**
          * The launchd label it runs under; `None` when it was started by hand.
          */managedBy: String?, 
@@ -1887,63 +1893,6 @@ public func FfiConverterTypeFavorite_lower(_ value: Favorite) -> RustBuffer {
 
 
 /**
- * Mark a model as a favorite, or no longer.
- */
-public struct FavoriteBody: Equatable, Hashable {
-    public var repo: String
-    public var favorite: Bool
-
-    // Default memberwise initializers are never public by default, so we
-    // declare one manually.
-    public init(repo: String, favorite: Bool) {
-        self.repo = repo
-        self.favorite = favorite
-    }
-
-    
-
-    
-}
-
-#if compiler(>=6)
-extension FavoriteBody: Sendable {}
-#endif
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public struct FfiConverterTypeFavoriteBody: FfiConverterRustBuffer {
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> FavoriteBody {
-        return
-            try FavoriteBody(
-                repo: FfiConverterString.read(from: &buf), 
-                favorite: FfiConverterBool.read(from: &buf)
-        )
-    }
-
-    public static func write(_ value: FavoriteBody, into buf: inout [UInt8]) {
-        FfiConverterString.write(value.repo, into: &buf)
-        FfiConverterBool.write(value.favorite, into: &buf)
-    }
-}
-
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFavoriteBody_lift(_ buf: RustBuffer) throws -> FavoriteBody {
-    return try FfiConverterTypeFavoriteBody.lift(buf)
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
-public func FfiConverterTypeFavoriteBody_lower(_ value: FavoriteBody) -> RustBuffer {
-    return FfiConverterTypeFavoriteBody.lower(value)
-}
-
-
-/**
  * The favorites, newest first, and how the likes are brought in.
  */
 public struct Favorites: Equatable, Hashable {
@@ -2435,6 +2384,9 @@ public struct Job: Equatable, Hashable {
      * What the owner can do to it now.
      */
     public var actions: [JobAction]
+    /**
+     * The three times are seconds since the epoch.
+     */
     public var createdAt: Int64
     public var updatedAt: Int64
     public var finishedAt: Int64?
@@ -2470,7 +2422,10 @@ public struct Job: Equatable, Hashable {
          */notes: [String], 
         /**
          * What the owner can do to it now.
-         */actions: [JobAction], createdAt: Int64, updatedAt: Int64, finishedAt: Int64?) {
+         */actions: [JobAction], 
+        /**
+         * The three times are seconds since the epoch.
+         */createdAt: Int64, updatedAt: Int64, finishedAt: Int64?) {
         self.id = id
         self.model = model
         self.repo = repo
@@ -3261,6 +3216,10 @@ public func FfiConverterTypeLocation_lower(_ value: Location) -> RustBuffer {
 }
 
 
+/**
+ * Where the files are: the store, the archive disk and each app's folder,
+ * with the room on the volume they share.
+ */
 public struct Locations: Equatable, Hashable {
     /**
      * The volume the store and the app folders are on.
@@ -4369,6 +4328,9 @@ public func FfiConverterTypeRestorePlan_lower(_ value: RestorePlan) -> RustBuffe
 }
 
 
+/**
+ * A commit of a model that dedupd has kept the provider's listing for.
+ */
 public struct Revision: Equatable, Hashable {
     public var commit: String
     public var fetchedAt: Int64
@@ -4746,6 +4708,9 @@ public func FfiConverterTypeSearchHit_lower(_ value: SearchHit) -> RustBuffer {
 }
 
 
+/**
+ * One page of a search on the provider.
+ */
 public struct SearchPage: Equatable, Hashable {
     public var models: [SearchHit]
     /**

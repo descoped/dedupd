@@ -18,6 +18,7 @@ pub struct SearchHit {
     pub downloading: bool,
 }
 
+/// One page of a search on the provider.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct SearchPage {
@@ -40,15 +41,10 @@ pub enum SearchSort {
     Trending,
 }
 
-impl SearchSort {
-    pub const ALL: [Self; 5] = [
-        Self::Trending,
-        Self::Downloads,
-        Self::Likes,
-        Self::Modified,
-        Self::Created,
-    ];
+// In the order the app's menu lists them.
+crate::all_variants!(SearchSort: Trending, Downloads, Likes, Modified, Created);
 
+impl SearchSort {
     /// The word for this order in a `hub/search` request.
     pub fn word(self) -> &'static str {
         match self {
@@ -113,4 +109,17 @@ pub struct HubModel {
     pub downloading: bool,
     /// The provider's own description, as it sent it.
     pub info_json: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_order_has_its_own_word() {
+        for sort in SearchSort::ALL {
+            assert_eq!(SearchSort::from_word(sort.word()), Some(sort));
+        }
+        assert_eq!(SearchSort::from_word("trendingScore"), None);
+    }
 }

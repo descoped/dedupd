@@ -32,6 +32,10 @@ struct AppSettingsTests {
         let again = AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642")
         #expect(again.address == "127.0.0.1:9000")
 
+        // A saved address that is not one is not used.
+        again.customAddress = "http://127.0.0.1:9000"
+        #expect(again.address == "127.0.0.1:8642")
+
         again.customAddress = "   "
         #expect(again.address == "127.0.0.1:8642")
         #expect(AppSettings(defaults: defaults, defaultAddress: "127.0.0.1:8642").customAddress.isEmpty)

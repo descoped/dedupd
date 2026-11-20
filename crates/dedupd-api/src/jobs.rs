@@ -26,7 +26,22 @@ pub enum JobState {
     Cancelled,
 }
 
+crate::all_variants!(
+    JobState: Queued,
+    Resolving,
+    Downloading,
+    Verifying,
+    Placing,
+    WaitingServer,
+    WaitingNetwork,
+    Paused,
+    NeedsAttention,
+    Done,
+    Cancelled,
+);
+
 impl JobState {
+    /// The state's word in the control API and in the database.
     pub const fn as_str(self) -> &'static str {
         match self {
             JobState::Queued => "queued",
@@ -85,6 +100,7 @@ impl JobState {
         }
     }
 
+    /// Whether `action` is one of [`Self::actions`].
     pub fn allows(self, action: JobAction) -> bool {
         self.actions().contains(&action)
     }
@@ -129,16 +145,9 @@ pub enum JobAction {
     Remove,
 }
 
-impl JobAction {
-    pub const ALL: [JobAction; 6] = [
-        JobAction::Pause,
-        JobAction::Resume,
-        JobAction::Retry,
-        JobAction::Start,
-        JobAction::Cancel,
-        JobAction::Remove,
-    ];
+crate::all_variants!(JobAction: Pause, Resume, Retry, Start, Cancel, Remove);
 
+impl JobAction {
     /// The word in the control API's path: `downloads/{id}/{action}`.
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -151,6 +160,7 @@ impl JobAction {
         }
     }
 
+    /// The action a path's word names.
     pub fn parse(word: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|a| a.as_str() == word)
     }
@@ -264,6 +274,7 @@ pub struct Job {
     pub notes: Vec<String>,
     /// What the owner can do to it now.
     pub actions: Vec<JobAction>,
+    /// The three times are seconds since the epoch.
     pub created_at: i64,
     pub updated_at: i64,
     pub finished_at: Option<i64>,
@@ -402,6 +413,15 @@ impl PullResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_word_is_spelled_one_way() {
+        crate::same_words(&JobState::ALL, JobState::as_str);
+        crate::same_words(&JobAction::ALL, JobAction::as_str);
+        for action in JobAction::ALL {
+            assert_eq!(JobAction::parse(action.as_str()), Some(action));
+        }
+    }
 
     #[test]
     fn every_action_reads_back_from_its_word() {

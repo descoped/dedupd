@@ -59,10 +59,12 @@ final class AppSettings {
         }
     }
 
-    /// The address every call to the daemon uses: `host:port`.
+    /// The address every call to the daemon uses: `host:port`. A saved
+    /// address that is not one (kept by a build that did not check) is not
+    /// used; Settings says so.
     var address: String {
         let trimmed = customAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? defaultAddress : trimmed
+        return trimmed.isEmpty || !addressIsValid(address: trimmed) ? defaultAddress : trimmed
     }
 
     /// True the first time the app runs with these preferences.
