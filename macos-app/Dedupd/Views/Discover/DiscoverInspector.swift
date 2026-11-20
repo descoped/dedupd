@@ -235,21 +235,18 @@ private struct HubVariantRow: View {
         settings.apps(for: format, usable: variant.usableApps, known: daemon.apps)
     }
 
-    private var missing: [ModelApp] {
-        chosen.filter { !variant.isPlaced(in: $0) }
-    }
+    /// The apps the button sends the variant to.
+    private var targets: [ModelApp] { variant.targets(of: chosen) }
 
     /// The download of this variant that is in the queue, if any.
-    private var job: Job? {
-        daemon.jobs.first { $0.model == variant.spec && ($0.state.isActive || $0.state == .paused) }
-    }
+    private var job: Job? { daemon.jobs.queued(for: variant) }
 
     var body: some View {
         HStack(spacing: 8) {
             VStack(alignment: .leading, spacing: 1) {
                 Text(variant.name)
                     .font(.callout.weight(.medium))
-                Text(detail)
+                Text(variant.hubDetail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -258,19 +255,6 @@ private struct HubVariantRow: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("variant-\(variant.name)")
-    }
-
-    private var detail: String {
-        var parts = [ByteFormat.string(variant.bytes)]
-        if variant.files > 1 {
-            parts.append(ByteFormat.files(variant.files))
-        }
-        if !variant.placedIn.isEmpty {
-            parts.append("in " + ListFormatter.localizedString(byJoining: variant.placedIn.map(\.shortTitle)))
-        } else if variant.canActivate {
-            parts.append("in the store")
-        }
-        return parts.joined(separator: " · ")
     }
 
     @ViewBuilder private var action: some View {
@@ -286,7 +270,7 @@ private struct HubVariantRow: View {
                     .monospacedDigit()
                     .foregroundStyle(.secondary)
             }
-        } else if variant.canActivate, missing.isEmpty {
+        } else if variant.canActivate, targets.isEmpty {
             Image(systemName: "checkmark.circle.fill")
                 .foregroundStyle(.green)
                 .help(chosen.isEmpty
@@ -295,29 +279,14 @@ private struct HubVariantRow: View {
                 .accessibilityLabel("On this Mac")
         } else {
             Button(variant.canActivate ? "Activate" : "Download") {
-                Task { await discover.download(variant, into: variant.canActivate ? missing : chosen) }
+                Task { await discover.download(variant, into: targets) }
             }
             .controlSize(.small)
             // Until the daemon has said which apps take the model, the apps
             // it would go to are not known; it would go to none.
             .disabled(daemon.apps.isEmpty)
-            .help(daemon.apps.isEmpty ? "Waiting for dedupd to say which apps take this model" : help)
+            .help(daemon.apps.isEmpty ? "Waiting for dedupd to say which apps take this model" : variant.fetchHelp(into: targets))
             .accessibilityIdentifier("download-\(variant.name)")
         }
-    }
-
-    private var help: String {
-        let apps = variant.canActivate ? missing : chosen
-        let place = apps.isEmpty
-            ? "keeps it in the store"
-            : "activates it in \(ListFormatter.localizedString(byJoining: apps.map(\.shortTitle)))"
-        if variant.isStored {
-            return "Already stored: \(place) as a clone, without downloading"
-        }
-        if variant.weightsStored {
-            let lacking = ByteFormat.string(variant.missingBytes)
-            return "Already stored: \(place) as a clone, after fetching the \(lacking) of small files it lacks"
-        }
-        return "Downloads \(ByteFormat.string(variant.missingBytes)) and \(place)"
     }
 }

@@ -1,0 +1,12 @@
+{
+  "label": "io.descoped.dedupd.daemon",
+  "plist": "/Users/example/Library/LaunchAgents/io.descoped.dedupd.daemon.plist",
+  "installed": true,
+  "running": true,
+  "home": "/Users/example/.dedupd",
+  "program": "/Users/example/.dedupd/bin/dedupd",
+  "installed_version": "0.2.0",
+  "same_build": false,
+  "version": "0.2.0",
+  "log": "/Users/example/.dedupd/daemon.log"
+}

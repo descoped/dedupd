@@ -61,6 +61,10 @@ final class DaemonStore {
     @ObservationIgnored private var library: UInt64?
     /// The daemon has answered which apps there are, since following began.
     @ObservationIgnored private var appsRead = false
+    /// Counts the daemons followed. What was asked of an earlier one is
+    /// dropped when it answers after `start` moved on.
+    @ObservationIgnored private var generation = 0
+    @ObservationIgnored private var leaving: [() -> Void] = []
 
     init(client: any DaemonClient, settings: AppSettings) {
         self.client = client
@@ -68,6 +72,13 @@ final class DaemonStore {
     }
 
     var address: String { settings.address }
+
+    /// Have `work` run when the app turns to a daemon at another address.
+    /// The screen stores drop what they hold of the old one there, so no
+    /// list of one daemon is shown, or acted on, as another's.
+    func whenAddressChanges(_ work: @escaping () -> Void) {
+        leaving.append(work)
+    }
 
     // MARK: - Derived state
 
@@ -172,7 +183,9 @@ final class DaemonStore {
         guard follower == nil || following != address else {
             return
         }
+        let moved = follower != nil
         follower?.cancel()
+        generation += 1
         following = address
         connection = .connecting
         status = nil
@@ -180,6 +193,16 @@ final class DaemonStore {
         appsRead = false
         downloads = nil
         library = nil
+        moving = nil
+        checking = false
+        scanActivity = .idle
+        if moved {
+            for work in leaving {
+                work()
+            }
+            // The screens read again, from the new address.
+            revision += 1
+        }
         follower = Task { [weak self, client] in
             for await signal in client.events(at: address) {
                 guard let self, !Task.isCancelled else {
@@ -198,6 +221,9 @@ final class DaemonStore {
     /// Take in what the connection reports. Internal so tests can drive the
     /// store without a stream.
     func receive(_ signal: DaemonSignal) async {
+        // `start` may turn to another daemon while this waits for an
+        // answer; what is left of the signal is then not written.
+        let mine = generation
         switch signal {
         case .connected:
             await connected()
@@ -216,6 +242,9 @@ final class DaemonStore {
         case let .event(event):
             if connection != .running {
                 await connected()
+                guard mine == generation else {
+                    return
+                }
             }
             let had = downloads?.jobs
             let before = jobs
@@ -239,9 +268,11 @@ final class DaemonStore {
             if !appsRead {
                 await refreshApps()
             }
-            if !first, changed || finished {
+            if !first, changed || finished, mine == generation {
                 await refreshStatus()
-                revision += 1
+                if mine == generation {
+                    revision += 1
+                }
             }
         }
     }
@@ -250,10 +281,13 @@ final class DaemonStore {
         guard connection != .running else {
             return
         }
+        let mine = generation
         connection = .running
         await refreshStatus()
         await refreshApps()
-        revision += 1
+        if mine == generation {
+            revision += 1
+        }
     }
 
     /// Read the daemon's status now.
@@ -309,11 +343,18 @@ final class DaemonStore {
             return
         }
         scanActivity = .running
+        let mine = generation
+        let outcome: ScanActivity
         do {
-            scanActivity = .finished(try await client.scan(at: settings.address))
+            outcome = .finished(try await client.scan(at: settings.address))
         } catch {
-            scanActivity = .failed(message: describe(error))
+            outcome = .failed(message: describe(error))
         }
+        // Another daemon is followed now; this scan was the old one's.
+        guard mine == generation else {
+            return
+        }
+        scanActivity = outcome
         await refreshStatus()
         revision += 1
     }
@@ -322,6 +363,14 @@ final class DaemonStore {
     func dismissScan() {
         if !isScanning {
             scanActivity = .idle
+        }
+    }
+
+    /// Hold the downloads to so many bytes a second; 0 for no limit. The
+    /// governor in the next event carries the new value.
+    func setSpeedLimit(_ limit: UInt64) async {
+        await attempt { client, address in
+            try await client.updateSettings([SettingChange(key: .speedLimit, value: .number(value: limit))], at: address)
         }
     }
 

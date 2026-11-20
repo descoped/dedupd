@@ -21,24 +21,30 @@ final class DedupdUITests: XCTestCase {
     // MARK: - Helpers
 
     /// Start the app on a canned daemon and return its main window.
-    private func launch(_ fixture: String, pane: String? = nil) -> XCUIElement {
-        launch(arguments: ["-uiTestFixture", fixture] + (pane.map { ["-pane", $0] } ?? []))
+    private func launch(
+        _ fixture: String, pane: String? = nil, file: StaticString = #filePath, line: UInt = #line
+    ) -> XCUIElement {
+        launch(arguments: ["-uiTestFixture", fixture] + (pane.map { ["-pane", $0] } ?? []), file: file, line: line)
     }
 
-    private func launch(arguments: [String]) -> XCUIElement {
+    /// A failure is reported at the test's own line, not in here.
+    private func launch(arguments: [String], file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         app = XCUIApplication()
         app.launchArguments = arguments
         app.launch()
         app.activate()
         let window = app.windows.firstMatch
-        XCTAssertTrue(window.waitForExistence(timeout: 10), "the window opens")
+        XCTAssertTrue(window.waitForExistence(timeout: 10), "the window opens", file: file, line: line)
         return window
     }
 
     /// The element with this identifier, whatever kind it is.
-    private func element(_ identifier: String, in window: XCUIElement, timeout: TimeInterval = 5) -> XCUIElement {
+    private func element(
+        _ identifier: String, in window: XCUIElement, timeout: TimeInterval = 5, file: StaticString = #filePath,
+        line: UInt = #line
+    ) -> XCUIElement {
         let element = window.descendants(matching: .any)[identifier].firstMatch
-        XCTAssertTrue(element.waitForExistence(timeout: timeout), "\(identifier) is on screen")
+        XCTAssertTrue(element.waitForExistence(timeout: timeout), "\(identifier) is on screen", file: file, line: line)
         return element
     }
 
@@ -74,7 +80,7 @@ final class DedupdUITests: XCTestCase {
         let window = launch("running")
         for (pane, title) in [
             ("downloads", "Downloads"), ("storage", "Storage"), ("daemon", "Daemon"),
-            ("discover", "Discover"), ("library", "Library"),
+            ("discover", "Discover"), ("favorites", "Favorites"), ("activity", "Activity"), ("library", "Library"),
         ] {
             go(to: pane, in: window)
             XCTAssertTrue(window.title.hasPrefix(title), "the \(pane) row opens its screen, not \(window.title)")
@@ -143,15 +149,16 @@ final class DedupdUITests: XCTestCase {
         let ollama = element("target-gguf-ollama", in: window)
         XCTAssertEqual(ollama.value as? Int, 1, "GGUF goes into Ollama unless the owner chose otherwise")
         XCTAssertEqual(element("target-gguf-hf", in: window).value as? Int, 0)
-        screenshot(window, "05-discover")
+        screenshot(window, "07-discover")
 
         element("download-Q4_K_M", in: window).click()
-        XCTAssertFalse(app.sheets.firstMatch.exists, "the daemon took the download")
         go(to: "downloads", in: window)
-        // The canned daemon numbers what the app queues from 20.
+        // The canned daemon numbers what the app queues from 20. The job in
+        // the queue is what shows that the daemon took the download.
         let queued = element("download-20", in: window).label
         XCTAssertTrue(queued.contains("unsloth/Qwen3.8-9B-Instruct-GGUF:Q4_K_M"), "the download is in the queue: \(queued)")
-        screenshot(window, "06-download-queued")
+        XCTAssertFalse(app.sheets.firstMatch.exists, "no failure was shown for it")
+        screenshot(window, "08-download-queued")
     }
 
     func testDownloadsShowProgressAndCanBePaused() {
@@ -163,15 +170,33 @@ final class DedupdUITests: XCTestCase {
         XCTAssertTrue(element("governor", in: window).exists)
         running.click()
         XCTAssertTrue(text("Found 4 files at revision", in: window).waitForExistence(timeout: 5), "the download's history")
-        screenshot(window, "07-downloads")
+        screenshot(window, "09-downloads")
 
         element("pause-7", in: window).click()
         XCTAssertTrue(element("resume-7", in: window).exists, "a paused download can be resumed")
         XCTAssertTrue(element("download-7", in: window).label.contains("Paused"))
 
         element("clear-finished", in: window).click()
-        XCTAssertFalse(window.descendants(matching: .any)["download-4"].firstMatch.waitForExistence(timeout: 1), "the finished one is gone")
-        screenshot(window, "08-downloads-paused")
+        XCTAssertTrue(
+            window.descendants(matching: .any)["download-4"].firstMatch.waitForNonExistence(timeout: 10),
+            "the finished one is gone"
+        )
+        screenshot(window, "10-downloads-paused")
+    }
+
+    func testFavoritesListTheStarredModels() {
+        let window = launch("running", pane: "favorites")
+        XCTAssertTrue(window.title.hasPrefix("Favorites"))
+        XCTAssertTrue(element("favorites-table", in: window).exists)
+        XCTAssertTrue(element("favorites-sync", in: window).exists, "the likes can be read again")
+        screenshot(window, "18-favorites")
+    }
+
+    func testActivityShowsTheHistory() {
+        let window = launch("running", pane: "activity")
+        XCTAssertTrue(window.title.hasPrefix("Activity"))
+        XCTAssertTrue(element("activity-list", in: window).exists)
+        screenshot(window, "19-activity")
     }
 
     func testStorageShowsThePlacesAndAsksBeforeCleaningUp() {
@@ -181,11 +206,11 @@ final class DedupdUITests: XCTestCase {
         XCTAssertTrue(element("location-archive", in: window).exists)
         XCTAssertTrue(element("sharing-saves", in: window).exists)
         XCTAssertTrue(element("check-result", in: window).exists)
-        screenshot(window, "09-storage")
+        screenshot(window, "11-storage")
 
         element("review-clean", in: window).click()
         XCTAssertTrue(element("confirm-clean", in: window).exists, "the files are listed before anything is removed")
-        screenshot(window, "10-clean-up")
+        screenshot(window, "12-clean-up")
 
         element("confirm-clean", in: window).click()
         XCTAssertTrue(text("The last clean-up freed 4.92 GB.", in: window).waitForExistence(timeout: 5))
@@ -199,7 +224,7 @@ final class DedupdUITests: XCTestCase {
         XCTAssertTrue(element("uninstall-agent", in: window).exists)
         XCTAssertTrue(element("apply-settings", in: window).exists)
         XCTAssertFalse(element("apply-settings", in: window).isEnabled, "nothing to apply until something is changed")
-        screenshot(window, "11-daemon")
+        screenshot(window, "13-daemon")
     }
 
     func testWithoutADaemonTheAppOffersToInstallIt() {
@@ -207,11 +232,11 @@ final class DedupdUITests: XCTestCase {
 
         XCTAssertTrue(text("The daemon is not running", in: window).waitForExistence(timeout: 5))
         XCTAssertEqual(element("sidebar-status", in: window).label, "The daemon is not running")
-        screenshot(window, "12-not-running")
+        screenshot(window, "14-not-running")
 
         element("go-to-daemon", in: window).click()
         XCTAssertTrue(element("install-agent", in: window).exists)
-        screenshot(window, "13-install")
+        screenshot(window, "15-install")
     }
 
     func testMenuBarPanelShowsTheStateAtAGlance() {
@@ -223,7 +248,7 @@ final class DedupdUITests: XCTestCase {
         XCTAssertEqual(element("tile-archive", in: window).label, "Archive, Attached, dedupd")
         XCTAssertTrue(labelled("Downloading, 41.94 MB of 106.07 MB", in: window).exists, "the download in flight")
         XCTAssertTrue(element("open-main", in: window).isEnabled)
-        screenshot(window, "14-menu-panel")
+        screenshot(window, "16-menu-panel")
 
         element("scan-button", in: window).click()
         XCTAssertTrue(element("scan-result", in: window, timeout: 5).exists)
@@ -238,7 +263,7 @@ final class DedupdUITests: XCTestCase {
         field.typeText("https://huggingface.co@evil.example/org/repo\n")
         XCTAssertTrue(text("That is not a model's name or an address on huggingface.co", in: window).waitForExistence(timeout: 5))
         XCTAssertEqual(app.windows.count, 1, "no other window opened")
-        screenshot(window, "15-menu-panel-refused")
+        screenshot(window, "17-menu-panel-refused")
 
         // The model's own address opens Discover on that model.
         field.click()
@@ -265,7 +290,7 @@ final class DedupdUITests: XCTestCase {
         try XCTSkipIf(address.isEmpty, "set DEDUPD_LIVE_ADDRESS to run against a daemon")
         let model = environment["DEDUPD_LIVE_MODEL"] ?? "bartowski/SmolLM2-135M-Instruct-GGUF:Q4_K_M"
         let parts = model.split(separator: ":").map(String.init)
-        let repository = parts[0]
+        let repository = try XCTUnwrap(parts.first, "DEDUPD_LIVE_MODEL is empty")
         let variant = parts.count > 1 ? parts[1] : "all files"
 
         let window = launch(arguments: ["-mainWindow", "YES", "-daemonAddress", address, "-pane", "discover"])

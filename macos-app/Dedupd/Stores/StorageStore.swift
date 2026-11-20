@@ -38,6 +38,19 @@ final class StorageStore {
 
     init(daemon: DaemonStore) {
         self.daemon = daemon
+        daemon.whenAddressChanges { [weak self] in self?.forgetDaemon() }
+    }
+
+    /// The app turned to another daemon: the places and the clean-up list
+    /// were the old one's, and nothing of them may be acted on.
+    private func forgetDaemon() {
+        generation += 1
+        planGeneration += 1
+        locations = .idle
+        plan = .idle
+        freed = nil
+        check = nil
+        confirming = false
     }
 
     func reload() async {
@@ -69,12 +82,13 @@ final class StorageStore {
         planGeneration += 1
         let mine = planGeneration
         let found: Loaded<GcPlan>
+        let all = generation
         do {
             found = .ready(try await daemon.client.gcPlan(offload: includeOffload, at: daemon.address))
         } catch {
             found = .failed(describe(error))
         }
-        guard mine == planGeneration else {
+        guard mine == planGeneration, all == generation else {
             return
         }
         plan = found
@@ -94,12 +108,16 @@ final class StorageStore {
             return
         }
         isCleaning = true
+        let mine = generation
         let answer = await daemon.attempt { client, address in
             try await client.gcApply(
                 orphans: plan.orphans.map(\.sha256), offload: plan.offload.map(\.sha256), at: address
             )
         }
         isCleaning = false
+        guard mine == generation else {
+            return
+        }
         if let answer {
             freed = answer.freed
         }
@@ -113,132 +131,10 @@ final class StorageStore {
     }
 
     func refreshCheck() async {
-        if let answer = try? await daemon.client.storeCheck(at: daemon.address) {
+        let mine = generation
+        // A read that failed leaves what was known.
+        if let answer = try? await daemon.client.storeCheck(at: daemon.address), mine == generation {
             check = answer
         }
-    }
-}
-
-/// The daemon as a service: its launchd agent, its settings and its log.
-@MainActor
-@Observable
-final class ServiceStore {
-    private(set) var agent: Loaded<AgentState> = .idle
-    /// An install, uninstall, start or stop is running.
-    private(set) var isWorking = false
-    /// What the last such command said.
-    private(set) var lastOutput: String?
-    private(set) var settings: Loaded<DaemonSettings> = .idle
-    private(set) var log: LogTail?
-    private(set) var startsAtLogin = false
-
-    @ObservationIgnored private let daemon: DaemonStore
-    @ObservationIgnored private let control: any AgentControl
-    @ObservationIgnored private var generation = 0
-
-    init(daemon: DaemonStore, control: any AgentControl) {
-        self.daemon = daemon
-        self.control = control
-    }
-
-    func reload() async {
-        generation += 1
-        let mine = generation
-        startsAtLogin = LoginItem.isEnabled
-        await loadAgent()
-        guard mine == generation else {
-            return
-        }
-        guard daemon.isRunning else {
-            settings = .idle
-            log = nil
-            return
-        }
-        let found: Loaded<DaemonSettings>
-        do {
-            found = .ready(try await daemon.client.settings(at: daemon.address))
-        } catch {
-            found = .failed(describe(error))
-        }
-        // An answer to an older reload does not replace a newer one.
-        guard mine == generation else {
-            return
-        }
-        settings = found
-        await loadLog()
-    }
-
-    func loadAgent() async {
-        startsAtLogin = LoginItem.isEnabled
-        do {
-            agent = .ready(try await control.state())
-        } catch {
-            agent = .failed(describe(error))
-        }
-    }
-
-    func loadLog() async {
-        // A read that failed leaves the lines already shown.
-        if let answer = try? await daemon.client.logTail(lines: 200, at: daemon.address) {
-            log = answer
-        }
-    }
-
-    enum Command {
-        case install(setEnvironment: Bool)
-        case uninstall
-        case start
-        case stop
-    }
-
-    /// Run one of the agent commands and show what it said.
-    func run(_ command: Command) async {
-        guard !isWorking else {
-            return
-        }
-        isWorking = true
-        defer { isWorking = false }
-        do {
-            switch command {
-            case let .install(setEnvironment):
-                lastOutput = try await control.install(setEnvironment: setEnvironment)
-            case .uninstall:
-                lastOutput = try await control.uninstall()
-            case .start:
-                lastOutput = try await control.start()
-            case .stop:
-                lastOutput = try await control.stop()
-            }
-        } catch {
-            daemon.problem = describe(error)
-        }
-        await loadAgent()
-    }
-
-    /// Change settings in the daemon's config file. The daemon says whether
-    /// it must start again for them to take effect.
-    func update(_ changes: [SettingChange]) async {
-        guard !changes.isEmpty else {
-            return
-        }
-        let answer = await daemon.attempt { client, address in
-            try await client.updateSettings(changes, at: address)
-        }
-        if let answer {
-            settings = .ready(answer)
-        }
-    }
-
-    func restart() async {
-        await daemon.restart()
-    }
-
-    func setStartsAtLogin(_ enabled: Bool) {
-        do {
-            try LoginItem.set(enabled)
-        } catch {
-            daemon.problem = "macOS did not change the login item: \(error.localizedDescription)"
-        }
-        startsAtLogin = LoginItem.isEnabled
     }
 }

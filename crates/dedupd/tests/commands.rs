@@ -169,6 +169,37 @@ fn an_address_off_this_mac_and_a_label_that_is_none_are_refused() {
     }
 }
 
+/// The app reads `agent --json` with a decoder of its own. An example of
+/// what the command prints is kept beside the control API's recorded
+/// answers (`just fixtures` writes it), and the app's tests decode it, so
+/// a field that changes here fails there.
+#[test]
+fn the_recorded_example_of_the_agents_state_is_what_the_type_writes() {
+    let example = dedupd_api::daemon::AgentState {
+        label: "io.descoped.dedupd.daemon".into(),
+        plist: "/Users/example/Library/LaunchAgents/io.descoped.dedupd.daemon.plist".into(),
+        installed: true,
+        running: true,
+        home: "/Users/example/.dedupd".into(),
+        program: "/Users/example/.dedupd/bin/dedupd".into(),
+        installed_version: Some("0.2.0".into()),
+        same_build: false,
+        version: "0.2.0".into(),
+        log: "/Users/example/.dedupd/daemon.log".into(),
+    };
+    let written = serde_json::to_string_pretty(&example).unwrap() + "\n";
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../dedupd-server/tests/fixtures/control/agent.json");
+    if std::env::var_os("DEDUPD_UPDATE_FIXTURES").is_some() {
+        std::fs::write(&path, &written).unwrap();
+    }
+    assert_eq!(
+        std::fs::read_to_string(&path).unwrap_or_default(),
+        written,
+        "run `just fixtures`"
+    );
+}
+
 #[test]
 fn the_agents_state_is_printed_as_the_type_the_app_reads() {
     let s = Scratch::new();

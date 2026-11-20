@@ -261,6 +261,33 @@ impl Db {
             .collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
+    /// What the kept revisions call each file they list: the file's sha256,
+    /// or its git id for a small file, to `org/repo: path`. For telling a
+    /// person what a stored file is.
+    pub fn listed_names(&self) -> Result<BTreeMap<String, String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT COALESCE(f.lfs_sha256, f.git_oid), r.name, f.path
+             FROM revision_files f
+             JOIN revisions v ON v.id = f.revision_id
+             JOIN repos r ON r.id = v.repo_id
+             ORDER BY v.fetched_at",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut names = BTreeMap::new();
+        for row in rows {
+            let (id, repo, path) = row?;
+            // The newest revision's name for it wins.
+            names.insert(id, format!("{repo}: {path}"));
+        }
+        Ok(names)
+    }
+
     /// How many repositories the database knows.
     pub fn repo_count(&self) -> Result<u64> {
         let n: i64 = self

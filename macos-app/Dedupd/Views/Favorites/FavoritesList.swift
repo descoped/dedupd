@@ -1,10 +1,6 @@
 import DedupdClient
 import SwiftUI
 
-extension Favorite: @retroactive Identifiable {
-    public var id: String { repo }
-}
-
 /// The favorite models, in place of the search results: starred in dedupd,
 /// or liked on Hugging Face and brought in by the daemon.
 struct FavoritesList: View {
@@ -51,12 +47,14 @@ struct FavoritesList: View {
                 .contextMenu(forSelectionType: String.self) { ids in
                     if let repo = ids.first {
                         Button("Remove from Favorites") {
-                            Task { await favorites.toggle(repo) }
+                            Task { await favorites.set(repo, favorite: false) }
                         }
                         Button("Copy Name") {
                             Pasteboard.copy(repo)
                         }
-                        Link("Show on Hugging Face", destination: HuggingFace.page(repo))
+                        if let page = HuggingFace.page(repo) {
+                            Link("Show on Hugging Face", destination: page)
+                        }
                     }
                 }
                 .accessibilityIdentifier("favorites-table")

@@ -1364,8 +1364,9 @@ public func activity(address: String)throws  -> [ActivityEntry]  {
 })
 }
 /**
- * Whether `address` is where a daemon can be: `host:port`, with no
- * scheme, no path and no name before the host. The one check for an
+ * Whether `address` is where a daemon can be: `host:port` on this Mac
+ * itself (`127.0.0.1`, `[::1]` or `localhost`), with no scheme, no path
+ * and no name before the host. The daemon listens nowhere else. The one check for an
  * address a person typed; every call makes it before it asks.
  */
 public func addressIsValid(address: String) -> Bool  {
@@ -1852,7 +1853,7 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_func_activity() != 9968) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_func_address_is_valid() != 42907) {
+    if (uniffi_dedupd_client_checksum_func_address_is_valid() != 56474) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_apps() != 4438) {

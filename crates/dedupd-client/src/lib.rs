@@ -57,7 +57,9 @@ pub enum ClientError {
     #[error("the daemon did not answer in time")]
     TimedOut,
     /// The address is not `host:port`, so nothing was asked.
-    #[error("{address} is not an address of the form host:port, such as 127.0.0.1:8642")]
+    #[error(
+        "{address} is not an address of this Mac of the form host:port, such as 127.0.0.1:8642"
+    )]
     BadAddress { address: String },
 }
 
@@ -68,8 +70,9 @@ pub fn error_message(error: ClientError) -> String {
     error.to_string()
 }
 
-/// Whether `address` is where a daemon can be: `host:port`, with no
-/// scheme, no path and no name before the host. The one check for an
+/// Whether `address` is where a daemon can be: `host:port` on this Mac
+/// itself (`127.0.0.1`, `[::1]` or `localhost`), with no scheme, no path
+/// and no name before the host. The daemon listens nowhere else. The one check for an
 /// address a person typed; every call makes it before it asks.
 #[uniffi::export]
 pub fn address_is_valid(address: String) -> bool {
@@ -77,35 +80,16 @@ pub fn address_is_valid(address: String) -> bool {
 }
 
 fn checked(address: &str) -> Result<&str, ClientError> {
-    let bad = || ClientError::BadAddress {
-        address: address.to_string(),
-    };
-    let (host, port) = address.rsplit_once(':').ok_or_else(bad)?;
-    let name = |host: &str| {
-        !host.is_empty()
-            && host.len() <= 253
-            && host
-                .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'-')
-    };
-    let v6 = |host: &str| {
-        host.strip_prefix('[')
-            .and_then(|h| h.strip_suffix(']'))
-            .is_some_and(|h| h.parse::<std::net::Ipv6Addr>().is_ok())
-    };
-    let port_ok = !port.is_empty()
-        && port.bytes().all(|b| b.is_ascii_digit())
-        && port.parse::<u16>().is_ok_and(|p| p != 0);
-    if (name(host) || v6(host)) && port_ok {
+    // Port 0 is one a daemon can ask to listen on, never one to ask at.
+    if dedupd_api::url::is_loopback(address) && !address.ends_with(":0") {
         Ok(address)
     } else {
-        Err(bad())
+        Err(ClientError::BadAddress {
+            address: address.to_string(),
+        })
     }
 }
 
-/// What a failed call means: a time limit is one sentence wherever it ran
-/// out, nothing listening is "not running", and an answer that is not
-/// HTTP, or too long, is an answer this client does not understand.
 fn failed(address: &str, e: ureq::Error) -> ClientError {
     match e {
         ureq::Error::Timeout(_) => ClientError::TimedOut,

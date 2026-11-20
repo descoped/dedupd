@@ -53,11 +53,11 @@ extension LibraryModel: @retroactive Identifiable {
 
     /// The part after the organisation: what people call the model.
     var name: String {
-        repo.split(separator: "/").last.map(String.init) ?? repo
+        RepoName.name(repo)
     }
 
     var organisation: String {
-        meta.author ?? repo.split(separator: "/").first.map(String.init) ?? ""
+        meta.author ?? RepoName.organisation(repo)
     }
 
     var shortCommit: String? {
@@ -103,11 +103,11 @@ extension LibraryModel: @retroactive Identifiable {
 
 extension SearchHit: @retroactive Identifiable {
     var name: String {
-        id.split(separator: "/").last.map(String.init) ?? id
+        RepoName.name(id)
     }
 
     var organisation: String {
-        meta.author ?? id.split(separator: "/").first.map(String.init) ?? ""
+        meta.author ?? RepoName.organisation(id)
     }
 
     var modified: Date {

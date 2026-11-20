@@ -21,6 +21,7 @@ final class ActivityStore {
 
     init(daemon: DaemonStore) {
         self.daemon = daemon
+        daemon.whenAddressChanges { [weak self] in self?.entries = [] }
     }
 
     /// Failures that came after the owner last looked.

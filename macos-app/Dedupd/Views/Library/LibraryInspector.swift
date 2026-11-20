@@ -1,43 +1,6 @@
 import DedupdClient
 import SwiftUI
 
-/// The tabs an inspector divides a model into.
-enum InspectorTab: String, CaseIterable, Identifiable {
-    case overview = "Overview"
-    case files = "Files"
-    case readme = "README"
-    case json = "JSON"
-
-    var id: String { rawValue }
-}
-
-/// The name, maker and formats at the top of an inspector.
-struct ModelHeader: View {
-    let repo: String
-    let meta: ModelMeta
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(repo.split(separator: "/").last.map(String.init) ?? repo)
-                .font(.title3.weight(.semibold))
-                .textSelection(.enabled)
-            HStack(spacing: 6) {
-                Text(meta.author ?? repo.split(separator: "/").first.map(String.init) ?? "")
-                    .foregroundStyle(.secondary)
-                FormatBadges(formats: meta.formats)
-                Spacer()
-                FavoriteButton(repo: repo)
-                Link(destination: HuggingFace.page(repo)) {
-                    Label("Hugging Face", systemImage: "arrow.up.right.square")
-                        .font(.callout)
-                }
-                .help("Open the model's page on huggingface.co")
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
 /// Everything about the model selected in the library.
 struct LibraryInspector: View {
     @Environment(LibraryStore.self) private var library
@@ -210,7 +173,7 @@ private struct LibraryOverview: View {
                 ? "Drop the model from the records, so its stored files can be cleaned up"
                 : "Deactivate the model in every app first")
         }
-        .confirmationDialog("Forget \(model.repo)?", isPresented: $confirmsForget) {
+        .confirmationDialog(Text(verbatim: "Forget \(model.repo)?"), isPresented: $confirmsForget) {
             Button("Forget", role: .destructive) {
                 Task { await library.forget() }
             }
@@ -235,21 +198,11 @@ private struct LibraryOverview: View {
             }
         }
         if let check = library.upstream {
-            Label(Self.words(for: check), systemImage: check.changed ? "arrow.down.circle" : "checkmark.circle")
+            Label(check.words, systemImage: check.changed ? "arrow.down.circle" : "checkmark.circle")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .accessibilityIdentifier("upstream-check")
         }
-    }
-
-    private static func words(for check: UpstreamCheck) -> String {
-        if check.upstream == .gone {
-            return "Hugging Face no longer has this model. Your copy is what is left of it."
-        }
-        if check.changed, let latest = check.latest {
-            return "Hugging Face has a newer revision, \(latest.prefix(12)). Download it from Discover."
-        }
-        return "This is the latest revision."
     }
 }
 
@@ -266,10 +219,7 @@ private struct AppRow: View {
 
     /// A download or activation of this model for this app is under way.
     private var isActivating: Bool {
-        guard let repo = library.selected?.repo else {
-            return false
-        }
-        return daemon.jobs.contains { $0.state.isActive && $0.repo == repo && $0.apps.contains(app) }
+        library.selected.map { daemon.jobs.isActivating($0.repo, in: app) } ?? false
     }
 
     /// The model is being archived or restored; the daemon takes no other
@@ -278,9 +228,7 @@ private struct AppRow: View {
 
     /// The variants this app can use and does not have yet, whose weights
     /// are stored.
-    private var placeable: [Variant] {
-        variants.filter { $0.usableApps.contains(app) && !$0.isPlaced(in: app) && $0.canActivate }
-    }
+    private var placeable: [Variant] { variants.activatable(in: app) }
 
     var body: some View {
         HStack(spacing: 8) {
@@ -343,15 +291,7 @@ private struct AppRow: View {
         .accessibilityElement(children: .contain)
     }
 
-    private var detail: String {
-        guard let presence else {
-            return variants.note(for: app)
-        }
-        let shared = presence.sharedBytes >= presence.bytes
-            ? "shared with the store"
-            : "\(ByteFormat.string(presence.bytes - presence.sharedBytes)) not shared yet"
-        return "\(ByteFormat.files(presence.files)), \(ByteFormat.string(presence.bytes)), \(shared)"
-    }
+    private var detail: String { presence?.summary ?? variants.note(for: app) }
 }
 
 /// One way the model can be used: a quantization, or the whole repository.
@@ -367,7 +307,7 @@ private struct LocalVariantRow: View {
             VStack(alignment: .leading, spacing: 1) {
                 Text(variant.name)
                     .font(.callout.weight(.medium))
-                Text("\(ByteFormat.files(variant.files)), \(ByteFormat.string(variant.bytes)) · \(state)")
+                Text(verbatim: variant.libraryDetail(archived: archived))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -381,18 +321,5 @@ private struct LocalVariantRow: View {
                 .help("Fetch the files of this variant that are not on this Mac")
             }
         }
-    }
-
-    private var state: String {
-        if variant.isStored {
-            return "stored"
-        }
-        if variant.weightsStored {
-            return "stored; \(ByteFormat.string(variant.missingBytes)) of small files are fetched when it is activated"
-        }
-        if archived {
-            return "on the archive disk"
-        }
-        return variant.storedBytes == 0 ? "not on this Mac" : "\(ByteFormat.string(variant.storedBytes)) stored"
     }
 }

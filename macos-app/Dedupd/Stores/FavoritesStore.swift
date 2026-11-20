@@ -7,17 +7,20 @@ import Observation
 @MainActor
 @Observable
 final class FavoritesStore {
-    private(set) var list = Favorites(
-        favorites: [],
-        likes: LikesSync(hasToken: false, user: nil, syncedAt: nil, problem: nil)
-    )
+    private(set) var list = nothing
     private(set) var isSyncing = false
 
     @ObservationIgnored private let daemon: DaemonStore
 
     init(daemon: DaemonStore) {
         self.daemon = daemon
+        daemon.whenAddressChanges { [weak self] in self?.list = Self.nothing }
     }
+
+    private static let nothing = Favorites(
+        favorites: [],
+        likes: LikesSync(hasToken: false, user: nil, syncedAt: nil, problem: nil)
+    )
 
     var favorites: [Favorite] { list.favorites }
 
@@ -39,9 +42,18 @@ final class FavoritesStore {
 
     /// Star a model, or take the star off.
     func toggle(_ repo: String) async {
-        let favorite = !isFavorite(repo)
+        await set(repo, favorite: !isFavorite(repo))
+    }
+
+    /// Star a model (`true`) or take the star off, whatever the list on
+    /// screen says: a menu item that says "Remove" only ever removes.
+    func set(_ repo: String, favorite: Bool) async {
+        let address = daemon.address
         do {
-            list = try await daemon.client.setFavorite(repo, favorite, at: daemon.address)
+            let answer = try await daemon.client.setFavorite(repo, favorite, at: address)
+            if address == daemon.address {
+                list = answer
+            }
         } catch {
             daemon.problem = describe(error)
         }
@@ -51,40 +63,14 @@ final class FavoritesStore {
     func sync() async {
         isSyncing = true
         defer { isSyncing = false }
+        let address = daemon.address
         do {
-            list = try await daemon.client.syncFavorites(at: daemon.address)
+            let answer = try await daemon.client.syncFavorites(at: address)
+            if address == daemon.address {
+                list = answer
+            }
         } catch {
             daemon.problem = describe(error)
-        }
-    }
-}
-
-extension LikesSync {
-    /// Where the likes stand, in a sentence.
-    var summary: String {
-        if !hasToken {
-            return "To bring in your likes from Hugging Face, sign in with hf auth login in Terminal."
-        }
-        if let problem {
-            return problem
-        }
-        guard let user, let syncedAt else {
-            return "Your likes on Hugging Face have not been read yet."
-        }
-        let when = TimeFormat.relative(TimeFormat.date(epoch: syncedAt))
-        return "Likes of \(user) on Hugging Face, read \(when)."
-    }
-}
-
-extension Favorite {
-    var name: String { repo.split(separator: "/").last.map(String.init) ?? repo }
-    var organisation: String { repo.split(separator: "/").first.map(String.init) ?? "" }
-
-    /// Where it came from, in words.
-    var from: String {
-        switch source {
-        case .dedupd: "Starred"
-        case .huggingFace: "Liked on Hugging Face"
         }
     }
 }

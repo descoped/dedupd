@@ -5040,13 +5040,25 @@ public struct StoredFile: Equatable, Hashable {
     public var sha256: String
     public var size: UInt64
     public var gitOid: String?
+    /**
+     * A model that lists the file and its path there, as `org/repo: path`,
+     * so a person can tell what it is. None for a file no kept model
+     * lists any more.
+     */
+    public var knownAs: String?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sha256: String, size: UInt64, gitOid: String?) {
+    public init(sha256: String, size: UInt64, gitOid: String?, 
+        /**
+         * A model that lists the file and its path there, as `org/repo: path`,
+         * so a person can tell what it is. None for a file no kept model
+         * lists any more.
+         */knownAs: String?) {
         self.sha256 = sha256
         self.size = size
         self.gitOid = gitOid
+        self.knownAs = knownAs
     }
 
     
@@ -5067,7 +5079,8 @@ public struct FfiConverterTypeStoredFile: FfiConverterRustBuffer {
             try StoredFile(
                 sha256: FfiConverterString.read(from: &buf), 
                 size: FfiConverterUInt64.read(from: &buf), 
-                gitOid: FfiConverterOptionString.read(from: &buf)
+                gitOid: FfiConverterOptionString.read(from: &buf), 
+                knownAs: FfiConverterOptionString.read(from: &buf)
         )
     }
 
@@ -5075,6 +5088,7 @@ public struct FfiConverterTypeStoredFile: FfiConverterRustBuffer {
         FfiConverterString.write(value.sha256, into: &buf)
         FfiConverterUInt64.write(value.size, into: &buf)
         FfiConverterOptionString.write(value.gitOid, into: &buf)
+        FfiConverterOptionString.write(value.knownAs, into: &buf)
     }
 }
 

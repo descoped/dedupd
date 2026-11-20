@@ -60,6 +60,11 @@ extension FixtureData {
         ("Q6_K", 138_400_000), ("Q8_0", 144_800_000),
     ]
 
+    /// Whether the canned provider or the canned library has the repository.
+    static func isKnown(_ repo: String) -> Bool {
+        (hits + moreHits).contains { $0.id == repo } || models.contains { $0.repo == repo }
+    }
+
     static func hubModel(_ repo: String, downloading: Bool = false) -> HubModel {
         let hit = (hits + moreHits).first { $0.id == repo }
         let local = models.first { $0.repo == repo }
@@ -137,13 +142,14 @@ extension FixtureData {
         detail: String? = nil,
         notTakenBy: [ModelApp: String] = [:]
     ) -> Job {
-        let parts = request.model.split(separator: ":", maxSplits: 1).map(String.init)
+        let named = request.model.split(separator: "@", maxSplits: 1).map(String.init)
+        let parts = (named.first ?? request.model).split(separator: ":", maxSplits: 1).map(String.init)
         let finished = state == .done
         return Job(
             id: id,
             model: request.model,
             repo: parts.first ?? request.model,
-            revision: "main",
+            revision: named.count > 1 ? named[1] : "main",
             quant: parts.count > 1 ? parts[1] : nil,
             include: request.include,
             apps: request.apps,

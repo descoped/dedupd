@@ -1,5 +1,6 @@
 import DedupdClient
 import Foundation
+import Synchronization
 
 /// What the connection that follows the daemon reports.
 enum DaemonSignal: Sendable, Equatable {
@@ -82,15 +83,12 @@ struct LiveDaemonClient: DaemonClient {
     }
 
     /// One thread in the Rust client sleeps in a read and wakes for each
-    /// line; nothing is polled. Only the newest event is kept when the app
-    /// is slower than the daemon, because each one carries the whole state.
+    /// line; nothing is polled. When the app is slower than the daemon, an
+    /// event replaces the one still waiting, because each carries the whole
+    /// state; a connection made or lost is never dropped (`SignalMailbox`).
     func events(at address: String) -> AsyncStream<DaemonSignal> {
-        AsyncStream(bufferingPolicy: .bufferingNewest(4)) { continuation in
-            let subscription = DedupdClient.subscribe(address: address, listener: SignalListener(continuation))
-            continuation.onTermination = { _ in
-                subscription.cancel()
-            }
-        }
+        let following = Following(address: address)
+        return AsyncStream(unfolding: { await following.mailbox.next() })
     }
 
     func scan(at address: String) async throws -> ScanResult {
@@ -233,24 +231,114 @@ struct LiveDaemonClient: DaemonClient {
     }
 }
 
-/// Hands what the Rust client's thread delivers to the stream the app reads.
-private final class SignalListener: EventListener {
-    private let continuation: AsyncStream<DaemonSignal>.Continuation
+/// What the connection delivered and the app has not read yet.
+///
+/// The Rust client's thread puts; the app takes one at a time. An event
+/// carries the daemon's whole state, so a newer one replaces one that still
+/// waits. The other signals are edges (the daemon came, went, or cannot be
+/// read): each is kept, in order, so the app never misses that the daemon
+/// went away and came back. Two equal edges in a row are one.
+final class SignalMailbox: Sendable {
+    private struct Held {
+        var waiting: [DaemonSignal] = []
+        var reader: CheckedContinuation<DaemonSignal?, Never>?
+        var closed = false
+    }
 
-    init(_ continuation: AsyncStream<DaemonSignal>.Continuation) {
-        self.continuation = continuation
+    private let held = Mutex(Held())
+
+    func put(_ signal: DaemonSignal) {
+        let reader = held.withLock { held -> CheckedContinuation<DaemonSignal?, Never>? in
+            guard !held.closed else {
+                return nil
+            }
+            if let reader = held.reader {
+                held.reader = nil
+                return reader
+            }
+            switch (held.waiting.last, signal) {
+            case (.event, .event):
+                held.waiting[held.waiting.count - 1] = signal
+            case let (last?, _) where last == signal:
+                break
+            default:
+                held.waiting.append(signal)
+            }
+            return nil
+        }
+        reader?.resume(returning: signal)
+    }
+
+    /// The next signal; nil once the mailbox is closed. One reader at a
+    /// time.
+    func next() async -> DaemonSignal? {
+        await withTaskCancellationHandler {
+            await withCheckedContinuation { continuation in
+                let ready = held.withLock { held -> DaemonSignal?? in
+                    if !held.waiting.isEmpty {
+                        return .some(held.waiting.removeFirst())
+                    }
+                    if held.closed {
+                        return .some(nil)
+                    }
+                    held.reader = continuation
+                    return nil
+                }
+                if let ready {
+                    continuation.resume(returning: ready)
+                }
+            }
+        } onCancel: {
+            close()
+        }
+    }
+
+    /// Nothing more is delivered; a reader that waits gets nil.
+    func close() {
+        let reader = held.withLock { held -> CheckedContinuation<DaemonSignal?, Never>? in
+            held.closed = true
+            held.waiting = []
+            defer { held.reader = nil }
+            return held.reader
+        }
+        reader?.resume(returning: nil)
+    }
+}
+
+/// One subscription to the daemon's events, for as long as its stream is
+/// read: it ends when the stream is let go or its reader is cancelled.
+private final class Following: Sendable {
+    let mailbox = SignalMailbox()
+    private let subscription: EventSubscription
+
+    init(address: String) {
+        subscription = DedupdClient.subscribe(address: address, listener: SignalListener(mailbox))
+    }
+
+    deinit {
+        subscription.cancel()
+        mailbox.close()
+    }
+}
+
+/// Hands what the Rust client's thread delivers to the mailbox the app reads.
+private final class SignalListener: EventListener {
+    private let mailbox: SignalMailbox
+
+    init(_ mailbox: SignalMailbox) {
+        self.mailbox = mailbox
     }
 
     func onEvent(event: DaemonEvent) {
-        continuation.yield(.event(event))
+        mailbox.put(.event(event))
     }
 
     func onConnection(connected: Bool) {
-        continuation.yield(connected ? .connected : .disconnected)
+        mailbox.put(connected ? .connected : .disconnected)
     }
 
     func onUnreadable(reason: String) {
-        continuation.yield(.unreadable(reason))
+        mailbox.put(.unreadable(reason))
     }
 }
 

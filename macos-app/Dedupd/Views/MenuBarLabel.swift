@@ -10,6 +10,7 @@ struct MenuBarLabel: View {
         Image(systemName: environment.daemon.menuBarSymbol)
             .accessibilityLabel("dedupd: \(environment.daemon.summary)")
             .modifier(MainWindowOpener())
+            .environment(environment.windows)
     }
 }
 
@@ -17,10 +18,11 @@ struct MenuBarLabel: View {
 /// SwiftUI's window actions, so every scene's root view hands the action on.
 struct MainWindowOpener: ViewModifier {
     @Environment(\.openWindow) private var openWindow
+    @Environment(WindowControl.self) private var windows
 
     func body(content: Content) -> some View {
         content.onAppear {
-            AppEnvironment.shared.openMainWindow = { openWindow(id: MainWindow.id) }
+            windows.open = { openWindow(id: MainWindow.id) }
         }
     }
 }

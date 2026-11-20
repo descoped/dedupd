@@ -1,5 +1,6 @@
 import Foundation
 import ServiceManagement
+import Synchronization
 
 /// What the `dedupd` command says about the launchd agent that keeps the
 /// daemon running.
@@ -135,7 +136,14 @@ struct BundledAgent: AgentControl {
         }
     }
 
-    private static func launch(_ executable: URL, _ arguments: [String]) throws -> String {
+    /// How long a command is given. The slowest, `install`, copies the
+    /// program and asks launchd twice.
+    static let patience: TimeInterval = 60
+
+    /// Run a program to its end and return what it wrote. One that is not
+    /// done after `patience` is stopped and reported as a failure, so the
+    /// screen's action always ends.
+    static func launch(_ executable: URL, _ arguments: [String], patience: TimeInterval = patience) throws -> String {
         let process = Process()
         process.executableURL = executable
         process.arguments = arguments
@@ -149,17 +157,50 @@ struct BundledAgent: AgentControl {
         } catch {
             throw AgentError.failed("Could not run \(executable.path): \(error.localizedDescription)")
         }
-        // The commands write a few lines; reading to the end before waiting
-        // cannot fill a pipe.
+        let gaveUp = Mutex(false)
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+        timer.schedule(deadline: .now() + patience)
+        timer.setEventHandler {
+            gaveUp.withLock { $0 = true }
+            process.terminate()
+        }
+        timer.resume()
+        // The two pipes are read at the same time, so a long complaint
+        // cannot fill one while the other is waited for.
+        let complaint = Mutex(Data())
+        let reading = DispatchGroup()
+        DispatchQueue.global(qos: .userInitiated).async(group: reading) {
+            let data = errors.fileHandleForReading.readDataToEndOfFile()
+            complaint.withLock { $0 = data }
+        }
         let said = String(bytes: output.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-        let complained = String(bytes: errors.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+        reading.wait()
         process.waitUntilExit()
+        timer.cancel()
+        let complained = String(bytes: complaint.withLock { $0 }, encoding: .utf8) ?? ""
+        if gaveUp.withLock({ $0 }) {
+            throw AgentError.failed(
+                "dedupd \(arguments.joined(separator: " ")) did not finish in \(Int(patience)) seconds and was stopped."
+            )
+        }
         guard process.terminationStatus == 0 else {
             let text = complained.trimmingCharacters(in: .whitespacesAndNewlines)
             throw AgentError.failed(text.isEmpty ? "dedupd \(arguments.joined(separator: " ")) failed." : text)
         }
         return said.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+}
+
+/// An agent control that runs nothing and says why, for a launch whose
+/// trial options cannot be followed.
+struct RefusingAgent: AgentControl {
+    var why: String
+
+    func state() async throws -> AgentState { throw AgentError.failed(why) }
+    func install(setEnvironment: Bool) async throws -> String { throw AgentError.failed(why) }
+    func uninstall() async throws -> String { throw AgentError.failed(why) }
+    func start() async throws -> String { throw AgentError.failed(why) }
+    func stop() async throws -> String { throw AgentError.failed(why) }
 }
 
 /// An agent that answers from fixed data, for UI tests and previews.
@@ -186,19 +227,45 @@ struct FixtureAgent: AgentControl {
     func stop() async throws -> String { "Stopped the daemon." }
 }
 
-/// Whether macOS opens the app at login. The system keeps the answer; the
-/// owner can also change it in System Settings › General › Login Items.
+/// Whether macOS opens the app at login, and the way to change it.
 @MainActor
-enum LoginItem {
-    static var isEnabled: Bool {
+protocol LoginItemControl {
+    var isEnabled: Bool { get }
+    func set(_ enabled: Bool) throws
+}
+
+/// The app's login item as macOS keeps it. The owner can also change it in
+/// System Settings › General › Login Items.
+struct SystemLoginItem: LoginItemControl {
+    var isEnabled: Bool {
         SMAppService.mainApp.status == .enabled
     }
 
-    static func set(_ enabled: Bool) throws {
+    func set(_ enabled: Bool) throws {
         if enabled {
             try SMAppService.mainApp.register()
         } else {
             try SMAppService.mainApp.unregister()
         }
+    }
+}
+
+/// A login item that is only remembered, for tests and canned daemons: the
+/// real one would register the test host with macOS.
+@MainActor
+final class FixtureLoginItem: LoginItemControl {
+    private(set) var isEnabled: Bool
+    /// What `set` fails with, when a test wants it to.
+    var refusal: (any Error)?
+
+    init(isEnabled: Bool = false) {
+        self.isEnabled = isEnabled
+    }
+
+    func set(_ enabled: Bool) throws {
+        if let refusal {
+            throw refusal
+        }
+        isEnabled = enabled
     }
 }

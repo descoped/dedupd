@@ -97,7 +97,7 @@ extension JobAction {
         case .pause: "Stop for now. What is downloaded is kept."
         case .resume: "Continue where it stopped"
         case .retry: "Try the \(job) again"
-        case .start: "Start this download ahead of the queue"
+        case .start: "Start this \(job) ahead of the queue"
         case .cancel: activation ? "Give up this activation. The stored copy stays." : "Stop and give up this download"
         case .remove: "Take it off the list. Downloaded files stay."
         }

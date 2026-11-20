@@ -1,92 +1,48 @@
 import AppKit
 import SwiftUI
 
-/// A piece of a README.
-enum MarkdownBlock: Equatable, Sendable {
-    case heading(level: Int, text: String)
-    case code(String)
-    case paragraph(String)
-    case item(String)
-}
-
-/// Enough of Markdown to read a model card: headings, paragraphs, lists
-/// and code. Anything else is kept as written.
-enum Markdown {
-    /// Whether a link in a README may be opened. A README is written by
-    /// whoever published the model, and a link shows only its words: only an
-    /// address on the web is opened, never a file, a network share or
-    /// another app's own kind of address.
-    static func mayOpen(_ url: URL) -> Bool {
-        guard let scheme = url.scheme?.lowercased(), let host = url.host(), !host.isEmpty else {
-            return false
-        }
-        return scheme == "https" || scheme == "http"
-    }
-
-    /// Split a README into blocks. The metadata block Hugging Face keeps at
-    /// the top of the file is left out; the app shows it as fields.
-    static func parse(_ source: String) -> [MarkdownBlock] {
-        var lines = source.components(separatedBy: .newlines)[...]
-        if lines.first?.trimmingCharacters(in: .whitespaces) == "---",
-           let end = lines.dropFirst().firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "---" }) {
-            lines = lines[(end + 1)...]
-        }
-        var blocks: [MarkdownBlock] = []
-        var paragraph: [String] = []
-        var code: [String]?
-        func flush() {
-            if !paragraph.isEmpty {
-                blocks.append(.paragraph(paragraph.joined(separator: " ")))
-                paragraph = []
-            }
-        }
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("```") {
-                if let open = code {
-                    blocks.append(.code(open.joined(separator: "\n")))
-                    code = nil
-                } else {
-                    flush()
-                    code = []
-                }
-            } else if code != nil {
-                code?.append(line)
-            } else if trimmed.isEmpty {
-                flush()
-            } else if trimmed.hasPrefix("#") {
-                flush()
-                let level = trimmed.prefix { $0 == "#" }.count
-                blocks.append(.heading(level: level, text: trimmed.drop { $0 == "#" }.trimmingCharacters(in: .whitespaces)))
-            } else if trimmed.hasPrefix("- ") || trimmed.hasPrefix("* ") {
-                flush()
-                blocks.append(.item(String(trimmed.dropFirst(2))))
-            } else {
-                paragraph.append(trimmed)
-            }
-        }
-        if let open = code {
-            blocks.append(.code(open.joined(separator: "\n")))
-        }
-        flush()
-        return blocks
-    }
-}
-
 /// A model card as its authors wrote it.
+///
+/// The text is read into blocks when it changes, not each time the
+/// inspector around it is drawn again.
 struct MarkdownText: View {
-    let blocks: [MarkdownBlock]
+    let source: String
+    @State private var lines: [Line] = []
+
+    /// A block with its inline marks already read.
+    private enum Line {
+        case heading(level: Int, AttributedString)
+        case code(String)
+        case paragraph(AttributedString)
+        case item(AttributedString)
+
+        init(_ block: MarkdownBlock) {
+            self = switch block {
+            case let .heading(level, text): .heading(level: level, Markdown.inline(text))
+            case let .code(text): .code(text)
+            case let .paragraph(text): .paragraph(Markdown.inline(text))
+            case let .item(text): .item(Markdown.inline(text))
+            }
+        }
+    }
 
     init(_ source: String) {
-        blocks = Markdown.parse(source)
+        self.source = source
     }
 
     var body: some View {
+        content
+            .task(id: source) {
+                lines = Markdown.parse(source).map(Line.init)
+            }
+    }
+
+    private var content: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            ForEach(Array(lines.enumerated()), id: \.offset) { _, block in
                 switch block {
                 case let .heading(level, text):
-                    Text(Self.inline(text))
+                    Text(text)
                         .font(level <= 1 ? .title3.weight(.semibold) : .headline)
                         .padding(.top, 4)
                         .accessibilityAddTraits(.isHeader)
@@ -97,12 +53,12 @@ struct MarkdownText: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 6))
                 case let .paragraph(text):
-                    Text(Self.inline(text))
+                    Text(text)
                 case let .item(text):
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Text("•")
                             .foregroundStyle(.secondary)
-                        Text(Self.inline(text))
+                        Text(text)
                     }
                 }
             }
@@ -114,30 +70,15 @@ struct MarkdownText: View {
             Markdown.mayOpen(url) ? .systemAction : .discarded
         })
     }
-
-    /// Emphasis, code and links inside a line.
-    private static func inline(_ text: String) -> AttributedString {
-        let options = AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
-        return (try? AttributedString(markdown: text, options: options)) ?? AttributedString(text)
-    }
 }
 
 /// JSON as the provider sent it, indented, with a button to copy it.
 struct RawJSONView: View {
     let json: String
-
-    private var pretty: String {
-        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)),
-              let data = try? JSONSerialization.data(withJSONObject: object, options: [.prettyPrinted, .sortedKeys]),
-              let text = String(bytes: data, encoding: .utf8)
-        else {
-            return json
-        }
-        return text
-    }
+    /// The JSON indented; made when it changes, not on every drawing.
+    @State private var text = ""
 
     var body: some View {
-        let text = pretty
         VStack(alignment: .leading, spacing: 8) {
             Button("Copy", systemImage: "doc.on.doc") {
                 Pasteboard.copy(text)
@@ -148,40 +89,8 @@ struct RawJSONView: View {
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
-    }
-}
-
-enum Pasteboard {
-    @MainActor
-    static func copy(_ text: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-    }
-}
-
-enum Finder {
-    /// Show a file or folder in the Finder; a path that is not there opens
-    /// the nearest folder that is.
-    @MainActor
-    static func reveal(_ path: String) {
-        var url = URL(fileURLWithPath: path)
-        while !FileManager.default.fileExists(atPath: url.path), url.path != "/" {
-            url.deleteLastPathComponent()
-        }
-        NSWorkspace.shared.activateFileViewerSelecting([url])
-    }
-}
-
-enum SystemSettings {
-    /// Where macOS lists what opens at login and what runs in the background.
-    static let loginItems = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")
-
-    /// Open System Settings › General › Login Items & Extensions, where the
-    /// owner can see the daemon and this app and switch either off.
-    @MainActor
-    static func openLoginItems() {
-        if let loginItems {
-            NSWorkspace.shared.open(loginItems)
+        .task(id: json) {
+            text = Markdown.indented(json: json)
         }
     }
 }
@@ -200,10 +109,10 @@ struct DaemonAwayView: View {
                 Label("The daemon is another build", systemImage: "exclamationmark.triangle")
             } description: {
                 Text(
-                    "The daemon at \(daemon.address) is another build of dedupd, and this app cannot read what it says. "
+                    verbatim: "The daemon at \(daemon.address) is another build of dedupd, and this app cannot read what it says. "
                         + "Update it on the Daemon screen. Your models are untouched."
                 )
-                Text(reason)
+                Text(verbatim: reason)
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             } actions: {

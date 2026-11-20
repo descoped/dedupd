@@ -37,6 +37,7 @@ check:
 fixtures:
     DEDUPD_UPDATE_FIXTURES=1 cargo test -p dedupd-server --test frontends control_api_answers_match_the_recorded_ones
     DEDUPD_UPDATE_FIXTURES=1 cargo test -p dedupd-core --test canned_profiles
+    DEDUPD_UPDATE_FIXTURES=1 cargo test -p dedupd --test commands the_recorded_example_of_the_agents_state
 
 # Copy the version in Cargo.toml to the app
 sync-version:

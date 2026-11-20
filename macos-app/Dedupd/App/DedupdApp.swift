@@ -46,10 +46,17 @@ struct MainCommands: Commands {
         CommandGroup(replacing: .newItem) {}
         CommandMenu("Go") {
             ForEach(Array(Pane.allCases.enumerated()), id: \.element) { index, pane in
-                Button(pane.title) {
-                    environment.showMainWindow(pane)
+                // Command-1 to Command-9: a tenth screen has no digit.
+                if index < 9, let digit = "\(index + 1)".first {
+                    Button(pane.title) {
+                        environment.showMainWindow(pane)
+                    }
+                    .keyboardShortcut(KeyEquivalent(digit), modifiers: .command)
+                } else {
+                    Button(pane.title) {
+                        environment.showMainWindow(pane)
+                    }
                 }
-                .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
             }
         }
         CommandGroup(after: .toolbar) {

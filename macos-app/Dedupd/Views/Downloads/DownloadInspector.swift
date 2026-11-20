@@ -114,7 +114,7 @@ struct DownloadInspector: View {
                     FileRow(
                         path: file.path,
                         size: file.size,
-                        note: Self.stage(file),
+                        note: file.stageWords,
                         symbol: file.stage == .stored ? "checkmark.circle" : "doc",
                         digest: file.sha256
                     )
@@ -141,15 +141,6 @@ struct DownloadInspector: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-        }
-    }
-
-    private static func stage(_ file: JobFile) -> String {
-        switch file.stage {
-        case .stored: "in the store"
-        case .verifying: "being verified"
-        case .downloading: "\(ByteFormat.string(file.done)) of \(ByteFormat.string(file.size))"
-        case .waiting: file.done > 0 ? "\(ByteFormat.string(file.done)) downloaded, waiting" : "waiting"
         }
     }
 }

@@ -25,7 +25,7 @@ fn an_address_is_host_and_port_and_nothing_else() {
         "127.0.0.1:8642",
         "localhost:8642",
         "[::1]:8642",
-        "mac-studio.local:1",
+        "127.0.0.2:1",
     ] {
         assert!(dedupd_client::address_is_valid(good.into()), "{good}");
     }
@@ -40,6 +40,11 @@ fn an_address_is_host_and_port_and_nothing_else() {
         "127.0.0.1:86 42",
         "::1:8642",
         "[not-v6]:8642",
+        // Another machine: the daemon is on this Mac and nowhere else.
+        "mac-studio.local:8642",
+        "192.168.1.10:8642",
+        "localhost.example.com:8642",
+        "localhost:+8642",
     ] {
         assert!(!dedupd_client::address_is_valid(bad.into()), "{bad}");
         // Nothing is asked: the call says the address is wrong, not that
@@ -97,6 +102,6 @@ fn the_sentences_are_the_ones_the_app_shows() {
         dedupd_client::error_message(ClientError::BadAddress {
             address: "a".into()
         }),
-        "a is not an address of the form host:port, such as 127.0.0.1:8642"
+        "a is not an address of this Mac of the form host:port, such as 127.0.0.1:8642"
     );
 }

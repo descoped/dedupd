@@ -70,10 +70,24 @@ final class AppSettings {
     /// True the first time the app runs with these preferences.
     let isFirstLaunch: Bool
 
-    init(defaults: UserDefaults = .standard, defaultAddress: String = DedupdClient.defaultAddress()) {
+    /// `launchAddress` is an address given for this run (`-daemonAddress`):
+    /// it stands in for the default and for a saved choice, and is not
+    /// saved itself. One that is not an address is not used.
+    init(
+        defaults: UserDefaults = .standard,
+        defaultAddress: String = DedupdClient.defaultAddress(),
+        launchAddress: String? = nil
+    ) {
         self.defaults = defaults
-        self.defaultAddress = defaultAddress
-        customAddress = defaults.string(forKey: Key.address) ?? ""
+        if let launchAddress, addressIsValid(address: launchAddress) {
+            self.defaultAddress = launchAddress
+            // Setting it here writes nothing: the saved choice stays for
+            // the next run.
+            customAddress = ""
+        } else {
+            self.defaultAddress = defaultAddress
+            customAddress = defaults.string(forKey: Key.address) ?? ""
+        }
         density = RowDensity(rawValue: defaults.string(forKey: Key.density) ?? "") ?? .compact
         notifications = defaults.object(forKey: Key.notifications) as? Bool ?? true
         activitySeen = Int64(defaults.integer(forKey: Key.activitySeen))

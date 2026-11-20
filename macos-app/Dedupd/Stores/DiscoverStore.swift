@@ -75,6 +75,41 @@ final class DiscoverStore {
 
     init(daemon: DaemonStore) {
         self.daemon = daemon
+        daemon.whenAddressChanges { [weak self] in self?.forgetDaemon() }
+    }
+
+    /// The app turned to another daemon: the list and the model shown were
+    /// the old one's answers.
+    private func forgetDaemon() {
+        leaveTheList()
+        detailGeneration += 1
+        hasSearched = false
+        selection = nil
+    }
+
+    /// What this Mac has of the models in the list, read again: a hit says
+    /// "Downloading" or "In Bionic" as of the search, and a download that
+    /// was queued or finished since then changes that. Only the daemon's
+    /// own library and queue are asked; the provider is not.
+    func refreshLocal() async {
+        guard !hits.isEmpty else {
+            return
+        }
+        let mine = generation
+        guard let models = try? await daemon.client.models(at: daemon.address), mine == generation else {
+            // A failed read leaves the rows as they were; the library's
+            // own screen shows the failure.
+            return
+        }
+        let held = Dictionary(models.map { ($0.repo, $0) }) { first, _ in first }
+        let active = Set(daemon.activeJobs.map(\.repo))
+        hits = hits.map { hit in
+            var hit = hit
+            hit.archived = held[hit.id] != nil
+            hit.apps = held[hit.id]?.appNames ?? []
+            hit.downloading = active.contains(hit.id)
+            return hit
+        }
     }
 
     private var query: SearchQuery {

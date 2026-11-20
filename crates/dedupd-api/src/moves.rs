@@ -164,6 +164,11 @@ pub struct StoredFile {
     pub sha256: String,
     pub size: u64,
     pub git_oid: Option<String>,
+    /// A model that lists the file and its path there, as `org/repo: path`,
+    /// so a person can tell what it is. None for a file no kept model
+    /// lists any more.
+    #[serde(default)]
+    pub known_as: Option<String>,
 }
 
 /// Stored files that could be removed, or were.

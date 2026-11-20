@@ -62,31 +62,24 @@ private struct DaemonStateCard: View {
                     if let executable = info.executable { FactRow("Program", executable, monospaced: true) }
                     FactRow("Home folder", status.home, monospaced: true)
                     FactRow("Fetches from", status.endpoint)
-                    FactRow("Hugging Face token", token(info))
+                    FactRow("Hugging Face token", info.tokenWords)
                 }
             } else if case .otherBuild = daemon.connection {
                 Text(
-                    "A daemon answers at \(daemon.address), but it is another build of dedupd and this app cannot read "
+                    verbatim: "A daemon answers at \(daemon.address), but it is another build of dedupd and this app cannot read "
                         + "what it says. Update it to this app's build with Update on this screen."
                 )
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else if daemon.connection == .notRunning {
                 Text(
-                    "No daemon answers at \(daemon.address). Your models are untouched and the apps keep using them; "
+                    verbatim: "No daemon answers at \(daemon.address). Your models are untouched and the apps keep using them; "
                         + "nothing new is shared or backed up until the daemon runs."
                 )
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-    }
-
-    private func token(_ info: DaemonInfo) -> String {
-        guard info.token else {
-            return "None. Gated models cannot be downloaded; run `hf auth login` to add one."
-        }
-        return info.tokenSource.map { "Found in \($0)" } ?? "Found"
     }
 }
 
@@ -122,7 +115,7 @@ private struct AgentCard: View {
             }
             Divider()
             HStack {
-                Toggle("Open this app at login", isOn: startsAtLogin)
+                LoginItemToggle()
                     .help("Shows the menu bar icon after login. The daemon does not need the app to run.")
                     .accessibilityIdentifier("start-at-login")
                 Spacer()
@@ -143,18 +136,10 @@ private struct AgentCard: View {
         }
     }
 
-    private var startsAtLogin: Binding<Bool> {
-        Binding {
-            service.startsAtLogin
-        } set: { enabled in
-            service.setStartsAtLogin(enabled)
-        }
-    }
-
     @ViewBuilder
     private func state(_ agent: AgentState) -> some View {
         Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 12, verticalSpacing: 5) {
-            FactRow("State", Self.words(agent))
+            FactRow("State", agent.words)
             if agent.installed {
                 FactRow("Agent", agent.plist, monospaced: true)
                 FactRow("Runs", "\(agent.program)\(agent.installedVersion.map { " (version \($0))" } ?? " (not there)")", monospaced: true)
@@ -209,15 +194,6 @@ private struct AgentCard: View {
             Spacer()
         }
         .disabled(service.isWorking)
-    }
-
-    private static func words(_ agent: AgentState) -> String {
-        switch (agent.installed, agent.running) {
-        case (true, true): "Installed, and the daemon is running"
-        case (true, false): "Installed; the daemon is stopped"
-        case (false, true): "The daemon is running, but its agent file is gone"
-        case (false, false): "Not installed"
-        }
     }
 }
 
