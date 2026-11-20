@@ -36,6 +36,8 @@ use run::wait_text;
 /// Jobs that work at the same time. The governor decides how many
 /// connections they share.
 const MAX_ACTIVE: usize = 3;
+/// The longest an owner's action waits for a stopped job's downloads to end.
+const STOP_WAIT: Duration = Duration::from_secs(10);
 /// Lines of a job's history that are kept.
 const MAX_EVENTS: usize = 60;
 /// Finished and cancelled jobs that are kept for the owner to look at.
@@ -50,6 +52,11 @@ struct Job {
     /// not write a state after the one the owner chose.
     stopped: AtomicBool,
     meter: Meter,
+    /// Held, as a second reference, by the job's file downloads while any
+    /// of them is alive. Ending the job's task ends them too, but each
+    /// stops in its own time; `stop` waits here until all are gone, so
+    /// nothing writes a file after the owner's action has cleaned up.
+    alive: Arc<()>,
 }
 
 impl Job {
@@ -250,6 +257,13 @@ impl Queue {
         if let Some(handle) = handle {
             handle.abort();
             let _ = handle.await;
+        }
+        // The file downloads the task started are ended with it and stop at
+        // their next step. That takes a moment; an hour-long hash on a
+        // blocking thread is not waited for.
+        let deadline = Instant::now() + STOP_WAIT;
+        while Arc::strong_count(&job.alive) > 1 && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
 
@@ -543,6 +557,7 @@ impl Job {
             task: Mutex::new(None),
             stopped: AtomicBool::new(false),
             meter: Meter::new(),
+            alive: Arc::new(()),
         }
     }
 }

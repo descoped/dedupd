@@ -178,6 +178,9 @@ async fn search(server: &Arc<Server>, call: &Call) -> Response {
 }
 
 /// The files the model info lists, as the rest of dedupd knows files.
+/// These entries are not checked as a listing is (`HubClient::snapshot_as`):
+/// they only say what Discover shows and which formats a model has, and must
+/// never be given to a placer or become a path.
 fn siblings(info: &Value) -> Vec<TreeEntry> {
     let list = info.get("siblings").and_then(|s| s.as_array());
     list.into_iter()

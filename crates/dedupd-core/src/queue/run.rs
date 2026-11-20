@@ -122,6 +122,7 @@ impl Queue {
         let watch = Arc::new(JobWatch {
             queue: self.clone(),
             job: job.clone(),
+            _alive: job.alive.clone(),
         });
         let fetched = pull::fetch(engine, &req, &plan, watch).await;
         let (items, downloaded) = match fetched {

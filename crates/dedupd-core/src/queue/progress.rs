@@ -37,6 +37,8 @@ impl Meter {
 pub(super) struct JobWatch {
     pub(super) queue: Arc<Queue>,
     pub(super) job: Arc<Job>,
+    /// The job's `alive`, held for as long as any download reports here.
+    pub(super) _alive: Arc<()>,
 }
 
 impl PullWatch for JobWatch {
