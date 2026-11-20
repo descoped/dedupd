@@ -781,6 +781,19 @@ impl Db {
         self.blobs_where(&format!("{UNPLACED} AND NOT {}", used_by("IS NOT NULL")))
     }
 
+    /// Whether the stored file is one of `unreferenced_blobs` now.
+    pub fn is_unreferenced(&self, sha256: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            &format!(
+                "SELECT EXISTS (SELECT 1 FROM blobs b
+                 WHERE b.sha256 = ?1 AND {UNPLACED} AND NOT {})",
+                used_by("IS NOT NULL")
+            ),
+            [sha256],
+            |r| r.get(0),
+        )?)
+    }
+
     /// The stored files a repository's archived revisions, Ollama manifests
     /// and app files refer to, now or before.
     pub fn repo_blobs(&self, repo_id: i64) -> Result<Vec<BlobRow>> {
@@ -1033,6 +1046,12 @@ mod tests {
         let id = with_manifest(&db, "org/repo", &used);
         assert!(!db.record_blob_if_used(&unused, 3, None).unwrap());
         assert!(db.record_blob_if_used(&used, 3, None).unwrap());
+        // A file a model names is no orphan; `gc` asks this again before
+        // it removes one.
+        assert!(!db.is_unreferenced(&used).unwrap());
+        db.upsert_blob(&unused, 3, None).unwrap();
+        assert!(db.is_unreferenced(&unused).unwrap());
+        db.delete_blob(&unused).unwrap();
         // Recorded once.
         assert!(!db.record_blob_if_used(&used, 3, None).unwrap());
         let known: Vec<String> = db

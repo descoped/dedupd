@@ -3,7 +3,7 @@
 
 use super::{LocalFile, LocalRepo, rel_components};
 use crate::store::Fingerprint;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use dedupd_api::app::App;
 use std::collections::HashSet;
 use std::path::Path;
@@ -11,22 +11,27 @@ use walkdir::WalkDir;
 
 pub const APP: &str = App::Hf.as_str();
 
-fn dirs(dir: &Path) -> Vec<(String, std::path::PathBuf)> {
-    let mut out: Vec<_> = std::fs::read_dir(dir)
-        .into_iter()
-        .flatten()
+/// The folders in `dir`, by name. A folder that is not there has none; one
+/// that cannot be read is an error with its name, not an empty folder.
+fn dirs(dir: &Path) -> Result<Vec<(String, std::path::PathBuf)>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", dir.display())),
+    };
+    let mut out: Vec<_> = entries
         .flatten()
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
         .map(|e| (e.file_name().to_string_lossy().into_owned(), e.path()))
         .collect();
     out.sort();
-    out
+    Ok(out)
 }
 
 /// The branch names the cache knows, as `(repository, name, commit)`.
-pub fn refs(hub_dir: &Path) -> Vec<(String, String, String)> {
+pub fn refs(hub_dir: &Path) -> Result<Vec<(String, String, String)>> {
     let mut out = Vec::new();
-    for (dir_name, repo_dir) in dirs(hub_dir) {
+    for (dir_name, repo_dir) in dirs(hub_dir)? {
         let Some(name) = dir_name.strip_prefix("models--") else {
             continue;
         };
@@ -47,14 +52,14 @@ pub fn refs(hub_dir: &Path) -> Vec<(String, String, String)> {
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// List the model files in the cache, one group per repository and commit.
 /// A missing cache folder is an empty cache.
 pub fn scan(hub_dir: &Path) -> Result<Vec<LocalRepo>> {
     let mut repos = Vec::new();
-    for (dir_name, repo_dir) in dirs(hub_dir) {
+    for (dir_name, repo_dir) in dirs(hub_dir)? {
         let Some(name) = dir_name.strip_prefix("models--") else {
             continue;
         };
@@ -66,7 +71,7 @@ pub fn scan(hub_dir: &Path) -> Result<Vec<LocalRepo>> {
             continue;
         };
         let mut seen = HashSet::new();
-        for (commit, snapshot) in dirs(&repo_dir.join("snapshots")) {
+        for (commit, snapshot) in dirs(&repo_dir.join("snapshots"))? {
             let mut files = Vec::new();
             for entry in WalkDir::new(&snapshot).sort_by_file_name() {
                 let entry = match entry {

@@ -126,6 +126,9 @@ pub struct VerifyReport {
     pub bytes: u64,
     /// Files whose content no longer hashes to their name.
     pub damaged: Vec<String>,
+    /// Files that could not be read, each with why. Nothing is known about
+    /// their content; they are not counted as damaged.
+    pub unreadable: Vec<(String, String)>,
     /// Files the database lists that are in neither the store nor the archive.
     pub missing: Vec<String>,
     /// Files that are not in the store while the archive disk is away, so
@@ -154,11 +157,16 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
     };
 
     let next = AtomicUsize::new(0);
+    // Set when the archive disk goes away while it is being checked.
+    let gone = std::sync::atomic::AtomicBool::new(false);
     let report = Mutex::new(VerifyReport::default());
     std::thread::scope(|scope| {
         for _ in 0..jobs.max(1) {
             scope.spawn(|| {
                 loop {
+                    if gone.load(Ordering::Relaxed) {
+                        break;
+                    }
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(blob) = blobs.get(i) else { break };
                     let path = root.blob_path(&blob.sha256);
@@ -179,20 +187,42 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
                         }
                         continue;
                     }
-                    let ok = hash_file(&path, false).is_ok_and(|h| h.sha256 == blob.sha256);
+                    let read = hash_file(&path, false);
                     let mut r = report.lock().expect("lock");
-                    r.checked += 1;
-                    r.bytes += blob.size;
-                    if !ok {
-                        r.damaged.push(blob.sha256.clone());
+                    match read {
+                        Ok(hashes) => {
+                            r.checked += 1;
+                            r.bytes += blob.size;
+                            if hashes.sha256 != blob.sha256 {
+                                r.damaged.push(blob.sha256.clone());
+                            }
+                        }
+                        // A file that cannot be read says nothing about
+                        // its content. When it is the archive disk that
+                        // went away, nothing after this can be told
+                        // either: the check stops.
+                        Err(e) => {
+                            r.unreadable.push((blob.sha256.clone(), e.to_string()));
+                            if archive && !root.attached() {
+                                gone.store(true, Ordering::Relaxed);
+                                break;
+                            }
+                        }
                     }
                 }
             });
         }
     });
     let mut report = report.into_inner().expect("lock");
+    if gone.load(Ordering::Relaxed) {
+        bail!(
+            "the archive disk went away while it was checked, after {} files; nothing is known about the rest",
+            report.checked
+        );
+    }
     report.damaged.sort();
     report.missing.sort();
+    report.unreadable.sort();
     Ok(report)
 }
 
@@ -232,15 +262,23 @@ impl GcPlan {
 
 /// Work out what `gc` would remove. Removes nothing.
 pub fn gc_plan(db: &Mutex<Db>, store: &Store, offload: bool) -> Result<GcPlan> {
-    let db = lock(db);
+    // The rows are read under the database lock; the disks, of which the
+    // archive may be slow to answer, are asked after it is given back.
+    let (orphans, unplaced) = {
+        let db = lock(db);
+        let unplaced = match offload && store.archive().is_some() {
+            true => db.unplaced_blobs()?,
+            false => Vec::new(),
+        };
+        (db.unreferenced_blobs()?, unplaced)
+    };
     let mut plan = GcPlan {
-        orphans: db.unreferenced_blobs()?,
+        orphans,
         offload: Vec::new(),
     };
     if offload && let Some(archive) = store.archive() {
         let orphans: HashSet<&str> = plan.orphans.iter().map(|o| o.sha256.as_str()).collect();
-        plan.offload = db
-            .unplaced_blobs()?
+        plan.offload = unplaced
             .into_iter()
             .filter(|b| !orphans.contains(b.sha256.as_str()))
             .filter(|b| store.contains(&b.sha256))
@@ -262,12 +300,29 @@ pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
         Ok(blob.size)
     };
     let mut freed = 0;
+    // An archive disk that is away: the orphans' local copies go, and
+    // their records stay, so a later `gc` with the disk attached still
+    // knows of the copies there and removes them.
+    let archive_away = store.archive().is_some_and(|a| !a.attached());
     for blob in &plan.orphans {
-        freed += remove_local(blob)?;
-        if let Some(archive) = store.archive() {
+        {
+            // Asked again, and removed, under the database lock: a model
+            // that came to name the file since the plan was made (a pull,
+            // an adoption) records its listing under the same lock before
+            // it looks in the store, so it either keeps the file here or
+            // finds it gone and fetches it.
+            let db = lock(db);
+            if !db.is_unreferenced(&blob.sha256)? {
+                continue;
+            }
+            freed += remove_local(blob)?;
+            if !archive_away {
+                db.delete_blob(&blob.sha256)?;
+            }
+        }
+        if let Some(archive) = store.archive().filter(|_| !archive_away) {
             let _ = fs::remove_file(archive.blob_path(&blob.sha256));
         }
-        lock(db).delete_blob(&blob.sha256)?;
     }
     // The local copy of a file to offload goes only once the archive disk's
     // copy has been read in full and is good; a damaged copy or a detached
@@ -405,7 +460,7 @@ pub fn unplace_plan(
     let archive = store.archive().filter(|a| a.attached());
     // Ollama keeps one file per layer, and models share layers.
     let (manifests, used_elsewhere) = match app {
-        App::Ollama => ollama_use(dirs, repo),
+        App::Ollama => ollama_use(dirs, repo)?,
         _ => Default::default(),
     };
     // Whether the model can leave Ollama whole: every file of it goes, is
@@ -495,10 +550,12 @@ impl Kept {
 
 /// The manifest files of `repo` in Ollama's folder, and the layers that
 /// other models' manifests name.
-fn ollama_use(dirs: &AppDirs, repo: &str) -> (Vec<String>, HashSet<String>) {
+fn ollama_use(dirs: &AppDirs, repo: &str) -> Result<(Vec<String>, HashSet<String>)> {
     let mut own = Vec::new();
     let mut elsewhere = HashSet::new();
-    for found in crate::sources::ollama::manifests_in_use(&dirs.ollama) {
+    // A manifest that cannot be read is an error: its layers would read
+    // as used by nothing.
+    for found in crate::sources::ollama::manifests_in_use(&dirs.ollama)? {
         if found.repo == repo {
             let rel = match found.provider {
                 PROVIDER_HF => Path::new(crate::ollama::HOST).join(repo),
@@ -523,7 +580,7 @@ fn ollama_use(dirs: &AppDirs, repo: &str) -> (Vec<String>, HashSet<String>) {
     // A model Ollama pulled itself is in both trees, and was found twice.
     own.sort();
     own.dedup();
-    (own, elsewhere)
+    Ok((own, elsewhere))
 }
 
 /// The snapshot links in a Hugging Face cache folder that point at one of
@@ -558,12 +615,15 @@ pub fn deactivate(
 ) -> Result<usize> {
     let app = plan.app;
     let done = unplace_apply(db, dirs, plan);
-    let left = || -> usize {
-        lock(db).placements().map_or(0, |all| {
+    // How many files of the model the app still has; `None` when the
+    // database cannot say, which is not "none".
+    let left = || -> Option<usize> {
+        let all = lock(db).placements().ok()?;
+        Some(
             all.iter()
                 .filter(|p| p.repo == plan.repo && p.app == app.as_str())
-                .count()
-        })
+                .count(),
+        )
     };
     crate::activity::record_result(
         store.home(),
@@ -573,8 +633,9 @@ pub fn deactivate(
         &done,
         |removed| match (*removed, left()) {
             (0, _) => None,
-            (_, 0) => Some(crate::activity::deactivated(app)),
-            (removed, left) => Some(crate::activity::partly_deactivated(app, removed, left)),
+            (_, Some(0)) => Some(crate::activity::deactivated(app)),
+            (removed, Some(left)) => Some(crate::activity::partly_deactivated(app, removed, left)),
+            (removed, None) => Some(crate::activity::removed_from(app, removed)),
         },
     );
     done
@@ -601,9 +662,35 @@ pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Resu
     if app == App::Ollama && !plan.remove.iter().all(|f| unchanged(&f.path)) {
         return Ok(0);
     }
+    // A file that changed after the plan was made stays, and so does every
+    // link that names it.
+    let going: HashSet<&str> = plan
+        .remove
+        .iter()
+        .map(|f| f.path.as_str())
+        .filter(|path| unchanged(path))
+        .collect();
+    let links: Vec<&str> = plan
+        .links
+        .iter()
+        .filter(|l| l.goes_with.iter().all(|p| going.contains(p.as_str())))
+        .map(|l| l.path.as_str())
+        .collect();
+    // The names go before the files they name: Ollama's manifests, the
+    // cache's snapshot links. A stop part of the way then leaves files no
+    // name points at, which the next deactivation removes, and never a
+    // model that is listed and cannot load. A name that cannot be removed
+    // stops the work before any file has gone.
+    for link in &links {
+        match fs::remove_file(link) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e).with_context(|| format!("removing {link}")),
+        }
+    }
     let mut removed: HashSet<&str> = HashSet::new();
     for PlannedFile { path, .. } in &plan.remove {
-        if !unchanged(path) {
+        if !going.contains(path.as_str()) {
             continue;
         }
         fs::remove_file(path).with_context(|| format!("removing {path}"))?;
@@ -612,22 +699,24 @@ pub fn unplace_apply(db: &Mutex<Db>, dirs: &AppDirs, plan: &UnplacePlan) -> Resu
         lock(db).delete_placement(path)?;
         removed.insert(path);
     }
-    // A file that changed after the plan was made stays, and so does every
-    // link that names it.
-    let links: Vec<&str> = plan
-        .links
-        .iter()
-        .filter(|l| l.goes_with.iter().all(|p| removed.contains(p.as_str())))
-        .map(|l| l.path.as_str())
-        .collect();
-    for link in &links {
-        let _ = fs::remove_file(link);
-    }
-    if app == App::Hf {
+    if app == App::Hf && !removed.is_empty() {
         let repo_dir = hf_repo_dir(dirs, &plan.repo);
-        if repo_dir.is_dir() && is_empty_tree(&repo_dir.join("blobs")) {
-            // Only names are left: which commit a branch was at, and which
-            // files the provider said do not exist.
+        // Only names may be left: which commit a branch was at (`refs`),
+        // and which files the provider said do not exist (`.no_exist`).
+        // Any file elsewhere in the folder, also one in `snapshots` that
+        // is no link of the cache's, keeps the folder.
+        let only_names_left = repo_dir.is_dir()
+            && is_empty_tree(&repo_dir.join("blobs"))
+            && is_empty_tree(&repo_dir.join("snapshots"))
+            && fs::read_dir(&repo_dir).is_ok_and(|entries| {
+                entries.flatten().all(|e| {
+                    let name = e.file_name();
+                    ["blobs", "snapshots", "refs", ".no_exist", ".DS_Store"]
+                        .iter()
+                        .any(|known| name == *known)
+                })
+            });
+        if only_names_left {
             let _ = fs::remove_dir_all(&repo_dir);
         }
     }

@@ -18,6 +18,11 @@ pub struct Store {
     /// waits for a large one that is being copied back. Files that are in
     /// the store never wait here.
     restoring: std::sync::Mutex<()>,
+    /// One copy to the archive at a time, for the same reason: the
+    /// daemon's backup and an archive the owner asked for may also want
+    /// the same file. Another process beside this one is kept apart by
+    /// the temporary name, which carries the process id.
+    copying: std::sync::Mutex<()>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -72,6 +77,7 @@ impl Store {
             home: home.clone(),
             archive: None,
             restoring: std::sync::Mutex::new(()),
+            copying: std::sync::Mutex::new(()),
         })
     }
 
@@ -80,6 +86,12 @@ impl Store {
     pub fn with_archive(mut self, archive: Option<Home>) -> Self {
         self.archive = archive;
         self
+    }
+
+    /// The turn to copy a file to the archive disk; held while one is
+    /// written.
+    pub(crate) fn copying_to_archive(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.copying.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// The home this store is in.

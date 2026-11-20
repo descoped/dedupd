@@ -2,8 +2,9 @@
 //! archive (out of every app and off the internal disk) and restore.
 
 use crate::{Opened, human};
-use anyhow::Result;
+use anyhow::{Result, bail};
 use dedupd_api::app::App;
+use dedupd_api::moves::{ModelMove, MoveKind};
 use dedupd_core::archive;
 use dedupd_core::maintain::{self, UnplacePlan};
 use std::time::Instant;
@@ -104,6 +105,45 @@ pub fn cmd_deactivate(o: &Opened, repo: &str, apps: Vec<App>, apply: bool) -> Re
     Ok(())
 }
 
+/// Have the daemon archive or restore `repo`, when one runs on this home:
+/// it keeps its download queue away from the model meanwhile, which a
+/// command working beside it cannot. Follows the move to its end and
+/// returns it; `None` when no daemon answers for this home, and the
+/// command then does the work itself.
+fn moved_by_daemon(o: &Opened, repo: &str, kind: MoveKind) -> Result<Option<ModelMove>> {
+    let address = o.config.listen().to_string();
+    let runs_here = dedupd_client::status(address.clone())
+        .is_ok_and(|s| crate::same_folder(std::path::Path::new(&s.home), o.home.root()));
+    if !runs_here {
+        return Ok(None);
+    }
+    eprintln!("The dedupd daemon is running; it does the work.");
+    match kind {
+        MoveKind::Archive => dedupd_client::archive_model(address.clone(), repo.to_string())?,
+        MoveKind::Restore => dedupd_client::restore_model(address.clone(), repo.to_string())?,
+    }
+    let mut said = String::new();
+    loop {
+        std::thread::sleep(std::time::Duration::from_secs(1));
+        let Some(now) = dedupd_client::model_move(address.clone())?
+            .filter(|m| m.kind == kind && m.repo == repo)
+        else {
+            bail!("the daemon no longer tells how the move of {repo} goes; see `dedupd status`");
+        };
+        if !now.running {
+            return match now.error {
+                Some(why) => bail!("{why}"),
+                None => Ok(Some(now)),
+            };
+        }
+        let line = format!("  {} of {}", human(now.bytes_done), human(now.bytes_total));
+        if line != said {
+            eprintln!("{line}");
+            said = line;
+        }
+    }
+}
+
 pub fn cmd_archive(o: &Opened, repo: &str, apply: bool) -> Result<()> {
     let e = &o.engine;
     let plan = archive::archive_plan(&e.db, &e.store, &e.dirs, repo)?;
@@ -139,6 +179,19 @@ pub fn cmd_archive(o: &Opened, repo: &str, apply: bool) -> Result<()> {
         return Ok(());
     }
     let started = Instant::now();
+    if let Some(done) = moved_by_daemon(o, repo, MoveKind::Archive)? {
+        println!(
+            "Archived {repo} in {:.0?}: {} files left the internal disk{}.",
+            started.elapsed(),
+            done.files,
+            match done.kept {
+                0 => String::new(),
+                n => format!("; {n} stayed, because another model or an app still uses them"),
+            }
+        );
+        println!("`dedupd restore {repo}` copies it back.");
+        return Ok(());
+    }
     let mut said = Progress::new("checked", plan.bytes);
     let report =
         archive::archive_apply(&e.db, &e.store, &e.dirs, repo, &mut |size| said.add(size))?;
@@ -182,6 +235,14 @@ pub fn cmd_restore(o: &Opened, repo: &str) -> Result<()> {
         plan.archive
     );
     let started = Instant::now();
+    if let Some(done) = moved_by_daemon(o, repo, MoveKind::Restore)? {
+        println!(
+            "Restored {repo} in {:.0?}: {} files. It is in no app yet; `dedupd activate <model> --for <apps>` puts it into one.",
+            started.elapsed(),
+            done.files
+        );
+        return Ok(());
+    }
     let mut said = Progress::new("copied", plan.bytes);
     let report = match archive::restore(&e.db, &e.store, repo, &mut |size| said.add(size)) {
         Ok(report) => report,

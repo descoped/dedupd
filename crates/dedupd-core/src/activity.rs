@@ -44,6 +44,16 @@ pub fn activated(app: App) -> String {
     format!("Activated in {}", app.title())
 }
 
+/// The sentence for files removed from `app` when nothing says how many
+/// of the model's files it still has.
+pub fn removed_from(app: App, removed: usize) -> String {
+    format!(
+        "Removed {} from {}; how much of the model is left there could not be read",
+        count(removed as u64, "file"),
+        app.title()
+    )
+}
+
 /// The sentence for a model taken out of `app`.
 pub fn deactivated(app: App) -> String {
     format!("Deactivated in {}", app.title())
