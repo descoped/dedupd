@@ -58,19 +58,25 @@ The apps are named `bionic`, `ollama` and `hf` (the Hugging Face cache; `mlx` an
 
 | Command | What it does |
 |---|---|
-| `dedupd forget <repo>` | Drop a model from the library, so `gc` can remove its files. |
+| `dedupd forget <repo>` | Say what dropping a model from the library would drop; `--apply` drops its records, so `gc` can remove its files. Refused while an app holds the model. |
 | `dedupd gc` | Show stored files nothing refers to; `--apply` removes them. `--offload` also lists local copies of files that are on the archive disk and in no app. |
 
 ## The daemon
 
 | Command | What it does |
 |---|---|
-| `dedupd serve` | Run the daemon in the foreground. |
+| `dedupd serve` | Run the daemon in the foreground. One daemon runs on a home; a second one is refused. |
 | `dedupd install` | Run the daemon at login, as a launchd agent. `--env` also points apps started from the Dock or Finder at it. |
 | `dedupd uninstall` | Stop the daemon and remove the agent. The store stays. |
-| `dedupd stop` / `dedupd start` | Stop the daemon until the next login, and start it again. |
+| `dedupd stop` / `dedupd start` | Stop the daemon until the next login, and start it again. `stop` and `uninstall` also take `HF_ENDPOINT` out of the login session when it names the daemon's address. |
 | `dedupd agent` | Whether the agent is installed and running. `--json` for scripts. |
 | `dedupd env` | Print the settings that point Hugging Face tools and Ollama at the daemon. |
+
+When the daemon runs, `pull`, `activate`, `deactivate --apply`, `archive --apply`, `restore`, `forget --apply` and
+`gc --apply` are sent to it, so one process downloads and removes. Without a daemon the command does the work itself.
+
+The daemon cuts its log (`~/.dedupd/daemon.log`) back to the last megabyte when it starts and finds it larger than
+16 MB.
 
 `dedupd env` prints:
 
@@ -103,7 +109,8 @@ ollama pull --insecure 127.0.0.1:8642/org/repo:Q4_K_M
 # A folder on another disk for the second copy of every stored file.
 archive = "/Volumes/Archive/dedupd"
 
-# The address the daemon listens on.
+# The address the daemon listens on. It must be an address of this Mac itself
+# (127.0.0.1, [::1] or localhost); any other is refused.
 listen = "127.0.0.1:8642"
 
 # The Hugging Face endpoint the daemon fetches from. Default https://huggingface.co.

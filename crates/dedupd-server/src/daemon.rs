@@ -2,14 +2,14 @@
 //! own, bring it into the store, free the duplicate space, and keep the
 //! archive disk current.
 
-use crate::Server;
+use crate::{Server, epoch, held};
 use dedupd_api::app::App;
 use dedupd_api::daemon::{ScanResult, StoreCheck};
 use dedupd_core::adopt::{self, Action, Options};
 use dedupd_core::sources::LocalRepo;
 use dedupd_core::store::Fingerprint;
 use dedupd_core::{archive, maintain};
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
@@ -28,6 +28,13 @@ pub(crate) struct PassState {
     /// (damaged, or nothing refers to them), by sha256, as they looked
     /// then. They are not read again until they change.
     store_looked_at: Mutex<Seen>,
+    /// App files dated after now, as they looked at the last pass. Such a
+    /// file's age says nothing; it counts as left alone once it has not
+    /// changed from one pass to the next.
+    dated_ahead: Mutex<Seen>,
+    /// What the last pass could not do, as it was logged: the same failure
+    /// is said once, not on every pass.
+    said: Mutex<BTreeSet<String>>,
     /// Serialises the background pass and requests to run one now.
     lock: tokio::sync::Mutex<()>,
 }
@@ -35,14 +42,39 @@ pub(crate) struct PassState {
 /// Files by path or sha256, as they looked when they were looked at.
 type Seen = HashMap<String, Fingerprint>;
 
-/// How long ago the file was last written. `None` when it cannot be read.
+/// How long ago the file was last written. `None` when it cannot be read,
+/// and nothing at all for a file dated after now (a clock that was set
+/// back, a file copied from another machine).
 fn file_age(path: &Path) -> Option<Duration> {
     let modified = std::fs::metadata(path).and_then(|m| m.modified()).ok()?;
-    SystemTime::now().duration_since(modified).ok()
+    Some(
+        SystemTime::now()
+            .duration_since(modified)
+            .unwrap_or(Duration::ZERO),
+    )
+}
+
+fn dated_ahead(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .is_ok_and(|modified| modified > SystemTime::now())
 }
 
 fn settled(path: &Path, settle: Duration) -> bool {
     file_age(path).is_some_and(|age| age >= settle)
+}
+
+/// Log what a pass could not do. A failure that lasts (a full archive
+/// disk, a folder that cannot be read) is said when it first appears and
+/// again when it comes back, not every few minutes.
+pub(crate) fn say(server: &Server, errors: &[String]) {
+    let mut said = held(&server.passes.said);
+    for e in errors {
+        if !said.contains(e) {
+            eprintln!("dedupd: {e}");
+        }
+    }
+    *said = errors.iter().cloned().collect();
 }
 
 /// One round of background work.
@@ -65,16 +97,28 @@ pub async fn pass_with(
         })
         .await?;
     }
+    // Each step stands by itself: what one could not do goes into the
+    // report, and the steps after it are still taken. A folder of one app
+    // that cannot be read does not keep the archive disk from its update.
     let mut report = ScanResult::default();
     let (repos, scanned) = {
         let server = server.clone();
-        tokio::task::spawn_blocking(move || new_files(&server, settle)).await??
+        tokio::task::spawn_blocking(move || new_files(&server, settle)).await?
     };
     report.forgotten = scanned.forgotten as u64;
-    adopt_new(server, repos, &scanned.files, &mut report).await?;
-    recognise_stored(server, &mut report).await?;
-    if server.config.reclaim() {
-        reclaim_duplicates(server, reclaim_age, &mut report).await?;
+    report.errors.extend(scanned.errors.iter().cloned());
+    if let Err(e) = adopt_new(server, repos, &scanned.files, &mut report).await {
+        report.errors.push(format!("adoption: {e:#}"));
+    }
+    if let Err(e) = recognise_stored(server, &mut report).await {
+        report
+            .errors
+            .push(format!("the store could not be looked through: {e:#}"));
+    }
+    if server.config.reclaim()
+        && let Err(e) = reclaim_duplicates(server, reclaim_age, &mut report).await
+    {
+        report.errors.push(format!("reclaim: {e:#}"));
     }
     update_archive(server, &mut report).await?;
     if report.forgotten + report.adopted + report.recognised + report.reclaimed + report.archived
@@ -91,7 +135,7 @@ pub async fn pass_with(
 async fn recognise_stored(server: &Arc<Server>, report: &mut ScanResult) -> anyhow::Result<()> {
     let server = server.clone();
     let found = tokio::task::spawn_blocking(move || {
-        let mut looked_at = server.passes.store_looked_at.lock().expect("lock");
+        let mut looked_at = held(&server.passes.store_looked_at);
         adopt::recognise_stored(&server.engine.db, &server.engine.store, &mut looked_at)
     })
     .await??;
@@ -118,15 +162,31 @@ struct Scanned {
     forgotten: usize,
     /// Every app file there is now.
     files: Seen,
+    /// What could not be looked at, in sentences.
+    errors: Vec<String>,
 }
 
 /// The app files worth hashing: new or changed, not known to fail, and left
 /// alone for `settle`. Only their repositories are worth asking Hugging Face
 /// about.
-fn new_files(server: &Server, settle: Duration) -> anyhow::Result<(Vec<LocalRepo>, Scanned)> {
+fn new_files(server: &Server, settle: Duration) -> (Vec<LocalRepo>, Scanned) {
     let engine = &server.engine;
-    let forgotten = maintain::prune_placements(&engine.db)?;
-    let mut repos = adopt::scan_apps(&engine.db, &engine.dirs, &App::ALL)?;
+    let mut errors = Vec::new();
+    let forgotten = maintain::prune_placements(&engine.db).unwrap_or_else(|e| {
+        errors.push(format!("the records of the apps' files: {e:#}"));
+        0
+    });
+    // One app at a time: a folder that cannot be read is that app's.
+    let mut repos = Vec::new();
+    for app in App::ALL {
+        match adopt::scan_apps(&engine.db, &engine.dirs, &[app]) {
+            Ok(found) => repos.extend(found),
+            Err(e) => errors.push(format!(
+                "the folder of {} could not be read: {e:#}",
+                app.as_str()
+            )),
+        }
+    }
     let files: Seen = repos
         .iter()
         .flat_map(|r| &r.files)
@@ -134,7 +194,7 @@ fn new_files(server: &Server, settle: Duration) -> anyhow::Result<(Vec<LocalRepo
         .collect();
     {
         let db = engine.db();
-        let mut failed = server.passes.failed_adoptions.lock().expect("lock");
+        let mut failed = held(&server.passes.failed_adoptions);
         // A file that failed and has changed since gets another try.
         failed.retain(|path, seen| files.get(path) == Some(seen));
         for repo in &mut repos {
@@ -150,11 +210,30 @@ fn new_files(server: &Server, settle: Duration) -> anyhow::Result<(Vec<LocalRepo
         }
     }
     // The database is free again while the files are looked at.
+    let mut ahead = held(&server.passes.dated_ahead);
+    let mut ahead_now = Seen::new();
     for repo in &mut repos {
-        repo.files.retain(|f| settled(&f.abs_path, settle));
+        repo.files.retain(|f| {
+            if !dated_ahead(&f.abs_path) {
+                return settled(&f.abs_path, settle);
+            }
+            let path = f.abs_path.to_string_lossy().into_owned();
+            let unchanged = ahead.get(&path) == Some(&f.fingerprint);
+            ahead_now.insert(path, f.fingerprint);
+            unchanged
+        });
     }
+    *ahead = ahead_now;
+    drop(ahead);
     repos.retain(|r| !r.files.is_empty());
-    Ok((repos, Scanned { forgotten, files }))
+    (
+        repos,
+        Scanned {
+            forgotten,
+            files,
+            errors,
+        },
+    )
 }
 
 /// Bring the new files into the store, and remember the ones that failed as
@@ -191,7 +270,7 @@ async fn adopt_new(
         }
         for (path, reason) in outcome.errors {
             if let Some(seen) = scanned.get(&path) {
-                let mut failed = server.passes.failed_adoptions.lock().expect("lock");
+                let mut failed = held(&server.passes.failed_adoptions);
                 failed.insert(path.clone(), *seen);
             }
             report.errors.push(format!("{path}: {reason}"));
@@ -263,18 +342,11 @@ fn watch(
     (watching > 0).then_some((watcher, rx))
 }
 
-fn epoch() -> i64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 /// Hash the whole store and write the result where the owner can read it.
 /// Does nothing when a check is already running.
 pub async fn check_store(server: Arc<Server>) {
     {
-        let mut check = server.check.lock().expect("lock");
+        let mut check = held(&server.check);
         if check.running {
             return;
         }
@@ -290,7 +362,7 @@ pub async fn check_store(server: Arc<Server>) {
         tokio::task::spawn_blocking(move || maintain::verify(&engine.db, &engine.store, false, 2))
             .await;
     {
-        let mut check = server.check.lock().expect("lock");
+        let mut check = held(&server.check);
         check.running = false;
         check.finished_at = Some(epoch());
         match done {
@@ -310,7 +382,11 @@ pub async fn check_store(server: Arc<Server>) {
                     "dedupd: store check: {}",
                     summary.lines().next().unwrap_or("")
                 );
-                let _ = std::fs::write(server.home.last_verify_path(), summary);
+                // Without the note the next check is due at once; the
+                // time of this one is also kept in memory (`check_due`).
+                if let Err(e) = std::fs::write(server.home.last_verify_path(), summary) {
+                    eprintln!("dedupd: the store check's note could not be written: {e}");
+                }
                 check.checked = r.checked as u64;
                 check.bytes = r.bytes;
                 check.only_in_archive = r.only_in_archive as u64;
@@ -328,6 +404,9 @@ pub async fn check_store(server: Arc<Server>) {
             }
             Ok(Err(e)) => check.error = Some(format!("{e:#}")),
             Err(e) => check.error = Some(e.to_string()),
+        }
+        if let Some(why) = &check.error {
+            eprintln!("dedupd: store check: {why}");
         }
     }
     server.touch();
@@ -353,7 +432,13 @@ async fn scheduled_verify(server: Arc<Server>) {
     let marker = server.home.last_verify_path();
     let due =
         days > 0 && file_age(&marker).is_none_or(|age| age >= Duration::from_secs(days * 86_400));
-    if due {
+    // A check that failed left no note. It is tried again a day later, not
+    // after every pass: a failure late in a large store would otherwise
+    // have the whole store hashed again and again.
+    let tried_lately = held(&server.check)
+        .finished_at
+        .is_some_and(|at| epoch().saturating_sub(at) < 86_400);
+    if due && !tried_lately {
         check_store(server).await;
     }
 }
@@ -375,11 +460,9 @@ pub async fn run(server: Arc<Server>) {
                         r.adopted, r.recognised, r.reclaimed, r.archived, r.forgotten
                     );
                 }
-                for e in r.errors {
-                    eprintln!("dedupd: {e}");
-                }
+                say(&server, &r.errors);
             }
-            Err(e) => eprintln!("dedupd: background pass failed: {e:#}"),
+            Err(e) => say(&server, &[format!("background pass failed: {e:#}")]),
         }
         if check.as_ref().is_none_or(|c| c.is_finished()) {
             check = Some(tokio::spawn(scheduled_verify(server.clone())));
@@ -395,13 +478,32 @@ pub async fn run(server: Arc<Server>) {
             Some((_, events)) => {
                 tokio::select! {
                     _ = &mut timer => {}
-                    _ = events.recv() => {
+                    first = events.recv() => {
                         // Wait until the folders have been quiet long enough
-                        // for the new files to count as settled.
+                        // for the new files to count as settled, but never
+                        // longer than the timer would have: an app that
+                        // writes for an hour does not hold off the passes,
+                        // which skip the files still being written.
                         let quiet = SETTLE + Duration::from_secs(2);
-                        while let Ok(Some(())) =
-                            tokio::time::timeout(quiet, events.recv()).await
-                        {}
+                        let latest = tokio::time::Instant::now() + every.max(quiet);
+                        let mut open = first.is_some();
+                        while open {
+                            let left = latest.saturating_duration_since(tokio::time::Instant::now());
+                            if left.is_zero() {
+                                break;
+                            }
+                            match tokio::time::timeout(quiet.min(left), events.recv()).await {
+                                Ok(Some(())) => {}
+                                Ok(None) => open = false,
+                                Err(_) => break,
+                            }
+                        }
+                        // The watcher is gone: watch again, and wait for
+                        // the timer meanwhile.
+                        if !open {
+                            watched = None;
+                            timer.await;
+                        }
                     }
                 }
             }

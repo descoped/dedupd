@@ -32,7 +32,78 @@ unsafe extern "C" {
     fn libc_getuid() -> u32;
 }
 
+/// Whether the text can be a launchd label: letters, digits, `.`, `-` and
+/// `_`, and no `..`. The label becomes a file name under `LaunchAgents` and
+/// a name launchd is asked about, so nothing in it may leave that folder.
+fn is_label(label: &str) -> bool {
+    !label.is_empty()
+        && label.len() <= 128
+        && !label.contains("..")
+        && !label.starts_with('.')
+        && label
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_.".contains(c))
+}
+
+/// Whether an agent file is one dedupd wrote: its program is a `dedupd`
+/// and its last argument is `serve`. `install` and `uninstall` touch no
+/// other program's agent, whatever label they were given.
+fn is_ours(plist: &str) -> bool {
+    let Some(arguments) = plist
+        .split_once("<key>ProgramArguments</key>")
+        .and_then(|(_, rest)| rest.split_once("</array>"))
+        .map(|(arguments, _)| arguments)
+    else {
+        return false;
+    };
+    let strings: Vec<&str> = arguments
+        .split("<string>")
+        .skip(1)
+        .filter_map(|s| s.split_once("</string>").map(|(text, _)| text))
+        .collect();
+    let program = strings.first().is_some_and(|p| {
+        Path::new(p)
+            .file_name()
+            .is_some_and(|name| name == "dedupd")
+    });
+    program && strings.last() == Some(&"serve")
+}
+
+/// The agent file for `label`, refused when the label is none, or when a
+/// file is there that dedupd did not write.
+fn our_plist(label: &str) -> Result<PathBuf> {
+    let path = plist_path(label)?;
+    match std::fs::read_to_string(&path) {
+        Ok(text) if !is_ours(&text) => bail!(
+            "{} is not an agent of dedupd; it is left as it is",
+            path.display()
+        ),
+        Ok(_) => Ok(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(path),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
+    }
+}
+
+/// Take `HF_ENDPOINT` out of the login session when it still names this
+/// daemon's address. One the owner set himself, or another daemon's, stays.
+/// True when it was taken out.
+fn unset_endpoint(home: &Path) -> bool {
+    let Ok(config) = dedupd_core::config::Config::load(&dedupd_core::Home::new(home)) else {
+        return false;
+    };
+    let ours = format!("http://{}", config.listen());
+    let set = launchctl(&["getenv", "HF_ENDPOINT"])
+        .is_ok_and(|out| String::from_utf8_lossy(&out.stdout).trim() == ours);
+    set && launchctl(&["unsetenv", "HF_ENDPOINT"]).is_ok_and(|out| out.status.success())
+}
+
+const ENDPOINT_UNSET: &str =
+    "HF_ENDPOINT no longer points apps started from the Dock or Finder at the daemon.";
+
 fn plist_path(label: &str) -> Result<PathBuf> {
+    if !is_label(label) {
+        bail!("{label:?} is not a launchd label (letters, digits, '.', '-' and '_')");
+    }
     let home = std::env::var_os("HOME").context("HOME is not set")?;
     Ok(PathBuf::from(home)
         .join("Library/LaunchAgents")
@@ -128,8 +199,10 @@ pub fn cmd_install(o: &Opened, env: bool, label: &str) -> Result<()> {
     // cleaning the source tree cannot break the daemon.
     let built = std::env::current_exe().context("finding the dedupd binary")?;
     let exe = o.home.program_path();
+    // Before anything is written: the label is one, and no other
+    // program's agent is at its name.
+    let path = our_plist(label)?;
     install_program(&built, &exe)?;
-    let path = plist_path(label)?;
     let log = o.home.log_path();
     std::fs::create_dir_all(path.parent().expect("plist has a parent"))?;
     write_whole(
@@ -176,15 +249,19 @@ pub fn cmd_install(o: &Opened, env: bool, label: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn cmd_uninstall(label: &str) -> Result<()> {
-    let path = plist_path(label)?;
+pub fn cmd_uninstall(home: &Path, label: &str) -> Result<()> {
+    let path = our_plist(label)?;
+    // launchd is asked to let go also when the file is gone already.
     let _ = launchctl(&["bootout", &format!("gui/{}/{label}", uid())]);
-    if label == LABEL {
-        let _ = launchctl(&["unsetenv", "HF_ENDPOINT"]);
-    }
     match std::fs::remove_file(&path) {
         Ok(()) => println!("Stopped the daemon and removed {}.", path.display()),
-        Err(_) => println!("No agent was installed at {}.", path.display()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            println!("No agent was installed at {}.", path.display());
+        }
+        Err(e) => return Err(e).with_context(|| format!("removing {}", path.display())),
+    }
+    if unset_endpoint(home) {
+        println!("{ENDPOINT_UNSET}");
     }
     Ok(())
 }
@@ -195,7 +272,7 @@ fn loaded(label: &str) -> bool {
 
 /// Start the installed agent's daemon.
 pub fn cmd_start(label: &str) -> Result<()> {
-    let path = plist_path(label)?;
+    let path = our_plist(label)?;
     if !path.is_file() {
         bail!("no agent is installed; run `dedupd install` first");
     }
@@ -220,7 +297,8 @@ pub fn cmd_start(label: &str) -> Result<()> {
 
 /// Stop the daemon and leave the agent installed, so it starts again at the
 /// next login.
-pub fn cmd_stop(label: &str) -> Result<()> {
+pub fn cmd_stop(home: &Path, label: &str) -> Result<()> {
+    our_plist(label)?;
     if !loaded(label) {
         println!("The daemon is not running.");
         return Ok(());
@@ -233,6 +311,11 @@ pub fn cmd_stop(label: &str) -> Result<()> {
         );
     }
     println!("Stopped the daemon. It starts again at the next login, or with `dedupd start`.");
+    // Apps would otherwise be pointed at an address nobody answers on;
+    // the daemon sets it again when it starts.
+    if unset_endpoint(home) {
+        println!("{ENDPOINT_UNSET}");
+    }
     Ok(())
 }
 
@@ -243,19 +326,33 @@ fn version_of(exe: &Path) -> Option<String> {
     text.split_whitespace().last().map(str::to_string)
 }
 
-/// Say whether the agent is installed and running, and which dedupd it runs.
 /// Whether two files hold the same bytes. False when either cannot be read.
+/// Read a piece at a time: the two are programs of some tens of megabytes.
 fn same_file(a: &Path, b: &Path) -> bool {
+    use std::io::Read;
     let size = |p: &Path| std::fs::metadata(p).map(|m| m.len()).ok();
-    match (size(a), size(b)) {
-        (Some(x), Some(y)) if x == y => match (std::fs::read(a), std::fs::read(b)) {
-            (Ok(x), Ok(y)) => x == y,
-            _ => false,
-        },
-        _ => false,
+    if size(a).is_none() || size(a) != size(b) {
+        return false;
+    }
+    let (Ok(mut a), Ok(mut b)) = (std::fs::File::open(a), std::fs::File::open(b)) else {
+        return false;
+    };
+    let (mut x, mut y) = (vec![0u8; 1 << 16], vec![0u8; 1 << 16]);
+    loop {
+        let Ok(n) = a.read(&mut x) else {
+            return false;
+        };
+        if n == 0 {
+            // The lengths were equal, so the other has ended too.
+            return true;
+        }
+        if b.read_exact(&mut y[..n]).is_err() || x[..n] != y[..n] {
+            return false;
+        }
     }
 }
 
+/// Say whether the agent is installed and running, and which dedupd it runs.
 pub fn cmd_agent(home: &Path, label: &str, json: bool) -> Result<()> {
     let plist = plist_path(label)?;
     let home = dedupd_core::Home::new(home);
@@ -268,18 +365,19 @@ pub fn cmd_agent(home: &Path, label: &str, json: bool) -> Result<()> {
         .ok()
         .is_some_and(|me| same_file(&me, &program));
     if json {
-        let state = serde_json::json!({
-            "label": label,
-            "plist": plist,
-            "installed": installed,
-            "running": running,
-            "home": home.root(),
-            "program": program,
-            "installed_version": installed_version,
-            "same_build": same_build,
-            "version": env!("CARGO_PKG_VERSION"),
-            "log": home.log_path(),
-        });
+        let text = |path: &Path| path.to_string_lossy().into_owned();
+        let state = dedupd_api::daemon::AgentState {
+            label: label.to_string(),
+            plist: text(&plist),
+            installed,
+            running,
+            home: text(home.root()),
+            program: text(&program),
+            installed_version,
+            same_build,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            log: text(&home.log_path()),
+        };
         println!("{}", serde_json::to_string_pretty(&state)?);
         return Ok(());
     }
@@ -337,7 +435,41 @@ mod tests {
         assert!(same_file(&a, &b));
         assert!(!same_file(&a, &c));
         assert!(!same_file(&a, &dir.join("missing")));
+        // Longer than one piece, and different only at the end.
+        let (d, e) = (dir.join("d"), dir.join("e"));
+        let mut long = vec![7u8; 200_000];
+        std::fs::write(&d, &long).unwrap();
+        std::fs::write(&e, &long).unwrap();
+        assert!(same_file(&d, &e));
+        *long.last_mut().unwrap() = 8;
+        std::fs::write(&e, &long).unwrap();
+        assert!(!same_file(&d, &e));
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn a_label_is_a_name_and_an_agent_file_is_dedupds_own() {
+        for label in [LABEL, "io.descoped.dedupd.trial", "a_b-c.1"] {
+            assert!(is_label(label), "{label}");
+        }
+        for label in ["", "../x", "a/b", "a b", ".hidden", "a..b", "x;y"] {
+            assert!(!is_label(label), "{label}");
+            assert!(plist_path(label).is_err(), "{label}");
+        }
+        assert!(is_ours(&plist(
+            LABEL,
+            "/h/bin/dedupd",
+            "/h",
+            "/h/daemon.log"
+        )));
+        // Another program's agent, and a file that is no agent at all.
+        let other =
+            plist(LABEL, "/h/bin/dedupd", "/h", "/l").replace("/h/bin/dedupd", "/usr/bin/other");
+        assert!(!is_ours(&other));
+        let no_serve =
+            plist(LABEL, "/h/bin/dedupd", "/h", "/l").replace("<string>serve</string>", "");
+        assert!(!is_ours(&no_serve));
+        assert!(!is_ours("not a plist"));
     }
 
     #[test]

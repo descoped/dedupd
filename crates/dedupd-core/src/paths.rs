@@ -63,6 +63,12 @@ impl Home {
         self.root.join("activity.jsonl")
     }
 
+    /// Held by the daemon for as long as it serves, so a second one does
+    /// not open the same home.
+    pub fn daemon_lock_path(&self) -> PathBuf {
+        self.root.join("daemon.lock")
+    }
+
     /// Held while an entry is added to the activity file.
     pub fn activity_lock_path(&self) -> PathBuf {
         self.root.join("activity.lock")

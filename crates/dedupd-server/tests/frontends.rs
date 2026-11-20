@@ -2149,3 +2149,184 @@ async fn control_api_answers_match_the_recorded_ones() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_pass_goes_on_when_one_apps_folder_cannot_be_read() {
+    use dedupd_server::daemon;
+    use std::os::unix::fs::PermissionsExt;
+    let fx = fixture().await;
+    let dirs = fx.server.engine.dirs.clone();
+    let zero = Duration::ZERO;
+    let bionic = dirs.bionic.join(REPO);
+    std::fs::create_dir_all(bionic.join("sub")).unwrap();
+    std::fs::write(bionic.join("model.gguf"), &fx.weights).unwrap();
+    std::fs::write(bionic.join("sub/config.json"), &fx.config).unwrap();
+    // Ollama's manifests cannot be read.
+    let closed = dirs.ollama.join("manifests/hf.co");
+    std::fs::create_dir_all(closed.join("org")).unwrap();
+    let shut = |mode| std::fs::set_permissions(&closed, std::fs::Permissions::from_mode(mode));
+    shut(0o000).unwrap();
+
+    let pass = daemon::pass_with(&fx.server, zero, zero).await;
+    shut(0o755).unwrap();
+    let pass = pass.unwrap();
+    // Bionic's model is adopted all the same, and the pass says what it
+    // could not look at.
+    assert_eq!(pass.adopted, 2, "{:?}", pass.errors);
+    assert_eq!(pass.errors.len(), 1, "{:?}", pass.errors);
+    assert!(
+        pass.errors[0].starts_with("the folder of ollama could not be read"),
+        "{:?}",
+        pass.errors
+    );
+    assert!(fx.server.engine.store.contains(&sha256(&fx.weights)));
+}
+
+#[tokio::test]
+async fn a_download_that_is_not_there_and_one_that_cannot_be_paused_are_two_answers() {
+    let fx = fixture().await;
+    let (status, said) = control(&fx, "POST", "downloads/41/pause", None).await;
+    assert_eq!(status, 404, "{said}");
+    let (status, _) = control(&fx, "GET", "downloads/41", None).await;
+    assert_eq!(status, 404);
+    let job = download(&fx, json!({"model": REPO, "apps": []})).await;
+    let id = job["job"]["id"].as_i64().unwrap();
+    let (status, said) = control(&fx, "POST", &format!("downloads/{id}/pause"), None).await;
+    assert_eq!(status, 409, "{said}");
+    assert!(
+        said["error"].as_str().unwrap().contains("cannot be paused"),
+        "{said}"
+    );
+    // A name that is none is the caller's mistake.
+    let (status, said) = control(&fx, "POST", "downloads", Some(json!({"model": "no"}))).await;
+    assert_eq!(status, 400, "{said}");
+}
+
+/// Send a request line as it is written here: an HTTP client would tidy the
+/// path before it is sent. Returns the status.
+async fn raw_status(fx: &Fixture, line: &str) -> u16 {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let addr = fx.base.strip_prefix("http://").unwrap();
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let request = format!("{line} HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\n\r\n");
+    stream.write_all(request.as_bytes()).await.unwrap();
+    let mut answer = Vec::new();
+    stream.read_to_end(&mut answer).await.unwrap();
+    let answer = String::from_utf8_lossy(&answer);
+    answer.split(' ').nth(1).unwrap().parse().unwrap()
+}
+
+#[tokio::test]
+async fn a_path_or_a_name_that_climbs_reaches_nothing_on_the_provider() {
+    let fx = fixture_with_token().await;
+    for line in [
+        format!("GET /{REPO}/resolve/main/../../../api/whoami-v2"),
+        format!("GET /{REPO}/resolve/main/%2e%2e/%2E%2e/%2e%2e/api/whoami-v2"),
+        "GET /api/models/../whoami-v2".to_string(),
+        "GET /v2/org/../api/whoami-v2/manifests/latest".to_string(),
+    ] {
+        assert_eq!(raw_status(&fx, &line).await, 400, "{line}");
+    }
+    // The registry takes a model's name and a tag, and nothing else.
+    let sha = sha256(&fx.weights);
+    for path in [
+        "/v2/one/manifests/latest".to_string(),
+        "/v2/a/b/c/manifests/latest".to_string(),
+        format!("/v2/{REPO}/manifests/la%3Ftest"),
+        format!("/v2/org/blobs/sha256:{sha}"),
+        format!("/dedupd/blob/sha256:{sha}?repo=org"),
+        format!("/dedupd/blob/sha256:{sha}?repo=../api/whoami-v2?x="),
+    ] {
+        let answer = fx.http.get(format!("{}{path}", fx.base)).send().await;
+        assert_eq!(answer.unwrap().status(), 404, "{path}");
+    }
+    assert!(
+        fx.upstream.received_requests().await.unwrap().is_empty(),
+        "nothing of this reaches the provider"
+    );
+}
+
+#[tokio::test]
+async fn a_body_that_is_too_long_is_said_to_be_that() {
+    let fx = fixture().await;
+    let long = vec![b'a'; 16 * 1024 * 1024 + 1];
+    let answer = fx
+        .http
+        .post(format!("{}/dedupd/v1/downloads", fx.base))
+        .body(long)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(answer.status(), 413);
+    assert!(answer.text().await.unwrap().contains("16 MiB"));
+}
+
+#[tokio::test]
+async fn a_burst_of_requests_for_one_model_asks_the_provider_once() {
+    let fx = fixture().await;
+    let ask = || {
+        fx.http
+            .head(format!("{}/{REPO}/resolve/main/model.gguf", fx.base))
+            .send()
+    };
+    let answers = futures_util::future::join_all((0..8).map(|_| ask())).await;
+    for answer in answers {
+        assert_eq!(answer.unwrap().status(), 200);
+    }
+    assert_eq!(upstream_hits(&fx, "/revision/main").await, 1);
+}
+
+#[tokio::test]
+async fn the_registrys_failures_and_a_range_past_the_end_are_answered_as_they_are() {
+    let fx = fixture().await;
+    // The Hub's token challenge is not passed on: Ollama refuses one that
+    // names another host.
+    Mock::given(method("GET"))
+        .and(path(format!("/v2/{REPO}/manifests/Q8_0")))
+        .respond_with(ResponseTemplate::new(401).insert_header(
+            "www-authenticate",
+            "Bearer realm=\"https://huggingface.co/v2/token\"",
+        ))
+        .mount(&fx.upstream)
+        .await;
+    let refused = fx
+        .http
+        .get(format!("{}/v2/{REPO}/manifests/Q8_0", fx.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(refused.status(), 401);
+    assert!(refused.headers().get("www-authenticate").is_none());
+
+    // A layer that is not stored: the Hub's own answer to the HEAD.
+    let sha = sha256(b"not a layer anyone has");
+    let head = fx
+        .http
+        .head(format!("{}/v2/{REPO}/blobs/sha256:{sha}", fx.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(head.status(), 404);
+
+    // A stored file asked for past its end.
+    let whole = fx
+        .http
+        .get(format!("{}/{REPO}/resolve/main/model.gguf", fx.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(whole.bytes().await.unwrap(), fx.weights);
+    wait_for_store(&fx, &sha256(&fx.weights)).await;
+    let past = fx
+        .http
+        .get(format!("{}/{REPO}/resolve/main/model.gguf", fx.base))
+        .header("range", "bytes=999999999-")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(past.status(), 416);
+    assert_eq!(
+        past.headers()["content-range"],
+        format!("bytes */{}", fx.weights.len()).as_str()
+    );
+}

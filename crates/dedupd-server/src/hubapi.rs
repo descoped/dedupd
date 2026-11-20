@@ -5,7 +5,7 @@ use crate::proxy::{
     is_down, mirror_url, pass_through, relay, relay_head, relay_or_unreachable, unreachable,
     upstream,
 };
-use crate::{Call, Server, files, json, plain};
+use crate::{Call, Server, files, held, json, plain};
 use axum::body::Body;
 use axum::http::{StatusCode, header};
 use axum::response::Response;
@@ -15,11 +15,54 @@ use dedupd_core::fetch::Unwatched;
 use dedupd_core::hub::is_commit;
 use dedupd_core::hub::{HubError, Snapshot, TreeEntry};
 use serde_json::Value;
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// How long a branch name is trusted to still point at the same commit.
 const REF_TTL: Duration = Duration::from_secs(60);
+
+/// When each branch or tag name was last resolved, and which are being
+/// asked about now.
+#[derive(Default)]
+pub(crate) struct Refs {
+    seen: Mutex<HashMap<(String, String), Instant>>,
+    /// One lock for each model, revision and `Authorization` being asked
+    /// about: a burst of requests for one waits for the first one's answer.
+    asking: Mutex<HashMap<Asking, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+type Asking = (String, String, String);
+
+impl Refs {
+    fn is_fresh(&self, repo: &str, rev: &str) -> bool {
+        held(&self.seen)
+            .get(&(repo.to_string(), rev.to_string()))
+            .is_some_and(|at| at.elapsed() < REF_TTL)
+    }
+
+    fn note(&self, repo: &str, rev: &str) {
+        let mut seen = held(&self.seen);
+        seen.retain(|_, at| at.elapsed() < REF_TTL);
+        seen.insert((repo.to_string(), rev.to_string()), Instant::now());
+    }
+
+    fn asking(&self, repo: &str, rev: &str, auth: Option<&str>) -> Arc<tokio::sync::Mutex<()>> {
+        let mut asking = held(&self.asking);
+        // The ones nobody holds any more.
+        asking.retain(|_, one| Arc::strong_count(one) > 1);
+        let key = (
+            repo.to_string(),
+            rev.to_string(),
+            auth.unwrap_or("").to_string(),
+        );
+        asking.entry(key).or_default().clone()
+    }
+
+    pub(crate) fn clear(&self) {
+        held(&self.seen).clear();
+    }
+}
 
 /// A revision dedupd can answer for.
 pub(crate) struct Rev {
@@ -59,9 +102,20 @@ fn strip_xet(value: &mut Value) {
 }
 
 impl Server {
-    pub(crate) fn archived(&self, repo: &str, rev: &str) -> Option<Snapshot> {
-        let found = self.engine.db().archived(PROVIDER_HF, repo, rev);
-        found.ok()?.map(|(_, snap)| snap)
+    /// What is kept of `repo@rev`. A database that cannot be read is said
+    /// in the log and counts as nothing kept.
+    pub(crate) async fn archived(&self, repo: &str, rev: &str) -> Option<Snapshot> {
+        let (name, at) = (repo.to_string(), rev.to_string());
+        let found = self
+            .off(move |e| e.db().archived(PROVIDER_HF, &name, &at))
+            .await;
+        match found {
+            Ok(found) => found.map(|(_, snap)| snap),
+            Err(e) => {
+                eprintln!("dedupd: reading what is kept of {repo}@{rev}: {e:#}");
+                None
+            }
+        }
     }
 
     /// Find out what `repo@rev` contains: from upstream when it answers, from
@@ -71,46 +125,55 @@ impl Server {
     /// `rev` is the revision as the request's path has it: one segment,
     /// in which `huggingface_hub` writes `refs/pr/3` as `refs%2Fpr%2F3`.
     /// It is decoded here, once, for every route.
+    ///
+    /// A restricted repository is asked about upstream on every request,
+    /// with the whole listing: the Hub's yes is for this client, now.
     pub(crate) async fn revision(&self, repo: &str, rev: &str, auth: Option<&str>) -> Option<Rev> {
         let rev = &decode_path(rev);
-        let archived = self.archived(repo, rev);
-        let open = archived.as_ref().is_some_and(|s| !restricted(&s.info_json));
+        let is_open =
+            |kept: &Option<Snapshot>| kept.as_ref().is_some_and(|s| !restricted(&s.info_json));
         // A commit never changes; a branch is trusted for a short while.
-        let fresh = open
-            && (is_commit(rev)
-                || self
-                    .commits
-                    .lock()
-                    .expect("lock")
-                    .get(&(repo.to_string(), rev.to_string()))
-                    .is_some_and(|(_, at)| at.elapsed() < REF_TTL));
-        let archived = match archived {
-            Some(snap) if fresh => {
-                return Some(Rev {
-                    snap,
-                    from_archive: false,
-                });
-            }
-            other => other,
+        let fresh = |kept: &Option<Snapshot>| {
+            is_open(kept) && (is_commit(rev) || self.refs.is_fresh(repo, rev))
         };
+        let kept = |snap: Snapshot| Rev {
+            snap,
+            from_archive: false,
+        };
+        let mut archived = self.archived(repo, rev).await;
+        if fresh(&archived) {
+            return archived.map(kept);
+        }
+        // One request asks upstream; the others of a burst (a client's
+        // parallel requests for one model) wait and read what it kept. Not
+        // for a repository known to be restricted: each of its requests
+        // has to ask anyway.
+        let _one = if archived.is_none() || is_open(&archived) {
+            let one = self.refs.asking(repo, rev, auth).lock_owned().await;
+            archived = self.archived(repo, rev).await;
+            if fresh(&archived) {
+                return archived.map(kept);
+            }
+            Some(one)
+        } else {
+            None
+        };
+        let open = is_open(&archived);
 
         match self.engine.hub.snapshot_as(repo, rev, auth).await {
             Ok(snap) => {
-                let archived = self
-                    .engine
-                    .db()
-                    .archive_snapshot(PROVIDER_HF, repo, rev, &snap);
-                if let Err(e) = archived {
+                let (name, at) = (repo.to_string(), rev.to_string());
+                let (snap, written) = self
+                    .off(move |e| {
+                        let written = e.db().archive_snapshot(PROVIDER_HF, &name, &at, &snap);
+                        (snap, written)
+                    })
+                    .await;
+                if let Err(e) = written {
                     eprintln!("dedupd: archiving {repo}@{rev}: {e:#}");
                 }
-                self.commits.lock().expect("lock").insert(
-                    (repo.to_string(), rev.to_string()),
-                    (snap.commit.clone(), Instant::now()),
-                );
-                Some(Rev {
-                    snap,
-                    from_archive: false,
-                })
+                self.refs.note(repo, rev);
+                Some(kept(snap))
             }
             // Gone or hidden upstream: an open repository is answered from
             // the archive; a restricted one is the Hub's decision to make.
@@ -200,16 +263,22 @@ pub(crate) async fn api(server: &Arc<Server>, call: &Call, rest: &[&str]) -> Res
 async fn refs(server: &Arc<Server>, call: &Call, repo: &str) -> Response {
     let answer = upstream(server, call, &mirror_url(server, call), false).await;
     if is_down(&answer) {
-        let archived = {
-            let db = server.engine.db();
-            db.repo_id(PROVIDER_HF, repo)
-                .ok()
-                .flatten()
-                .and_then(|id| db.refs(id).ok())
-                .unwrap_or_default()
-        };
+        let name = repo.to_string();
+        let archived = server
+            .off(move |e| {
+                let db = e.db();
+                match db.repo_id(PROVIDER_HF, &name)? {
+                    Some(id) => db.refs(id),
+                    None => Ok(Vec::new()),
+                }
+            })
+            .await
+            .unwrap_or_else(|e| {
+                eprintln!("dedupd: reading the kept branch names of {repo}: {e:#}");
+                Vec::new()
+            });
         // A restricted repository is the Hub's to answer for.
-        let open = server.known_open(repo);
+        let open = server.known_open(repo).await;
         if !archived.is_empty() && open {
             eprintln!("dedupd: {repo}: branch names answered from the kept copy");
             let branches: Vec<Value> = archived
@@ -253,10 +322,11 @@ async fn info(server: &Arc<Server>, call: &Call, repo: &str, rev: &str) -> Respo
                 // Clients ask for the model info first and then fetch by
                 // commit. Archive the revision now, with the branch name, so
                 // the name still resolves when upstream cannot be asked.
-                let (server, repo, rev) = (server.clone(), repo.to_string(), rev.to_string());
+                let (asked, repo, rev) = (server.clone(), repo.to_string(), rev.to_string());
                 let auth = call.header(header::AUTHORIZATION).map(str::to_string);
-                tokio::spawn(async move {
-                    let _ = server.revision(&repo, &rev, auth.as_deref()).await;
+                // `revision` says in the log what it could not keep.
+                server.background(async move {
+                    asked.revision(&repo, &rev, auth.as_deref()).await;
                 });
             }
             relay(server, call, resp)
@@ -422,13 +492,27 @@ async fn fetch_small(
         .await;
     match fetched {
         Ok(got) => {
-            let _ = engine
-                .db()
-                .upsert_blob(&got.sha256, got.size, got.git_oid.as_deref());
             let file = engine.store.blob_path(&got.sha256);
-            files::serve_file(call, &file, got.size, extra).await
+            let size = got.size;
+            let recorded = server
+                .off(move |e| {
+                    e.db()
+                        .upsert_blob(&got.sha256, got.size, got.git_oid.as_deref())
+                })
+                .await;
+            // The file is in the store all the same; the next pass
+            // records what the database does not know.
+            if let Err(e) = recorded {
+                eprintln!("dedupd: recording {}: {e:#}", entry.path);
+            }
+            files::serve_file(call, &file, size, extra).await
         }
-        Err(_) => pass_through(server, call).await,
+        // The client gets the provider's own answer; the log says why
+        // dedupd kept no copy.
+        Err(e) => {
+            eprintln!("dedupd: {} was not kept: {e:#}", entry.path);
+            pass_through(server, call).await
+        }
     }
 }
 
@@ -466,7 +550,14 @@ pub(crate) async fn resolve(
     }
 
     // In the store, or on the archive disk?
-    let known = server.engine.db().blob_for_entry(entry).ok().flatten();
+    let asked = entry.clone();
+    let known = server
+        .off(move |e| e.db().blob_for_entry(&asked))
+        .await
+        .unwrap_or_else(|e| {
+            eprintln!("dedupd: looking for {path} in the store: {e:#}");
+            None
+        });
     if let Some(blob) = known
         && let Some(served) =
             files::serve_stored(server, call, &blob.sha256, Some(blob.size), &extra).await

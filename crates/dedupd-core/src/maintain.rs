@@ -344,11 +344,29 @@ pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
 pub fn forget(db: &Mutex<Db>, repo: &str) -> Result<()> {
     prune_placements(db)?;
     let mut db = lock(db);
+    let id = forgettable(&db, repo, |_| true)?;
+    db.delete_repo(id)
+}
+
+/// Whether `repo` could be forgotten now: it is in the library and no app
+/// holds a file of it. The error says which of the two is in the way.
+/// Nothing is changed: the record of an app file that is gone is passed
+/// over here, where `forget` removes it first.
+pub fn forget_check(db: &Mutex<Db>, repo: &str) -> Result<()> {
+    forgettable(&lock(db), repo, |path| {
+        std::fs::symlink_metadata(path).is_ok()
+    })
+    .map(|_| ())
+}
+
+/// The repository's id when no app holds a file of it; `counts` says
+/// which recorded app files do.
+fn forgettable(db: &Db, repo: &str, counts: impl Fn(&str) -> bool) -> Result<i64> {
     let id = db.known_repo(repo)?;
     let in_use: Vec<String> = db
         .placements()?
         .into_iter()
-        .filter(|p| p.repo == repo)
+        .filter(|p| p.repo == repo && counts(&p.path))
         .map(|p| p.path)
         .collect();
     if let Some(first) = in_use.first() {
@@ -357,7 +375,7 @@ pub fn forget(db: &Mutex<Db>, repo: &str) -> Result<()> {
             in_use.len()
         );
     }
-    db.delete_repo(id)
+    Ok(id)
 }
 
 /// What removing a repository from one app would do. Nothing in it is

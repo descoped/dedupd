@@ -1,7 +1,7 @@
 //! Serving stored files with `Range`, and keeping a copy of large files that
 //! clients download through dedupd.
 
-use crate::{Call, Server, plain};
+use crate::{Call, Server, held, plain};
 use axum::body::{Body, Bytes};
 use axum::http::{StatusCode, header};
 use axum::response::Response;
@@ -99,14 +99,27 @@ pub(crate) async fn serve_stored(
     size: Option<u64>,
     extra: &[(&str, String)],
 ) -> Option<Response> {
-    let (engine, sha) = (server.engine.clone(), sha256.to_string());
-    let local = tokio::task::spawn_blocking(move || engine.store.ensure_local(&sha)).await;
-    if !matches!(local, Ok(Ok(true))) {
-        return None;
-    }
+    let sha = sha256.to_string();
+    // Its length is read in the same step: a file that went away in
+    // between (a `gc --offload` at that moment) is not held, and is never
+    // answered as an empty one.
+    let local = server
+        .off(move |e| -> anyhow::Result<Option<u64>> {
+            if !e.store.ensure_local(&sha)? {
+                return Ok(None);
+            }
+            Ok(Some(std::fs::metadata(e.store.blob_path(&sha))?.len()))
+        })
+        .await;
+    let on_disk = match local {
+        Ok(found) => found?,
+        Err(e) => {
+            eprintln!("dedupd: {sha256} could not be read from the store: {e:#}");
+            return None;
+        }
+    };
     let file = server.engine.store.blob_path(sha256);
-    let size = size.unwrap_or_else(|| std::fs::metadata(&file).map(|m| m.len()).unwrap_or(0));
-    Some(serve_file(call, &file, size, extra).await)
+    Some(serve_file(call, &file, size.unwrap_or(on_disk), extra).await)
 }
 
 /// A large file being put together from the ranges clients download. When
@@ -157,30 +170,40 @@ impl Progress {
 /// size of the model.
 pub(crate) const ASSEMBLY_IDLE: Duration = Duration::from_secs(15 * 60);
 
-impl Server {
+/// The files being put together now, by sha256.
+#[derive(Default)]
+pub(crate) struct Assemblies(Mutex<std::collections::HashMap<String, Arc<Assembly>>>);
+
+impl Assemblies {
     /// The assembly for this file with one more part open on it, or `None`
-    /// when no copy is kept of this answer.
-    fn open_part(&self, sha256: &str, size: u64) -> Option<Arc<Assembly>> {
-        let mut map = self.assemblies.lock().expect("lock");
+    /// when no copy is kept of this answer. A new one's file is made under
+    /// the lock, so two first parts do not make two: one `open`, short.
+    fn open_part(&self, at: PathBuf, sha256: &str, size: u64) -> Option<Arc<Assembly>> {
+        let mut map = held(&self.0);
         if let Some(a) = map.get(sha256) {
-            let mut state = a.state.lock().expect("lock");
+            let mut state = held(&a.state);
             if a.size != size || state.finishing {
                 return None;
             }
             state.open += 1;
             return Some(a.clone());
         }
-        let path = self.engine.store.tmp_path(&format!("{sha256}.asm"));
-        let file = std::fs::OpenOptions::new()
+        let file = match std::fs::OpenOptions::new()
             .create(true)
             .truncate(true)
             .write(true)
-            .open(&path)
-            .ok()?;
+            .open(&at)
+        {
+            Ok(file) => file,
+            Err(e) => {
+                eprintln!("dedupd: no copy is kept of {sha256}: {e}");
+                return None;
+            }
+        };
         let a = Arc::new(Assembly {
             sha256: sha256.to_string(),
             size,
-            path,
+            path: at,
             file,
             state: Mutex::new(Progress {
                 covered: Vec::new(),
@@ -193,50 +216,14 @@ impl Server {
         Some(a)
     }
 
-    /// A part finished (or was cut short), and writes no more. If the file
-    /// is now whole and no other part is open, check it and move it into
-    /// the store.
-    fn part_done(self: &Arc<Self>, asm: &Arc<Assembly>, start: u64, end: u64) {
-        {
-            let mut state = asm.state.lock().expect("lock");
-            let whole = state.add(start, end, asm.size);
-            state.open = state.open.saturating_sub(1);
-            state.touched = Instant::now();
-            if !whole || state.open > 0 || state.finishing {
-                return;
-            }
-            state.finishing = true;
-        }
-        let (server, asm) = (self.clone(), asm.clone());
-        tokio::task::spawn_blocking(move || {
-            let ok = hash_file(&asm.path, false).is_ok_and(|h| h.sha256 == asm.sha256);
-            let stored = ok
-                && match server.engine.store.add_tmp(&asm.path, &asm.sha256) {
-                    Ok(_) => true,
-                    Err(e) => {
-                        eprintln!("dedupd: storing {}: {e:#}", asm.sha256);
-                        false
-                    }
-                };
-            if stored && let Err(e) = server.engine.db().upsert_blob(&asm.sha256, asm.size, None) {
-                eprintln!("dedupd: recording {}: {e:#}", asm.sha256);
-            }
-            // Whatever kept the file out of the store, its copy goes.
-            if !stored {
-                let _ = std::fs::remove_file(&asm.path);
-            }
-            server.assemblies.lock().expect("lock").remove(&asm.sha256);
-        });
-    }
-
     /// Drop the assemblies no part has written to for `idle`, with their
     /// files. Returns how many went.
-    pub fn drop_idle_assemblies(&self, idle: Duration) -> usize {
-        let mut map = self.assemblies.lock().expect("lock");
+    pub(crate) fn drop_idle(&self, idle: Duration) -> usize {
+        let mut map = held(&self.0);
         let gone: Vec<String> = map
             .iter()
             .filter(|(_, a)| {
-                let state = a.state.lock().expect("lock");
+                let state = held(&a.state);
                 state.open == 0 && !state.finishing && state.touched.elapsed() >= idle
             })
             .map(|(sha, _)| sha.clone())
@@ -252,9 +239,58 @@ impl Server {
     }
 
     /// How many files are being put together now.
-    pub fn assemblies_open(&self) -> usize {
-        self.assemblies.lock().expect("lock").len()
+    pub(crate) fn open(&self) -> usize {
+        held(&self.0).len()
     }
+}
+
+/// A part finished (or was cut short), and writes no more. If the file is
+/// now whole and no other part is open, check it and move it into the
+/// store.
+fn part_done(server: &Arc<Server>, asm: &Arc<Assembly>, start: u64, end: u64) {
+    {
+        let mut state = held(&asm.state);
+        let whole = state.add(start, end, asm.size);
+        state.open = state.open.saturating_sub(1);
+        state.touched = Instant::now();
+        if !whole || state.open > 0 || state.finishing {
+            return;
+        }
+        state.finishing = true;
+    }
+    let (server, asm) = (server.clone(), asm.clone());
+    tokio::task::spawn_blocking(move || {
+        let ok = match hash_file(&asm.path, false) {
+            Ok(h) if h.sha256 == asm.sha256 => true,
+            Ok(h) => {
+                eprintln!(
+                    "dedupd: what clients downloaded as {} is {}; no copy is kept",
+                    asm.sha256, h.sha256
+                );
+                false
+            }
+            Err(e) => {
+                eprintln!("dedupd: checking the copy of {}: {e:#}", asm.sha256);
+                false
+            }
+        };
+        let stored = ok
+            && match server.engine.store.add_tmp(&asm.path, &asm.sha256) {
+                Ok(_) => true,
+                Err(e) => {
+                    eprintln!("dedupd: storing {}: {e:#}", asm.sha256);
+                    false
+                }
+            };
+        if stored && let Err(e) = server.engine.db().upsert_blob(&asm.sha256, asm.size, None) {
+            eprintln!("dedupd: recording {}: {e:#}", asm.sha256);
+        }
+        // Whatever kept the file out of the store, its copy goes.
+        if !stored {
+            let _ = std::fs::remove_file(&asm.path);
+        }
+        held(&server.assemblies.0).remove(&asm.sha256);
+    });
 }
 
 struct Part {
@@ -268,7 +304,7 @@ struct Part {
 impl Drop for Part {
     fn drop(&mut self) {
         if !self.broken {
-            self.server.part_done(&self.asm, self.start, self.pos);
+            part_done(&self.server, &self.asm, self.start, self.pos);
         }
     }
 }
@@ -296,13 +332,17 @@ fn tee(server: &Arc<Server>, resp: reqwest::Response, sha256: &str, keep: bool) 
         _ => None,
     };
     let part = placed.filter(|_| keep).and_then(|(start, size)| {
-        server.open_part(sha256, size).map(|asm| Part {
-            server: server.clone(),
-            asm,
-            start,
-            pos: start,
-            broken: false,
-        })
+        let at = server.engine.store.tmp_path(&format!("{sha256}.asm"));
+        server
+            .assemblies
+            .open_part(at, sha256, size)
+            .map(|asm| Part {
+                server: server.clone(),
+                asm,
+                start,
+                pos: start,
+                broken: false,
+            })
     });
 
     let stream = futures_util::stream::unfold(
@@ -316,13 +356,21 @@ fn tee(server: &Arc<Server>, resp: reqwest::Response, sha256: &str, keep: bool) 
                     if let Some(p) = part.as_mut()
                         && !p.broken
                     {
-                        if p.asm.file.write_all_at(&chunk, p.pos).is_ok() {
-                            p.pos += chunk.len() as u64;
-                        } else {
-                            // Keep serving the client; stop keeping a copy
-                            // past the bytes that did reach the disk.
-                            p.server.part_done(&p.asm, p.start, p.pos);
-                            p.broken = true;
+                        // One chunk into the system's cache, on this thread:
+                        // short, and in the order the bytes arrive.
+                        match p.asm.file.write_all_at(&chunk, p.pos) {
+                            Ok(()) => p.pos += chunk.len() as u64,
+                            Err(e) => {
+                                // Keep serving the client; stop keeping a
+                                // copy past the bytes that did reach the
+                                // disk.
+                                eprintln!(
+                                    "dedupd: the copy of {} stops at {}: {e}",
+                                    p.asm.sha256, p.pos
+                                );
+                                part_done(&p.server, &p.asm, p.start, p.pos);
+                                p.broken = true;
+                            }
                         }
                     }
                     Some((Ok::<Bytes, std::io::Error>(chunk), (resp, part, false)))

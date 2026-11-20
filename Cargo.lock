@@ -552,6 +552,7 @@ dependencies = [
  "dedupd-core",
  "futures-util",
  "hex",
+ "http-body-util",
  "notify",
  "reqwest",
  "serde",

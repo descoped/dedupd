@@ -21,10 +21,11 @@ pub(crate) fn internal(e: impl std::fmt::Display) -> Response {
 }
 
 pub(crate) fn ok(value: impl serde::Serialize) -> Response {
-    json(
-        StatusCode::OK,
-        &serde_json::to_value(value).unwrap_or_default(),
-    )
+    match serde_json::to_value(value) {
+        Ok(value) => json(StatusCode::OK, &value),
+        // Never an empty answer that reads as "nothing there".
+        Err(e) => internal(format!("the answer could not be written as JSON: {e}")),
+    }
 }
 
 pub(crate) fn answer<T: serde::Serialize>(result: anyhow::Result<T>) -> Response {
@@ -32,6 +33,18 @@ pub(crate) fn answer<T: serde::Serialize>(result: anyhow::Result<T>) -> Response
         Ok(value) => ok(value),
         Err(e) => failure(e),
     }
+}
+
+/// A refusal of something the owner asked for (a plan that cannot be made,
+/// a model that cannot be forgotten now): 404 for a model the library does
+/// not have, 409 for anything else, which the core says in a sentence.
+pub(crate) fn refusal(e: &anyhow::Error) -> Response {
+    let status = if e.is::<NotInLibrary>() {
+        StatusCode::NOT_FOUND
+    } else {
+        StatusCode::CONFLICT
+    };
+    error(status, format!("{e:#}"))
 }
 
 /// A failure, with the status its kind calls for: a model the library
