@@ -128,7 +128,9 @@ struct LibraryStoreTests {
         #expect(await eventually { await daemon.moving?.kind == .restore })
         await library.reload()
         #expect(library.selected?.isArchived == false)
-        #expect(library.selected?.apps.isEmpty == false, "the canned daemon knows the model as it was")
+        #expect(library.selected?.apps.isEmpty == true, "restoring puts the model into no app")
+        await library.loadDetail()
+        #expect(library.detail.value?.variants.allSatisfy(\.canActivate) == true, "its weights are in the store again")
         #expect(daemon.problem == nil)
 
         // A model that is not archived cannot be restored; the daemon says so.
@@ -143,7 +145,8 @@ struct LibraryStoreTests {
         await library.reload()
         library.selection = try #require(library.models.first { $0.repo == FixtureData.smolGGUF }).id
         await library.forget()
-        #expect(daemon.problem == "\(FixtureData.smolGGUF) still has files in bionic, ollama")
+        #expect(daemon.problem?.hasPrefix("\(FixtureData.smolGGUF) still has 8 files in app folders (for example ") == true)
+        #expect(daemon.problem?.hasSuffix("Remove the model from the apps first.") == true)
         #expect(library.selection != nil)
     }
 

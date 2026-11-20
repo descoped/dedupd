@@ -17,17 +17,23 @@ enum FixtureScenario: String, CaseIterable, Sendable {
 /// shows up in the next event, as with the real daemon.
 actor FixtureDaemonClient: DaemonClient {
     let scenario: FixtureScenario
-    private var jobs: [Job]
+    var jobs: [Job]
     private var settings = FixtureData.settings
     private var seq: UInt64 = 0
-    private var nextID: Int64 = 20
-    private var history: [ActivityEntry] = FixtureData.activity
-    private var favoriteList: Favorites = FixtureData.favorites
-    /// The models the owner archived, and the last move, as the daemon
-    /// would tell it.
-    private var archived: Set<String> = []
-    private var moving: ModelMove?
-    private var library: UInt64 = 1
+    var nextID: Int64 = 20
+    var history: [ActivityEntry] = FixtureData.activity
+    var favoriteList: Favorites = FixtureData.favorites
+    /// The library as it is now. What the owner does to a model (activate,
+    /// deactivate, archive, restore, forget) changes it here, and every
+    /// answer about the library, the storage and the status is made from
+    /// it, so the screens agree with each other as with the real daemon.
+    var models = FixtureData.models
+    /// The owner removed the orphans, or the local copies the archive has.
+    private var cleaned = false
+    private var offloaded = false
+    /// The last archive or restore, as the daemon would tell it.
+    var moving: ModelMove?
+    var library: UInt64 = 1
     private var listeners: [UUID: AsyncStream<DaemonSignal>.Continuation] = [:]
 
     init(scenario: FixtureScenario) {
@@ -70,7 +76,7 @@ actor FixtureDaemonClient: DaemonClient {
         }
     }
 
-    private func answering(_ address: String, call: String = #function) async throws {
+    func answering(_ address: String, call: String = #function) async throws {
         if held.contains(call) {
             let failure = await withCheckedContinuation { waiting[call, default: []].append($0) }
             if let failure {
@@ -131,8 +137,8 @@ actor FixtureDaemonClient: DaemonClient {
         )
     }
 
-    /// Tell everyone who follows that the queue changed.
-    private func changed() {
+    /// Tell everyone who follows that the queue or the library changed.
+    func changed() {
         seq += 1
         let signal = DaemonSignal.event(event())
         for listener in listeners.values {
@@ -144,7 +150,7 @@ actor FixtureDaemonClient: DaemonClient {
 
     func status(at address: String) async throws -> DaemonStatus {
         try await answering(address)
-        return FixtureData.status(jobs: jobs)
+        return FixtureData.status(jobs: jobs, library: models, cleaned: cleaned)
     }
 
     func scan(at address: String) async throws -> ScanResult {
@@ -162,41 +168,35 @@ actor FixtureDaemonClient: DaemonClient {
 
     func models(at address: String) async throws -> [LibraryModel] {
         try await answering(address)
-        return FixtureData.models.map(asHeld)
+        return models
     }
 
-    /// As the daemon holds it now: an archived one is in no app or store.
-    private func asHeld(_ model: LibraryModel) -> LibraryModel {
-        guard archived.contains(model.repo) else {
-            return model
+    /// The model the daemon holds under this name, or its refusal.
+    func held(_ repo: String) throws -> LibraryModel {
+        guard let model = models.first(where: { $0.repo == repo }) else {
+            throw ClientError.Failed(message: "\(repo) is not in the library")
         }
-        var model = model
-        model.apps = []
-        model.archivedAt = 1_794_000_000
         return model
+    }
+
+    /// Change the model the daemon holds under this name and say so.
+    func change(_ repo: String, _ change: (inout LibraryModel) -> Void) {
+        guard let index = models.firstIndex(where: { $0.repo == repo }) else {
+            return
+        }
+        change(&models[index])
+        library += 1
+        changed()
     }
 
     func model(_ repo: String, at address: String) async throws -> ModelDetail {
         try await answering(address)
-        guard var detail = FixtureData.detail(repo) else {
-            throw ClientError.Failed(message: "\(repo) is not in the library")
-        }
-        if archived.contains(repo) {
-            detail.model = asHeld(detail.model)
-            detail.placements = []
-            detail.variants = detail.variants.map { variant in
-                var variant = variant
-                variant.placedIn = []
-                (variant.storedBytes, variant.weightsStored) = (0, false)
-                return variant
-            }
-        }
-        return detail
+        return FixtureData.detail(of: try held(repo))
     }
 
     func locations(at address: String) async throws -> Locations {
         try await answering(address)
-        return FixtureData.locations
+        return FixtureData.locations(of: models, cleaned: cleaned)
     }
 
     // MARK: - Hugging Face
@@ -220,102 +220,31 @@ actor FixtureDaemonClient: DaemonClient {
         guard FixtureData.isKnown(repo) else {
             throw ClientError.Failed(message: "\(repo) was not found on Hugging Face")
         }
-        return FixtureData.hubModel(repo, downloading: jobs.contains { $0.repo == repo && $0.state.isActive })
-    }
-
-    // MARK: - Models
-
-    func checkUpstream(_ repo: String, at address: String) async throws -> UpstreamCheck {
-        try await answering(address)
-        let model = FixtureData.models.first { $0.repo == repo }
-        return UpstreamCheck(
-            upstream: model?.upstream ?? .ok, commit: model?.commit, latest: model?.commit, changed: false
+        return FixtureData.hubModel(
+            repo, downloading: jobs.contains { $0.repo == repo && $0.state.isActive }, library: models
         )
-    }
-
-    func forget(_ repo: String, at address: String) async throws {
-        try await answering(address)
-        if let model = FixtureData.models.first(where: { $0.repo == repo }).map(asHeld), !model.apps.isEmpty {
-            throw ClientError.Failed(message: "\(repo) still has files in \(model.appNames.map(\.name).joined(separator: ", "))")
-        }
-    }
-
-    func unplace(_ repo: String, app: ModelApp, paths: [String]?, apply: Bool, at address: String) async throws
-        -> UnplacePlan {
-        try await answering(address)
-        let files = (FixtureData.detail(repo)?.placements.filter { $0.app == app } ?? [])
-            .filter { paths?.contains($0.path) ?? true }
-        let plan = UnplacePlan(
-            repo: repo,
-            app: app,
-            remove: files.map { PlannedFile(path: $0.path, size: $0.size) },
-            links: app == .ollama ? ["\(FixtureData.folder(of: app))/manifests/hf.co/\(repo)/Q4_K_M"] : [],
-            keep: [],
-            bytes: files.map(\.size).reduce(0, +),
-            removed: apply ? UInt64(files.count) : nil
-        )
-        if apply {
-            note(.init(action: .deactivate, repo: repo, app: app, ok: true, text: "Deactivated in \(app.title)"))
-            library += 1
-            changed()
-        }
-        return plan
-    }
-
-    func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan {
-        try await answering(address)
-        guard let model = FixtureData.models.first(where: { $0.repo == repo }), !archived.contains(repo) else {
-            throw ClientError.Failed(message: "\(repo) is not in the library")
-        }
-        return ArchivePlan(
-            repo: repo,
-            archive: FixtureData.archiveFolder,
-            deactivate: model.apps.map { DeactivateStep(app: $0.app, files: $0.files, bytes: $0.bytes, keep: []) },
-            files: model.storedFiles,
-            bytes: model.storedBytes,
-            copyFiles: 0,
-            copyBytes: 0,
-            keep: []
-        )
-    }
-
-    func archive(_ repo: String, at address: String) async throws {
-        try await answering(address)
-        let plan = try await archivePlan(repo, at: address)
-        archived.insert(repo)
-        moved(kind: .archive, repo: repo, files: plan.files, bytes: plan.bytes)
-    }
-
-    func restore(_ repo: String, at address: String) async throws {
-        try await answering(address)
-        guard archived.remove(repo) != nil, let model = FixtureData.models.first(where: { $0.repo == repo }) else {
-            throw ClientError.Failed(message: "\(repo) is not archived")
-        }
-        moved(kind: .restore, repo: repo, files: model.storedFiles, bytes: model.storedBytes)
-    }
-
-    /// The canned daemon moves a model at once and says so.
-    private func moved(kind: MoveKind, repo: String, files: UInt64, bytes: UInt64) {
-        moving = ModelMove(
-            kind: kind, repo: repo, running: false, startedAt: 1_794_000_000, finishedAt: 1_794_000_000,
-            bytesTotal: bytes, bytesDone: bytes, files: files, kept: 0, error: nil
-        )
-        library += 1
-        changed()
     }
 
     // MARK: - Storage
 
     func gcPlan(offload: Bool, at address: String) async throws -> GcPlan {
         try await answering(address)
-        return FixtureData.gcPlan(offload: offload)
+        return FixtureData.gcPlan(offload: offload, cleaned: cleaned, offloaded: offloaded)
     }
 
+    /// Removes what the owner agreed to; the next plan no longer lists it.
     func gcApply(orphans: [String], offload: [String], at address: String) async throws -> GcPlan {
         try await answering(address)
-        let plan = FixtureData.gcPlan(offload: !offload.isEmpty)
+        let plan = FixtureData.gcPlan(offload: true, cleaned: cleaned, offloaded: offloaded)
+        let gone = plan.orphans.filter { orphans.contains($0.sha256) }
+        let away = plan.offload.filter { offload.contains($0.sha256) }
+        cleaned = cleaned || !gone.isEmpty
+        offloaded = offloaded || !away.isEmpty
+        library += 1
+        changed()
         return GcPlan(
-            orphans: [], offload: [], orphanBytes: 0, offloadBytes: 0, freed: plan.orphanBytes + plan.offloadBytes
+            orphans: [], offload: [], orphanBytes: 0, offloadBytes: 0,
+            freed: (gone + away).map(\.size).reduce(0, +)
         )
     }
 
@@ -325,7 +254,7 @@ actor FixtureDaemonClient: DaemonClient {
 
     func storeCheck(at address: String) async throws -> StoreCheck {
         try await answering(address)
-        return FixtureData.storeCheck
+        return FixtureData.storeCheck(of: models, cleaned: cleaned)
     }
 
     // MARK: - The daemon itself
@@ -365,135 +294,5 @@ actor FixtureDaemonClient: DaemonClient {
     func restart(at address: String) async throws {
         try await answering(address)
         settings.restartNeeded = false
-    }
-}
-
-// MARK: - Downloads
-
-extension FixtureDaemonClient {
-
-    func download(_ id: Int64, at address: String) async throws -> JobDetail {
-        try await answering(address)
-        guard let job = jobs.first(where: { $0.id == id }) else {
-            throw ClientError.Failed(message: "no download \(id)")
-        }
-        return FixtureData.jobDetail(job)
-    }
-
-    func enqueue(_ request: PullRequest, at address: String) async throws -> Enqueued {
-        try await answering(address)
-        // Only the name is checked here; the rest of a spec is the real
-        // daemon's rule, which is not written a second time.
-        guard let repo = ModelSpec.repository(ofSpec: request.model) else {
-            throw ClientError.Failed(
-                message: "\(request.model) is not a model name; use org/repo, org/repo:Q4_K_M or org/repo@revision"
-            )
-        }
-        if let existing = jobs.first(where: { $0.model == request.model && !$0.state.isFinished }) {
-            return Enqueued(id: existing.id, existing: true)
-        }
-        let id = nextID
-        nextID += 1
-        // What is already stored is placed at once; anything else waits its
-        // turn, as it would behind a running download. An app the recorded
-        // profiles say no for does not take the model, with their reason.
-        let stored = FixtureData.models.first { $0.repo == repo }
-        var notTakenBy: [ModelApp: String] = [:]
-        if let stored {
-            let decisions = FixtureData.judged(repo, formats: stored.meta.formats, stored: true).decisions
-            for decision in decisions where decision.state != .ready && request.apps.contains(decision.app) {
-                notTakenBy[decision.app] = decision.reason
-            }
-        }
-        jobs.insert(
-            FixtureData.job(id: id, request: request, state: stored == nil ? .queued : .done, notTakenBy: notTakenBy),
-            at: 0
-        )
-        if stored != nil {
-            for app in request.apps {
-                let reason = notTakenBy[app]
-                note(.init(
-                    action: .activate, repo: repo, app: app, ok: reason == nil,
-                    text: reason.map { "Not activated in \(app.title): \($0)" } ?? "Activated in \(app.title)"
-                ))
-            }
-        }
-        changed()
-        return Enqueued(id: id, existing: false)
-    }
-
-    func downloadAction(_ action: JobAction, id: Int64, at address: String) async throws {
-        try await answering(address)
-        guard let index = jobs.firstIndex(where: { $0.id == id }) else {
-            throw ClientError.Failed(message: "no download \(id)")
-        }
-        guard jobs[index].actions.contains(action) else {
-            throw ClientError.Failed(message: "download \(id) cannot \(action.name) now")
-        }
-        switch action {
-        case .pause:
-            jobs[index].state = .paused
-            jobs[index].speed = 0
-        case .resume, .retry, .start:
-            jobs[index].state = .downloading
-            jobs[index].detail = nil
-            jobs[index].speed = 11_800_000
-        case .cancel:
-            jobs[index].state = .cancelled
-            jobs[index].speed = 0
-        case .remove:
-            jobs.remove(at: index)
-            changed()
-            return
-        }
-        jobs[index].actions = jobActions(state: jobs[index].state)
-        changed()
-    }
-
-    func activity(at address: String) async throws -> [ActivityEntry] {
-        try await answering(address)
-        return history
-    }
-
-    func favorites(at address: String) async throws -> Favorites {
-        try await answering(address)
-        return favoriteList
-    }
-
-    func setFavorite(_ repo: String, _ favorite: Bool, at address: String) async throws -> Favorites {
-        try await answering(address)
-        favoriteList.favorites.removeAll { $0.repo == repo }
-        if favorite {
-            favoriteList.favorites.insert(Favorite(repo: repo, addedAt: FixtureData.now, source: .dedupd), at: 0)
-        }
-        changed()
-        return favoriteList
-    }
-
-    func syncFavorites(at address: String) async throws -> Favorites {
-        try await answering(address)
-        favoriteList.likes.syncedAt = FixtureData.now
-        changed()
-        return favoriteList
-    }
-
-    /// Add to the canned activity list, newest first.
-    private func note(_ entry: FixtureData.Happened) {
-        let id = (history.first?.id ?? 0) + 1
-        history.insert(
-            ActivityEntry(
-                id: id, at: Int64(Date().timeIntervalSince1970), action: entry.action, repo: entry.repo,
-                app: entry.app, ok: entry.ok, text: entry.text
-            ),
-            at: 0
-        )
-    }
-
-    func clearDownloads(at address: String) async throws -> UInt64 {
-        try await answering(address)
-        let before = jobs.count
-        jobs.removeAll { $0.state.isFinished }
-        changed()
-        return UInt64(before - jobs.count)
     }
 }

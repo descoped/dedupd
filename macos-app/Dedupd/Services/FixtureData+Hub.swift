@@ -65,9 +65,13 @@ extension FixtureData {
         (hits + moreHits).contains { $0.id == repo } || models.contains { $0.repo == repo }
     }
 
-    static func hubModel(_ repo: String, downloading: Bool = false) -> HubModel {
+    /// A repository as the provider has it, with what this Mac has of it
+    /// from the library the daemon holds now.
+    static func hubModel(_ repo: String, downloading: Bool = false, library: [LibraryModel] = models) -> HubModel {
         let hit = (hits + moreHits).first { $0.id == repo }
-        let local = models.first { $0.repo == repo }
+        let local = library.first { $0.repo == repo }
+        // In the store, not only on the archive disk.
+        let inStore = local.map { !$0.isArchived } ?? false
         let meta = local?.meta ?? hit?.meta ?? self.meta(repo, formats: ["gguf"], parameters: 134_515_008)
         let name = repo.split(separator: "/").last.map(String.init) ?? repo
         let isGGUF = meta.formats.contains("gguf")
@@ -76,7 +80,7 @@ extension FixtureData {
         if isGGUF {
             let stem = name.replacingOccurrences(of: "-GGUF", with: "")
             variants = quants.map { quant, bytes in
-                let here = local != nil && quant == "Q4_K_M"
+                let here = inStore && quant == "Q4_K_M"
                 let judged = judged(repo, formats: meta.formats, stored: here)
                 return Variant(
                     kind: .gguf, format: judged.format, name: quant, spec: "\(repo):\(quant)", files: 4,
@@ -87,29 +91,29 @@ extension FixtureData {
             files = quants.map { quant, bytes in
                 HubFile(
                     path: "\(stem)-\(quant).gguf", size: bytes, sha256: sha(quant), lfs: true,
-                    stored: local != nil && quant == "Q4_K_M"
+                    stored: inStore && quant == "Q4_K_M"
                 )
             } + [
-                HubFile(path: "README.md", size: 6120, sha256: nil, lfs: false, stored: local != nil),
-                HubFile(path: "config.json", size: 720, sha256: nil, lfs: false, stored: local != nil),
+                HubFile(path: "README.md", size: 6120, sha256: nil, lfs: false, stored: inStore),
+                HubFile(path: "config.json", size: 720, sha256: nil, lfs: false, stored: inStore),
             ]
         } else {
             let bytes: UInt64 = local?.storedBytes ?? 5_420_000_000
-            let judged = judged(repo, formats: meta.formats, stored: local != nil)
+            let judged = judged(repo, formats: meta.formats, stored: inStore)
             variants = [
                 Variant(
                     kind: .files, format: judged.format, name: "all files", spec: repo, files: 8, bytes: bytes,
-                    storedBytes: local == nil ? 0 : bytes, weightsStored: local != nil, usableBy: judged.usableBy,
+                    storedBytes: inStore ? bytes : 0, weightsStored: inStore, usableBy: judged.usableBy,
                     placedIn: local?.appNames ?? [], decisions: judged.decisions
                 ),
             ]
             files = [
                 HubFile(
                     path: "model.safetensors", size: bytes - 4_000_000, sha256: sha("model.safetensors"), lfs: true,
-                    stored: local != nil
+                    stored: inStore
                 ),
-                HubFile(path: "tokenizer.json", size: 3_990_000, sha256: nil, lfs: false, stored: local != nil),
-                HubFile(path: "config.json", size: 1200, sha256: nil, lfs: false, stored: local != nil),
+                HubFile(path: "tokenizer.json", size: 3_990_000, sha256: nil, lfs: false, stored: inStore),
+                HubFile(path: "config.json", size: 1200, sha256: nil, lfs: false, stored: inStore),
             ]
         }
         var detailed = meta
@@ -201,9 +205,11 @@ extension FixtureData {
         ),
         job(
             id: 4,
-            request: PullRequest(model: "mlx-community/Qwen3.8-9B-Instruct-4bit", apps: [.bionic]),
+            // A download that finished: its model is in the library, in the
+            // app it was activated in.
+            request: PullRequest(model: qwen, apps: [.bionic]),
             state: .done,
-            total: 5_420_000_000
+            total: 16_080_000_000
         ),
     ]
 
@@ -254,18 +260,21 @@ extension FixtureData {
         var text: String
     }
 
-    /// What happened to the canned models lately, newest first: activations,
-    /// one an app said no to, and an archive.
+    /// What happened to the canned models lately, newest first, in the
+    /// daemon's own sentences. It agrees with the library: what was
+    /// activated is in that app, what was restored is in no app.
     static let activity: [ActivityEntry] = {
         let happened: [Happened] = [
             Happened(action: .activate, repo: nemotron, app: .ollama, ok: false,
                      text: "Ollama 0.40.16 can't run this model: it doesn't run 6-bit MLX layers."),
             Happened(action: .activate, repo: nemotron, app: .bionic, ok: true, text: "Activated in Bionic"),
+            Happened(action: .restore, repo: smolMLX, app: nil, ok: true,
+                     text: "Brought back from the archive disk: 8 files, 79.22 MB"),
             Happened(action: .archive, repo: smolMLX, app: nil, ok: true,
-                     text: "Moved to the archive disk: 3 files, 412.30 MB freed on this Mac"),
+                     text: "Moved to the archive disk: 8 files, 79.22 MB freed on this Mac"),
             Happened(action: .deactivate, repo: smolGGUF, app: .huggingFace, ok: true,
                      text: "Deactivated in the Hugging Face cache"),
-            Happened(action: .activate, repo: qwen, app: .ollama, ok: true, text: "Activated in Ollama"),
+            Happened(action: .activate, repo: smolGGUF, app: .ollama, ok: true, text: "Activated in Ollama"),
         ]
         return happened.enumerated().map { index, entry in
             ActivityEntry(
@@ -282,6 +291,31 @@ extension FixtureData {
 }
 
 extension FixtureData {
+    /// An app's name inside one of the daemon's sentences ("Activated in
+    /// the Hugging Face cache"), as `App::title` gives it.
+    static func inSentence(_ app: ModelApp) -> String {
+        app == .huggingFace ? "the Hugging Face cache" : app.title
+    }
+
+    /// The queue's refusal of an action a job's state does not allow, in
+    /// the daemon's words (`not_now` in the core's queue).
+    static func notNow(_ id: Int64, _ state: JobState, _ action: JobAction) -> String {
+        let named = "\(state)".reduce(into: "") { $0 += $1.isUppercase ? " \($1.lowercased())" : "\($1)" }
+        let done = switch action {
+        case .pause: "paused"
+        case .resume, .retry: "continued"
+        case .start: "started ahead of the queue"
+        case .cancel: "cancelled"
+        case .remove: "removed"
+        }
+        return "download \(id) is \(named); it cannot be \(done) now"
+    }
+
+    /// "1 file", "8 files": how the daemon counts in a sentence.
+    static func counted(_ files: UInt64) -> String {
+        files == 1 ? "1 file" : "\(files) files"
+    }
+
     /// The canned daemon's clock, in seconds since 1970.
     static let now: Int64 = 1_794_003_600
 
