@@ -53,6 +53,19 @@ impl Token {
     }
 }
 
+/// Whether `url` is on the provider at `endpoint`: the same scheme, host and
+/// port. The token and a caller's `Authorization` go nowhere else. Text that
+/// only begins like the endpoint (`https://huggingface.co.example.net`,
+/// `https://huggingface.co@example.net`) is another host.
+pub fn goes_to(endpoint: &str, url: &str) -> bool {
+    let (Ok(ours), Ok(theirs)) = (reqwest::Url::parse(endpoint), reqwest::Url::parse(url)) else {
+        return false;
+    };
+    ours.scheme() == theirs.scheme()
+        && ours.host() == theirs.host()
+        && ours.port_or_known_default() == theirs.port_or_known_default()
+}
+
 /// Where `from_environment` would read the token from: the name
 /// of the variable or the path of the file. `None` when there is none.
 pub fn source() -> Option<String> {
@@ -83,4 +96,28 @@ fn token_file() -> Option<PathBuf> {
         .or_else(|| {
             std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache/huggingface/token"))
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::goes_to;
+
+    #[test]
+    fn only_the_endpoints_own_host_gets_the_token() {
+        let hf = "https://huggingface.co";
+        assert!(goes_to(hf, "https://huggingface.co/api/models/o/r"));
+        assert!(goes_to(hf, "https://huggingface.co:443/o/r/resolve/main/f"));
+        assert!(goes_to("http://127.0.0.1:9000", "http://127.0.0.1:9000/x"));
+        for other in [
+            "https://huggingface.co.example.net/api/models/o/r",
+            "https://huggingface.co@example.net/api/models/o/r",
+            "https://huggingface.co:8443/x",
+            "http://huggingface.co/x",
+            "https://cdn-lfs.huggingface.co/x",
+            "not an address",
+        ] {
+            assert!(!goes_to(hf, other), "{other}");
+        }
+        assert!(!goes_to("http://127.0.0.1:9000", "http://127.0.0.1:9001/x"));
+    }
 }

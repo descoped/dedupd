@@ -36,7 +36,15 @@ pub(crate) async fn upstream(
     url: &str,
     identity: bool,
 ) -> Result<reqwest::Response, reqwest::Error> {
-    send(server.engine.fetcher.http(), server, call, url, identity).await
+    send(
+        server.engine.fetcher.http(),
+        server,
+        call,
+        url,
+        identity,
+        true,
+    )
+    .await
 }
 
 async fn send(
@@ -45,8 +53,10 @@ async fn send(
     call: &Call,
     url: &str,
     identity: bool,
+    lend: bool,
 ) -> Result<reqwest::Response, reqwest::Error> {
     let fetcher = &server.engine.fetcher;
+    let ours = dedupd_core::token::goes_to(fetcher.endpoint(), url);
     let mut req = http.request(call.method.clone(), url);
     let mut has_auth = false;
     for (name, value) in &call.headers {
@@ -56,15 +66,24 @@ async fn send(
         }
         if n == "authorization" {
             // Credentials go to the configured endpoint only.
-            if !url.starts_with(fetcher.endpoint()) {
+            if !ours {
                 continue;
             }
             has_auth = true;
         }
         req = req.header(name, value);
     }
-    if !has_auth
-        && url.starts_with(fetcher.endpoint())
+    // dedupd's own token is lent only to read a model (a gated one, for a
+    // client such as Ollama that has no token of its own): never for a
+    // request that changes something, and never for the rest of the Hub.
+    let reads = matches!(
+        call.method,
+        axum::http::Method::GET | axum::http::Method::HEAD
+    );
+    if lend
+        && reads
+        && !has_auth
+        && ours
         && let Some(auth) = fetcher.authorization()
     {
         req = req.header(header::AUTHORIZATION, auth);
@@ -181,15 +200,28 @@ pub(crate) fn mirror_url(server: &Server, call: &Call) -> String {
     )
 }
 
-/// Anything dedupd has no special handling for.
+/// A request about a model that dedupd has no special handling for. A read
+/// with no `Authorization` of its own is sent with dedupd's token.
 ///
 /// Redirects are relayed, not followed: the client reads the commit, the
 /// linked ETag and the size from the redirect itself, and the place it points
 /// to (a CDN) has none of them.
 pub(crate) async fn pass_through(server: &Server, call: &Call) -> Response {
+    relay_as(server, call, true).await
+}
+
+/// Anything else on the Hub (the account, datasets, spaces, uploads): relayed
+/// with the client's own `Authorization` or none. dedupd's token is not lent,
+/// so nothing that reaches this port can act on the Hub as the owner.
+pub(crate) async fn pass_through_as_client(server: &Server, call: &Call) -> Response {
+    relay_as(server, call, false).await
+}
+
+async fn relay_as(server: &Server, call: &Call, lend: bool) -> Response {
     let url = mirror_url(server, call);
     let http = server.engine.fetcher.http_no_redirect();
-    relay_or_unreachable(server, call, send(http, server, call, &url, false).await)
+    let answer = send(http, server, call, &url, false, lend).await;
+    relay_or_unreachable(server, call, answer)
 }
 
 #[cfg(test)]

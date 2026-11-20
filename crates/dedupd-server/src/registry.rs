@@ -150,7 +150,7 @@ async fn blob(server: &Arc<Server>, call: &Call, name: &str, digest: &str) -> Re
     };
     if call.is_head() {
         let known = server.engine.db().blob(sha).ok().flatten();
-        return match known {
+        return match known.filter(|_| open_to_all(server, name, sha)) {
             Some(b) => Response::builder()
                 .status(StatusCode::OK)
                 .header(header::CONTENT_LENGTH, b.size)
@@ -210,8 +210,56 @@ pub(crate) async fn blob_direct(server: &Arc<Server>, call: &Call, digest: &str)
     send_blob(server, call, name, sha).await
 }
 
+/// Whether a stored layer may be answered without asking the Hub: the kept
+/// info of the model the client names says it is open, and that model is
+/// known to hold the layer. A model with no info kept, and a layer asked for
+/// under another model's name, count as restricted.
+fn open_to_all(server: &Server, name: &str, sha: &str) -> bool {
+    let db = server.engine.db();
+    let open = db
+        .archived(PROVIDER_HF, name, "main")
+        .ok()
+        .flatten()
+        .is_some_and(|(_, snap)| !crate::hubapi::restricted(&snap.info_json));
+    open && db
+        .repo_id(PROVIDER_HF, name)
+        .ok()
+        .flatten()
+        .is_some_and(|id| db.repo_refers_to(id, sha).unwrap_or(false))
+}
+
+/// For a layer that is not open to all: ask the Hub, as this client, whether
+/// it may have it. `Some` is the answer that says no.
+async fn refused(server: &Arc<Server>, call: &Call, name: &str, sha: &str) -> Option<Response> {
+    if open_to_all(server, name, sha) {
+        return None;
+    }
+    if !dedupd_core::names::is_repo_name(name) {
+        return Some(plain(
+            StatusCode::NOT_FOUND,
+            "that layer is not served without its model's name",
+        ));
+    }
+    let ask = Call {
+        method: axum::http::Method::HEAD,
+        body: Default::default(),
+        ..call.clone()
+    };
+    let url = server.engine.fetcher.registry_blob_url(name, sha);
+    match upstream(server, &ask, &url, true).await {
+        Ok(resp) if resp.status().is_success() => None,
+        other => Some(relay_or_unreachable(server, call, other)),
+    }
+}
+
 async fn send_blob(server: &Arc<Server>, call: &Call, name: &str, sha: &str) -> Response {
     let extra = [("docker-content-digest", format!("sha256:{sha}"))];
+    // A gated or private model's layer is the Hub's to hand out: its sha256
+    // is no secret, so holding the bytes is not reason enough to serve them.
+    let held = server.engine.db().blob(sha).ok().flatten().is_some();
+    if held && let Some(no) = refused(server, call, name, sha).await {
+        return no;
+    }
     if let Some(served) = files::serve_stored(server, call, sha, None, &extra).await {
         return served;
     }

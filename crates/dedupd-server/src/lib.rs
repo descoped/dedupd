@@ -250,7 +250,8 @@ async fn handle(State(server): State<Arc<Server>>, req: Request) -> Response {
         .headers
         .get(header::HOST)
         .and_then(|v| v.to_str().ok())
-        .unwrap_or(server.config.listen());
+        .unwrap_or(server.config.listen())
+        .to_string();
     let call = Call {
         method: parts.method,
         path: parts.uri.path().to_string(),
@@ -260,27 +261,50 @@ async fn handle(State(server): State<Arc<Server>>, req: Request) -> Response {
         body,
     };
 
+    // A web page must not be able to use the daemon, on any route. Browsers
+    // send Origin on cross-site requests, and no real client does. A page
+    // that points its own name at this Mac sends none, but it names itself
+    // in Host; real clients address the daemon by a loopback name.
+    if call.header(header::ORIGIN).is_some() {
+        return plain(StatusCode::FORBIDDEN, "dedupd is not for web pages");
+    }
+    if !addressed_to_us(&host, server.config.listen()) {
+        return plain(
+            StatusCode::MISDIRECTED_REQUEST,
+            "dedupd answers only under its own address",
+        );
+    }
+
     let segments: Vec<&str> = call.path.split('/').filter(|s| !s.is_empty()).collect();
     match segments.as_slice() {
-        // A web page must not be able to drive the daemon: browsers send
-        // Origin on cross-site requests, and no real client of this API does.
-        ["dedupd", "v1", ..] if call.header(header::ORIGIN).is_some() => plain(
-            StatusCode::FORBIDDEN,
-            "the control API is not for web pages",
-        ),
         ["dedupd", "v1", "hub", rest @ ..] => discover::handle(&server, &call, rest).await,
         ["dedupd", "v1", rest @ ..] => control::handle(&server, &call, rest).await,
         ["dedupd", "blob", digest] => registry::blob_direct(&server, &call, digest).await,
         ["v2"] => json(StatusCode::OK, &serde_json::json!({})),
         ["v2", rest @ ..] => registry::handle(&server, &call, rest).await,
         ["api", "models", rest @ ..] => hubapi::api(&server, &call, rest).await,
-        ["datasets" | "spaces" | "api", ..] => proxy::pass_through(&server, &call).await,
+        ["datasets" | "spaces" | "api", ..] => proxy::pass_through_as_client(&server, &call).await,
         [a, "resolve", rev, file @ ..] if !file.is_empty() => {
             hubapi::resolve(&server, &call, a, rev, &file.join("/")).await
         }
         [a, b, "resolve", rev, file @ ..] if !file.is_empty() => {
             hubapi::resolve(&server, &call, &format!("{a}/{b}"), rev, &file.join("/")).await
         }
-        _ => proxy::pass_through(&server, &call).await,
+        _ => proxy::pass_through_as_client(&server, &call).await,
     }
+}
+
+/// Whether a request's `Host` names this daemon: a loopback name, or the
+/// host it was told to listen on. The port is not compared; a page under
+/// another name is refused whatever port it uses.
+fn addressed_to_us(host: &str, listen: &str) -> bool {
+    fn name(host: &str) -> &str {
+        match host.strip_prefix('[') {
+            Some(v6) => v6.split(']').next().unwrap_or(v6),
+            None => host.rsplit_once(':').map_or(host, |(name, _)| name),
+        }
+    }
+    let asked = name(host).to_ascii_lowercase();
+    matches!(asked.as_str(), "127.0.0.1" | "localhost" | "::1")
+        || asked == name(listen).to_ascii_lowercase()
 }

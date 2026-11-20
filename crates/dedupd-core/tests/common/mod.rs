@@ -66,16 +66,28 @@ impl Respond for Ranged {
 /// An engine on `home` that asks `endpoint`, with scratch app folders under
 /// `apps`.
 pub fn engine(home: &Home, endpoint: &str, apps: &Path, archive: Option<Home>) -> Arc<Engine> {
+    engine_with_token(home, endpoint, apps, archive, None)
+}
+
+/// The same engine, holding a Hugging Face token of its own.
+pub fn engine_with_token(
+    home: &Home,
+    endpoint: &str,
+    apps: &Path,
+    archive: Option<Home>,
+    token: Option<&str>,
+) -> Arc<Engine> {
+    let token = token.map(str::to_string);
     // Small parts and short waits, so a test file of a few hundred kilobytes
     // goes through the same paths as a model of many gigabytes.
     let governor = Governor::new(8, 0);
     Arc::new(Engine {
         db: Mutex::new(Db::open(&home.db_path()).unwrap()),
         store: Store::open(home).unwrap().with_archive(archive),
-        hub: HubClient::new(endpoint, None)
+        hub: HubClient::new(endpoint, token.clone())
             .unwrap()
             .with_governor(governor.clone()),
-        fetcher: Fetcher::new(endpoint, None)
+        fetcher: Fetcher::new(endpoint, token)
             .unwrap()
             .with_governor(governor.clone())
             .with_tuning(PART_SIZE, Duration::from_millis(20)),

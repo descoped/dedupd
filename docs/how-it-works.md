@@ -130,6 +130,12 @@ All other functions operate with the archive disk detached.
   do not share disk space.
 - **Removal is explicit.** `gc`, `deactivate` and `archive` list what they would remove and act only with `--apply`;
   in the app, only after the list has been confirmed.
-- **Local only.** The daemon binds to `127.0.0.1` and `localhost` and uses plain HTTP.
+- **Local only.** The daemon binds to `127.0.0.1` and `localhost` and uses plain HTTP. It answers no request from a
+  web page: one that carries an `Origin` header, or that addresses the daemon by another name than a loopback one,
+  is refused on every route.
 - **Credentials.** A Hugging Face token is sent to Hugging Face only, never to the hosts the files are downloaded
-  from. dedupd only reads with it: the models, and the account's likes for the favorites.
+  from. dedupd only reads with it: the models, and the account's likes for the favorites. A client that asks the
+  daemon for a model without a token of its own (Ollama, for a gated model) is served with dedupd's token; any other
+  request the daemon passes on to Hugging Face carries the client's own token or none.
+- **Gated and private models.** A stored file of a gated or private model is served to a client only after Hugging
+  Face has been asked whether that client may have it, so it is not served while Hugging Face is unreachable.

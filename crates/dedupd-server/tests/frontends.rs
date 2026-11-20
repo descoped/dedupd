@@ -37,15 +37,20 @@ struct Fixture {
 }
 
 async fn fixture() -> Fixture {
-    fixture_with(false).await
+    fixture_with(false, None).await
+}
+
+/// The fixture with a daemon that holds a Hugging Face token of its own.
+async fn fixture_with_token() -> Fixture {
+    fixture_with(false, Some("owner-token")).await
 }
 
 /// The fixture with an archive folder on a disk that is attached.
 async fn fixture_with_archive() -> Fixture {
-    fixture_with(true).await
+    fixture_with(true, None).await
 }
 
-async fn fixture_with(archive: bool) -> Fixture {
+async fn fixture_with(archive: bool, token: Option<&str>) -> Fixture {
     let weights: Vec<u8> = (0..300_000u32).map(|i| (i % 241) as u8).collect();
     let config = b"{\"a\":1}\n".to_vec();
     let ollama_config = b"{\"model_format\":\"gguf\"}".to_vec();
@@ -147,11 +152,12 @@ async fn fixture_with(archive: bool) -> Fixture {
     if archive {
         std::fs::create_dir_all(dir.path().join("trunk")).unwrap();
     }
-    let engine = common::engine(
+    let engine = common::engine_with_token(
         &home,
         &upstream.uri(),
         &dir.path().join("apps"),
         settings.archive_home(),
+        token,
     );
     let server = Server::new(engine, settings, home).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -275,6 +281,79 @@ async fn a_gated_model_pulled_only_by_ollama_is_not_served_without_asking() {
     wait_for_info(&fx).await;
     upstream_down(&fx).await;
     assert_ne!(manifest().await.unwrap().status(), 200);
+}
+
+#[tokio::test]
+async fn a_gated_models_stored_layer_is_not_served_without_asking() {
+    let fx = fixture().await;
+    Mock::given(method("GET"))
+        .and(path(format!("/api/models/{REPO}/revision/main")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"sha": COMMIT, "id": REPO, "gated": "manual"})),
+        )
+        .with_priority(1)
+        .mount(&fx.upstream)
+        .await;
+    let sha = sha256(&fx.template);
+    let asked = format!("/v2/{REPO}/blobs/sha256:{sha}");
+    let direct = format!("{}/dedupd/blob/sha256:{sha}?repo={REPO}", fx.base);
+    let whole = || fx.http.get(&direct).header("range", "bytes=0-").send();
+    let head = || fx.http.head(format!("{}{asked}", fx.base)).send();
+
+    // The model comes in through the registry and its layer is stored.
+    let manifest = format!("{}/v2/{REPO}/manifests/latest", fx.base);
+    assert_eq!(fx.http.get(&manifest).send().await.unwrap().status(), 200);
+    assert_eq!(whole().await.unwrap().bytes().await.unwrap(), fx.template);
+    wait_for_store(&fx, &sha).await;
+    wait_for_info(&fx).await;
+
+    // While the Hub says this client may have it, the stored copy answers.
+    Mock::given(method("HEAD"))
+        .and(path(&asked))
+        .respond_with(ResponseTemplate::new(200))
+        .with_priority(2)
+        .mount(&fx.upstream)
+        .await;
+    let before = upstream_hits(&fx, &asked).await;
+    let served = whole().await.unwrap();
+    assert_eq!(served.status(), 206);
+    assert_eq!(served.bytes().await.unwrap(), fx.template);
+    assert_eq!(head().await.unwrap().status(), 200);
+    // Each was asked about upstream, and no bytes were fetched again.
+    let asked_about = fx.upstream.received_requests().await.unwrap();
+    let asked_about: Vec<_> = asked_about[..]
+        .iter()
+        .filter(|r| r.url.path() == asked)
+        .skip(before)
+        .map(|r| r.method.to_string())
+        .collect();
+    assert_eq!(asked_about, ["HEAD", "HEAD"]);
+
+    // The Hub says no: holding the bytes is not reason enough.
+    Mock::given(method("HEAD"))
+        .and(path(&asked))
+        .respond_with(
+            ResponseTemplate::new(401).insert_header("www-authenticate", "Bearer realm=\"x\""),
+        )
+        .with_priority(1)
+        .mount(&fx.upstream)
+        .await;
+    let no = whole().await.unwrap();
+    assert_eq!(no.status(), 401);
+    // Ollama refuses a challenge that names another host.
+    assert!(no.headers().get("www-authenticate").is_none());
+    assert!(no.bytes().await.unwrap().is_empty());
+    assert_eq!(head().await.unwrap().status(), 401);
+    // Nor under no name, or under a name that is not a model's.
+    for name in ["", "..%2F.."] {
+        let nameless = format!("{}/dedupd/blob/sha256:{sha}?repo={name}", fx.base);
+        let got = fx.http.get(&nameless).send().await.unwrap();
+        assert_eq!(got.status(), 404, "{name:?}");
+    }
+    // Nor while the Hub cannot be asked.
+    upstream_down(&fx).await;
+    assert_eq!(whole().await.unwrap().status(), 503);
 }
 
 /// Wait until the registry has kept the model's Hub info.
@@ -550,7 +629,8 @@ async fn ollama_pull_sequence_then_offline() {
     );
     assert_eq!(m.text().await.unwrap(), fx.manifest);
 
-    // Without Range, Ollama must be redirected to a URL on the same host.
+    // Without Range, Ollama must be redirected: it takes the target as the
+    // download URL.
     let blob = format!("/v2/{REPO}/blobs/sha256:{template_sha}");
     let first = fx.http.get(url(&blob)).send().await.unwrap();
     assert_eq!(first.status(), 307);
@@ -611,6 +691,136 @@ async fn ollama_pull_sequence_then_offline() {
         .await
         .unwrap();
     assert_eq!(unknown.status(), 404);
+}
+
+/// What the mock upstream was sent as `Authorization` for each request whose
+/// path ends in `suffix`.
+async fn upstream_auth(fx: &Fixture, suffix: &str) -> Vec<Option<String>> {
+    fx.upstream
+        .received_requests()
+        .await
+        .unwrap()
+        .iter()
+        .filter(|r| r.url.path().ends_with(suffix))
+        .map(|r| {
+            r.headers
+                .get("authorization")
+                .map(|v| v.to_str().unwrap().to_string())
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn the_daemons_token_is_lent_only_to_read_a_model() {
+    let fx = fixture_with_token().await;
+    Mock::given(wiremock::matchers::any())
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({})))
+        .with_priority(250)
+        .mount(&fx.upstream)
+        .await;
+    let owner = Some("Bearer owner-token".to_string());
+
+    // The rest of the Hub: the account, datasets, spaces, anything unknown.
+    for other in [
+        "/api/whoami-v2",
+        "/api/datasets/org/data",
+        "/datasets/org/data/resolve/main/f",
+        "/spaces/org/space",
+        "/somewhere/else/entirely",
+    ] {
+        fx.http
+            .get(format!("{}{other}", fx.base))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(upstream_auth(&fx, other).await, [None], "{other}");
+    }
+    // A request that changes something, also on a model's path.
+    let commit = format!("/api/models/{REPO}/commit/main");
+    fx.http
+        .post(format!("{}{commit}", fx.base))
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(upstream_auth(&fx, &commit).await, [None]);
+    // A client with a token of its own keeps it, here too.
+    fx.http
+        .get(format!("{}/api/whoami-v2", fx.base))
+        .header("authorization", "Bearer client-token")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        upstream_auth(&fx, "/api/whoami-v2").await[1],
+        Some("Bearer client-token".into())
+    );
+
+    // Reading a model: Ollama has no token of its own for a gated one.
+    fx.http
+        .get(format!("{}/v2/{REPO}/manifests/latest", fx.base))
+        .header("user-agent", OLLAMA_UA)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(upstream_auth(&fx, "/manifests/latest").await[0], owner);
+    let about = format!("/api/models/{REPO}/discussions");
+    fx.http
+        .get(format!("{}{about}", fx.base))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(upstream_auth(&fx, &about).await, [owner]);
+}
+
+#[tokio::test]
+async fn no_route_answers_a_web_page_or_another_name() {
+    let fx = fixture().await;
+    let port = fx.base.rsplit_once(':').unwrap().1.to_string();
+    for route in [
+        "/dedupd/v1/status".to_string(),
+        format!("/api/models/{REPO}"),
+        format!("/{REPO}/resolve/main/sub/config.json"),
+        format!("/v2/{REPO}/manifests/latest"),
+        "/api/whoami-v2".to_string(),
+    ] {
+        let url = format!("{}{route}", fx.base);
+        // A page on another site: the browser says where it came from.
+        let page = fx
+            .http
+            .get(&url)
+            .header("origin", "https://evil.example")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(page.status(), 403, "{route}");
+        // A page whose own name was pointed at this Mac sends no Origin,
+        // but asks for itself.
+        let rebound = fx
+            .http
+            .get(&url)
+            .header("host", format!("evil.example:{port}"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(rebound.status(), 421, "{route}");
+        // The loopback names are the daemon's own.
+        for name in ["localhost", "127.0.0.1", "[::1]"] {
+            let ours = fx
+                .http
+                .get(&url)
+                .header("host", format!("{name}:{port}"))
+                .send()
+                .await
+                .unwrap();
+            assert!(
+                !matches!(ours.status().as_u16(), 403 | 421),
+                "{route} as {name}"
+            );
+        }
+    }
+    // Nothing a refused request asked for went upstream.
+    assert_eq!(upstream_hits(&fx, "/api/whoami-v2").await, 3);
 }
 
 #[tokio::test]

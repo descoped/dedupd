@@ -772,6 +772,18 @@ impl Db {
         Ok(())
     }
 
+    /// Whether this repository is known to hold the stored file: as one of
+    /// its files in an app, or as a layer of an Ollama manifest kept for it.
+    pub fn repo_refers_to(&self, repo_id: i64, sha256: &str) -> Result<bool> {
+        Ok(self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM repo_files WHERE repo_id = ?1 AND sha256 = ?2)
+                 OR EXISTS (SELECT 1 FROM ollama_manifests
+                            WHERE repo_id = ?1 AND instr(body, 'sha256:' || ?2) > 0)",
+            params![repo_id, sha256],
+            |r| r.get(0),
+        )?)
+    }
+
     /// An archived Ollama manifest as `(media type, body)`: the one fetched
     /// with this User-Agent, else the most recent one for the tag.
     pub fn manifest(
