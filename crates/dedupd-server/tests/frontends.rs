@@ -701,6 +701,31 @@ async fn ollama_pull_sequence_then_offline() {
         .await
         .unwrap();
     assert_eq!(unknown.status(), 404);
+    // The Hub says 401 for a repository that is gone when the request has
+    // no token. For a model known to be open that means "gone": the kept
+    // manifest still answers, as it does for the Hub API.
+    fx.upstream.reset().await;
+    Mock::given(path_regex(".*"))
+        .respond_with(ResponseTemplate::new(401))
+        .mount(&fx.upstream)
+        .await;
+    fx.server.forget_refs();
+    let m = fx
+        .http
+        .get(url(&format!("/v2/{REPO}/manifests/latest")))
+        .header("user-agent", OLLAMA_UA)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(m.status(), 200);
+    assert_eq!(m.text().await.unwrap(), fx.manifest);
+    let unknown = fx
+        .http
+        .get(url("/v2/org/never-seen/manifests/latest"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(unknown.status(), 401);
 }
 
 /// What the mock upstream was sent as `Authorization` for each request whose
@@ -979,6 +1004,89 @@ async fn a_model_an_app_downloaded_itself_is_shared_by_the_next_pass() {
     let after = daemon::pass_with(&fx.server, zero, zero).await.unwrap();
     assert_eq!(after.forgotten, 2);
     assert!(fx.server.engine.store.contains(&sha256(&fx.weights)));
+}
+
+#[tokio::test]
+async fn a_download_a_client_left_part_of_the_way_is_swept() {
+    let fx = fixture().await;
+    let sha = sha256(&fx.template);
+    let layer = format!("{}/dedupd/blob/sha256:{sha}?repo={REPO}", fx.base);
+    let kept = || {
+        std::fs::read_dir(fx.server.home.tmp_dir())
+            .map(|dir| {
+                dir.flatten()
+                    .filter(|e| e.file_name().to_string_lossy().ends_with(".asm"))
+                    .count()
+            })
+            .unwrap_or(0)
+    };
+
+    // Asking only for the headers starts no copy.
+    fx.http.head(&layer).send().await.unwrap();
+    assert_eq!((fx.server.assemblies_open(), kept()), (0, 0));
+
+    // One part of the layer, and then the client goes away.
+    let part = fx
+        .http
+        .get(&layer)
+        .header("range", "bytes=0-1999")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(part.bytes().await.unwrap().len(), 2000);
+    assert_eq!((fx.server.assemblies_open(), kept()), (1, 1));
+
+    // Still fresh: the pass leaves it. Once idle, it and its file go. The
+    // daemon's side of the part ends a moment after the client has its
+    // bytes, and only then is the assembly idle.
+    assert_eq!(fx.server.drop_idle_assemblies(Duration::from_secs(60)), 0);
+    let mut swept = 0;
+    for _ in 0..500 {
+        swept = fx.server.drop_idle_assemblies(Duration::ZERO);
+        if swept == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(swept, 1);
+    assert_eq!((fx.server.assemblies_open(), kept()), (0, 0));
+
+    // The layer can still be downloaded whole afterwards.
+    let whole = fx
+        .http
+        .get(&layer)
+        .header("range", "bytes=0-")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(whole.bytes().await.unwrap(), fx.template);
+    wait_for_store(&fx, &sha).await;
+    // The file is in the store a moment before its assembly is let go.
+    for _ in 0..500 {
+        if (fx.server.assemblies_open(), kept()) == (0, 0) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!((fx.server.assemblies_open(), kept()), (0, 0));
+}
+
+#[tokio::test]
+async fn a_restart_does_not_wait_for_a_pull_that_is_waiting() {
+    let fx = fixture().await;
+    // So slow that the download is still going when the restart is asked.
+    fx.server.engine.governor.configure(8, 1_000);
+    let ask = json!({"model": REPO, "apps": []});
+    let (pulling, restarting) = tokio::join!(control(&fx, "POST", "pull", Some(ask)), async {
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        fx.server.shutdown.cancel();
+    });
+    let ((status, said), ()) = (pulling, restarting);
+    assert_eq!(status, 503, "{said}");
+    assert!(
+        said["error"].as_str().unwrap().contains("restarting"),
+        "{said}"
+    );
 }
 
 /// Ask the control API and read the answer as JSON.

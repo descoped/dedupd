@@ -29,7 +29,13 @@ fn visible_dirs(dir: &Path) -> Result<Vec<(String, PathBuf)>> {
 pub fn scan(models_dir: &Path) -> Result<Vec<LocalRepo>> {
     let mut repos = Vec::new();
     for (publisher, publisher_dir) in visible_dirs(models_dir)? {
-        for (repo, repo_dir) in visible_dirs(&publisher_dir)? {
+        // A publisher's folder that was removed since the line above.
+        let inside = match visible_dirs(&publisher_dir) {
+            Ok(inside) => inside,
+            Err(e) if super::not_there(&e) => continue,
+            Err(e) => return Err(e),
+        };
+        for (repo, repo_dir) in inside {
             let mut files = Vec::new();
             let walker = WalkDir::new(&repo_dir)
                 .follow_links(false)
@@ -39,14 +45,23 @@ pub fn scan(models_dir: &Path) -> Result<Vec<LocalRepo>> {
                     e.depth() == 0 || !e.file_name().to_string_lossy().starts_with('.')
                 });
             for entry in walker {
-                let entry = entry?;
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(e) if super::gone(&e) => continue,
+                    Err(e) => return Err(e.into()),
+                };
                 if !entry.file_type().is_file() {
                     continue;
                 }
+                // Gone since the folder was listed: the next scan sees it
+                // under its new name, if it has one.
+                let Some(fingerprint) = Fingerprint::if_there(entry.path())? else {
+                    continue;
+                };
                 files.push(LocalFile {
                     rel_path: rel_components(entry.path(), &repo_dir).join("/"),
                     abs_path: entry.path().to_path_buf(),
-                    fingerprint: Fingerprint::of(entry.path())?,
+                    fingerprint,
                 });
             }
             if !files.is_empty() {
@@ -67,6 +82,17 @@ pub fn scan(models_dir: &Path) -> Result<Vec<LocalRepo>> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn what_is_gone_is_not_a_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        // A file removed between the listing and the look at it.
+        let gone = dir.path().join("org/repo/model.gguf.part");
+        assert!(Fingerprint::if_there(&gone).unwrap().is_none());
+        // A publisher's folder removed after the models folder was listed.
+        let e = visible_dirs(&dir.path().join("org")).unwrap_err();
+        assert!(crate::sources::not_there(&e), "{e:#}");
+    }
 
     #[test]
     fn finds_regular_files_grouped_by_repo() {

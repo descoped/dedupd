@@ -85,9 +85,11 @@ pub fn scan(models_dir: &Path) -> Result<Vec<LocalRepo>> {
         for layer in manifest.all() {
             let rel_path = format!("blobs/sha256-{}", layer.sha256()?);
             let abs_path = models_dir.join(&rel_path);
-            if abs_path.is_file() {
+            if abs_path.is_file()
+                && let Some(fingerprint) = Fingerprint::if_there(&abs_path)?
+            {
                 files.push(LocalFile {
-                    fingerprint: Fingerprint::of(&abs_path)?,
+                    fingerprint,
                     rel_path,
                     abs_path,
                 });

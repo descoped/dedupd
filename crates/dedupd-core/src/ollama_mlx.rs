@@ -35,6 +35,8 @@ use std::fs;
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 
 /// The method's name in the app's profile and in the database.
 pub const METHOD: &str = "clone-with-rewritten-index";
@@ -255,7 +257,14 @@ struct Scratch {
     command: PathBuf,
     dir: PathBuf,
     host: String,
+    /// The longest the tool is waited for.
+    limit: Duration,
 }
+
+/// The longest Ollama's tool is waited for when it is shown a stand-in. A
+/// whole model took it 6 seconds when measured; one that takes minutes is
+/// stuck, and would hold a place in the queue for ever.
+const ASK_LIMIT: Duration = Duration::from_secs(120);
 
 impl Scratch {
     fn new(command: &Path, dir: &Path) -> Result<Self> {
@@ -267,6 +276,7 @@ impl Scratch {
             command: command.to_path_buf(),
             dir: dir.to_path_buf(),
             host: format!("127.0.0.1:{port}"),
+            limit: ASK_LIMIT,
         })
     }
 
@@ -283,17 +293,45 @@ impl Scratch {
         beside.push(".Modelfile");
         let modelfile = PathBuf::from(beside);
         fs::write(&modelfile, format!("FROM {}\n", work.display()))?;
-        let done = Command::new(&self.command)
+        // What it says goes to a file, so nothing has to be read while it
+        // runs and a tool that hangs can be ended.
+        let said_path = self.dir.join(format!("{name}.stderr"));
+        let mut child = Command::new(&self.command)
             .args(["create", name, "-f"])
             .arg(&modelfile)
             .env("OLLAMA_HOST", &self.host)
             .env("OLLAMA_MODELS", self.models())
             .env("HOME", self.dir.join("home"))
             .stdin(Stdio::null())
-            .output()
+            .stdout(Stdio::null())
+            .stderr(fs::File::create(&said_path)?)
+            .spawn()
             .with_context(|| format!("running {}", self.command.display()))?;
-        if !done.status.success() {
-            let said = String::from_utf8_lossy(&done.stderr);
+        let started = Instant::now();
+        let status = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(e) => {
+                    // Not left running in a folder that is about to go.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(e).context("waiting for Ollama's answer");
+                }
+            }
+            if started.elapsed() >= self.limit {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Ok(Err(NotPlaced::Trouble(format!(
+                    "Ollama did not answer within {} seconds when asked about the model",
+                    self.limit.as_secs()
+                ))));
+            }
+            std::thread::sleep(Duration::from_millis(25));
+        };
+        if !status.success() {
+            let said = fs::read(&said_path).unwrap_or_default();
+            let said = String::from_utf8_lossy(&said);
             let last = said.lines().last().unwrap_or("it gave no reason").trim();
             let last = last.strip_prefix("Error:").map_or(last, str::trim);
             return Ok(Err(if crate::refusals::is_about_the_model(last) {
@@ -327,6 +365,16 @@ impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.dir);
     }
+}
+
+/// A word no other run of this or another process has: for temporary names.
+fn run_tag() -> String {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    format!(
+        "{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, Ordering::Relaxed)
+    )
 }
 
 fn layers_of(manifest: &Value) -> Vec<Value> {
@@ -606,6 +654,34 @@ pub fn place(
         Ok(answer) => answer,
         Err(why) => return Ok(Err(why)),
     };
+    // Still before anything is written: every way of quantizing has
+    // Ollama's note, and every clone's index finds room at a small cost.
+    for ((item, (_, index)), groups) in weights.iter().zip(&files).zip(&split) {
+        for (way, wanted) in groups {
+            let note = match way {
+                Some(way) => match answer.notes.get(way) {
+                    Some(note) => Some(note),
+                    None => {
+                        return Ok(Err(NotPlaced::Model(format!(
+                            "the model has no complete {way} layer to show Ollama, so Ollama's \
+                             settings for such layers are not known"
+                        ))));
+                    }
+                },
+                None => None,
+            };
+            let room = safetensors::room_needed(index, note, wanted, &ollama_name)
+                .with_context(|| format!("planning Ollama's clone of {}", item.rel_path))?;
+            if room > safetensors::ROOM_MAX {
+                return Ok(Err(NotPlaced::Model(format!(
+                    "the first tensor of {} is too large to make room for Ollama's index \
+                     ({} MB would be written again)",
+                    item.rel_path,
+                    room >> 20
+                ))));
+            }
+        }
+    }
 
     // The settings: stored files, placed as clones like any other layer.
     let kept = layers_of(&answer.manifest);
@@ -650,7 +726,10 @@ pub fn place(
                 ),
                 None => None,
             };
-            let work = blobs.join(format!(".dedupd-{}-{n}", item.sha256));
+            // A name of its own for this run: another placement of the same
+            // file (a job continued while an earlier one still works, the
+            // command line beside the daemon) does not use it.
+            let work = blobs.join(format!(".dedupd-{}-{n}-{}", item.sha256, run_tag()));
             safetensors::rewritten_clone(source, &work, note, &wanted, &ollama_name)
                 .with_context(|| format!("making Ollama's clone of {}", item.rel_path))?;
             let hashes = hash_file(&work, false)?;
@@ -694,7 +773,7 @@ pub fn place(
     manifest["layers"] = Value::Array(layers);
     let parent = manifest_path.parent().expect("manifest has a parent");
     fs::create_dir_all(parent)?;
-    let tmp = parent.join(format!(".{tag}.dedupd-tmp"));
+    let tmp = parent.join(format!(".{tag}.dedupd-tmp-{}", run_tag()));
     fs::write(&tmp, serde_json::to_string(&manifest)?)?;
     fs::rename(&tmp, &manifest_path)?;
     Ok(Ok(out))
@@ -820,6 +899,49 @@ mod tests {
 
     fn index_of_plain() -> Index {
         index(&[("norm.weight", 16), ("norm.bias", 16)])
+    }
+
+    #[test]
+    fn a_tool_that_hangs_is_ended_at_the_limit() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let tool = dir.path().join("ollama");
+        fs::write(&tool, "#!/bin/sh\nsleep 60\n").unwrap();
+        fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
+        let scratch_dir = dir.path().join("scratch");
+        let mut scratch = Scratch::new(&tool, &scratch_dir).unwrap();
+        scratch.limit = Duration::from_millis(300);
+        let work = scratch_dir.join("stand-in");
+        fs::create_dir_all(&work).unwrap();
+
+        let started = Instant::now();
+        let said = scratch.import("stand-in", &work).unwrap();
+        assert!(started.elapsed() < Duration::from_secs(10));
+        match said {
+            Err(NotPlaced::Trouble(why)) => assert!(why.contains("did not answer"), "{why}"),
+            other => panic!("{other:?}"),
+        }
+        // Nothing of the asking is left behind.
+        drop(scratch);
+        assert!(!scratch_dir.exists());
+    }
+
+    #[test]
+    fn a_first_tensor_too_large_to_move_is_seen_before_anything_is_made() {
+        // Ollama's longer names need a longer index, so the first tensor
+        // would have to give way: here it is 100 MB.
+        let big = index(&[("a.weight", 100 << 20), ("a.scales", 64), ("a.biases", 64)]);
+        let wanted: BTreeSet<String> = big.tensors.iter().map(|(n, _)| n.clone()).collect();
+        let room = safetensors::room_needed(&big, None, &wanted, &ollama_name).unwrap();
+        assert!(room > safetensors::ROOM_MAX, "{room}");
+        // A small first tensor costs little.
+        let small = index(&[
+            ("a.biases", 4096),
+            ("a.scales", 4096),
+            ("a.weight", 100 << 20),
+        ]);
+        let room = safetensors::room_needed(&small, None, &wanted, &ollama_name).unwrap();
+        assert!(room <= 8192, "{room}");
     }
 
     #[test]

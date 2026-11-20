@@ -152,6 +152,18 @@ impl Server {
     }
 }
 
+impl Server {
+    /// Whether what is kept of `repo` may be answered without the Hub's
+    /// yes: the Hub's info kept for its `main` says it is neither gated nor
+    /// private. A model with no info kept, or info that cannot be read,
+    /// counts as restricted, since nothing says this client may have it.
+    /// The one rule for every front end.
+    pub(crate) fn known_open(&self, repo: &str) -> bool {
+        self.archived(repo, "main")
+            .is_some_and(|snap| !hubapi::restricted(&snap.info_json))
+    }
+}
+
 pub fn router(server: Arc<Server>) -> Router {
     Router::new().fallback(handle).with_state(server)
 }

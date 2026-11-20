@@ -68,7 +68,8 @@ it writes a new one.
 ## Downloads
 
 The queue. A download can be paused, continued, retried, started ahead of the others and cancelled, and it
-survives a restart of the daemon. A cancelled download is not continued; it and a finished one can be removed
+survives a restart of the daemon. While its files are being put into the apps, which is short, it cannot be paused
+or cancelled. A cancelled download is not continued; it and a finished one can be removed
 from the list. The figures at the top show the request budget Hugging Face allows; dedupd
 adjusts its rate to the limits the source reports. A download that requires action, such as a gated model whose
 terms have not been accepted, states what is required. Only jobs that fetch files are listed here; activating a

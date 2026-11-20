@@ -34,12 +34,28 @@ pub async fn ollama_manifest(
                     .and_then(|v| v.to_str().ok())
                     .unwrap_or(ollama::MANIFEST_TYPE)
                     .to_string();
-                let text = resp.text().await?;
-                let manifest = ollama::Manifest::parse(&text)?;
-                engine
-                    .db()
-                    .save_manifest(repo_id, tag, ollama::USER_AGENT, &media_type, &text)?;
-                fetched = Some((manifest, text));
+                // A connection lost while the answer arrives is the same
+                // trouble as one that never opened: the kept manifest is
+                // tried, and the failure passes.
+                match resp.text().await {
+                    Ok(text) => {
+                        let manifest = ollama::Manifest::parse(&text)?;
+                        engine.db().save_manifest(
+                            repo_id,
+                            tag,
+                            ollama::USER_AGENT,
+                            &media_type,
+                            &text,
+                        )?;
+                        fetched = Some((manifest, text));
+                    }
+                    Err(e) => {
+                        upstream_error = Some(
+                            anyhow::Error::new(HubError::Transport(e))
+                                .context("the answer from Hugging Face was cut off"),
+                        )
+                    }
+                }
             }
             // Typed, so a caller can tell a passing trouble from an answer.
             Ok(resp) => {

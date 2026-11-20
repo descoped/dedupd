@@ -29,9 +29,15 @@ pub(crate) struct Rev {
 }
 
 /// True when the archived model info says access is restricted. Such a
-/// repository is checked upstream on every request.
+/// repository is checked upstream on every request. Info that cannot be
+/// read says nothing, and nothing said counts as restricted.
 pub(crate) fn restricted(info_json: &str) -> bool {
-    let info: Value = serde_json::from_str(info_json).unwrap_or(Value::Null);
+    let Ok(info) = serde_json::from_str::<Value>(info_json) else {
+        return true;
+    };
+    if !info.is_object() {
+        return true;
+    }
     let gated = info
         .get("gated")
         .is_some_and(|g| *g != Value::Bool(false) && !g.is_null());
@@ -53,7 +59,7 @@ fn strip_xet(value: &mut Value) {
 }
 
 impl Server {
-    fn archived(&self, repo: &str, rev: &str) -> Option<Snapshot> {
+    pub(crate) fn archived(&self, repo: &str, rev: &str) -> Option<Snapshot> {
         let found = self.engine.db().archived(PROVIDER_HF, repo, rev);
         found.ok()?.map(|(_, snap)| snap)
     }
@@ -198,9 +204,7 @@ async fn refs(server: &Arc<Server>, call: &Call, repo: &str) -> Response {
                 .unwrap_or_default()
         };
         // A restricted repository is the Hub's to answer for.
-        let open = server
-            .archived(repo, "main")
-            .is_none_or(|s| !restricted(&s.info_json));
+        let open = server.known_open(repo);
         if !archived.is_empty() && open {
             eprintln!("dedupd: {repo}: branch names answered from the kept copy");
             let branches: Vec<Value> = archived
@@ -480,9 +484,14 @@ pub(crate) async fn resolve(
     };
     // A large file: stream it to the client and keep the bytes.
     match upstream(server, call, &url, true).await {
-        Ok(resp) if matches!(resp.status().as_u16(), 200 | 206) => {
-            files::tee_response(server, resp, sha, Some("application/octet-stream"), &extra)
-        }
+        Ok(resp) if matches!(resp.status().as_u16(), 200 | 206) => files::tee_response(
+            server,
+            call,
+            resp,
+            sha,
+            Some("application/octet-stream"),
+            &extra,
+        ),
         other => relay_or_unreachable(server, call, other),
     }
 }
@@ -542,6 +551,9 @@ mod tests {
         assert!(!restricted(r#"{}"#));
         assert!(restricted(r#"{"gated": "auto"}"#));
         assert!(restricted(r#"{"private": true}"#));
+        // What cannot be read does not say the model is open.
+        assert!(restricted("not json"));
+        assert!(restricted("null"));
     }
 
     #[test]

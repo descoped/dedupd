@@ -125,26 +125,20 @@ async fn manifest(server: &Arc<Server>, call: &Call, name: &str, tag: &str) -> R
         return manifest_response(call, &media_type, body);
     }
 
-    // The Hub said no to this client, or the repository is gated or
-    // private: its answer stands, as for the Hub API. Otherwise (gone,
-    // down, out of reach) the archived manifest answers. Whether the model
-    // is gated or private is read from the Hub's info kept for it; a model
-    // with no info kept counts as restricted, since nothing says this
-    // client may have it.
-    let refused = answer
-        .as_ref()
-        .is_ok_and(|r| matches!(r.status().as_u16(), 401 | 403));
+    // The Hub did not give the manifest (gone, hidden, down, out of
+    // reach). A model that is gated or private is the Hub's to answer for,
+    // so its answer stands. A model known to be open is answered from the
+    // kept manifest, as the Hub API front end does: the Hub says 401 for a
+    // repository that no longer exists when the request has no token, so a
+    // 401 or 403 for an open model means "gone", not "not for you". The
+    // rule is `Server::known_open`, the same for both front ends.
     let archived = {
+        let open = server.known_open(name);
         let db = server.engine.db();
-        let restricted = db
-            .archived(PROVIDER_HF, name, "main")
-            .ok()
-            .flatten()
-            .is_none_or(|(_, snap)| crate::hubapi::restricted(&snap.info_json));
         db.repo_id(PROVIDER_HF, name)
             .ok()
             .flatten()
-            .filter(|_| !refused && !restricted)
+            .filter(|_| open)
             .and_then(|id| db.manifest(id, tag, Some(&user_agent)).ok().flatten())
     };
     match archived {
@@ -250,12 +244,8 @@ pub(crate) async fn blob_direct(server: &Arc<Server>, call: &Call, digest: &str)
 /// known to hold the layer. A model with no info kept, and a layer asked for
 /// under another model's name, count as restricted.
 fn open_to_all(server: &Server, name: &str, sha: &str) -> bool {
+    let open = server.known_open(name);
     let db = server.engine.db();
-    let open = db
-        .archived(PROVIDER_HF, name, "main")
-        .ok()
-        .flatten()
-        .is_some_and(|(_, snap)| !crate::hubapi::restricted(&snap.info_json));
     open && db
         .repo_id(PROVIDER_HF, name)
         .ok()
@@ -312,7 +302,7 @@ async fn send_blob(server: &Arc<Server>, call: &Call, name: &str, sha: &str) -> 
     let url = server.engine.fetcher.registry_blob_url(name, sha);
     match upstream(server, call, &url, true).await {
         Ok(resp) if matches!(resp.status().as_u16(), 200 | 206) => {
-            files::tee_response(server, resp, sha, None, &extra)
+            files::tee_response(server, call, resp, sha, None, &extra)
         }
         other => relay_or_unreachable(server, call, other),
     }

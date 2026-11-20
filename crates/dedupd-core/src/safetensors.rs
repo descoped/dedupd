@@ -227,6 +227,23 @@ fn plan(
     bail!("the new index is longer than the whole file")
 }
 
+/// The most a clone may cost in tensors written again to make room for a
+/// longer index. A file whose first tensor is larger is not given a
+/// rewritten index: the cost would be that tensor twice, in memory and on
+/// disk, where a few megabytes are promised.
+pub const ROOM_MAX: u64 = 64 << 20;
+
+/// The bytes of tensors that `rewritten_clone` would write again for this
+/// index, these notes and these names. For asking before anything is made.
+pub fn room_needed(
+    old: &Index,
+    notes: Option<&Notes>,
+    wanted: &BTreeSet<String>,
+    rename: &dyn Fn(&str) -> String,
+) -> Result<u64> {
+    Ok(plan(old, notes, wanted, rename)?.room)
+}
+
 /// Put a clone of the safetensors file `src` at `dst` whose index lists only
 /// the tensors in `wanted`, under the names `rename` gives them, with
 /// `notes` as the file's notes. Every listed tensor holds the bytes it held
@@ -257,6 +274,13 @@ pub fn rewritten_clone(
         src.display()
     );
     let plan = plan(&old, notes, wanted, rename)?;
+    ensure!(
+        plan.room <= ROOM_MAX,
+        "the index of {} needs {} MB of tensors written again to find room; the limit is {} MB",
+        src.display(),
+        plan.room >> 20,
+        ROOM_MAX >> 20
+    );
 
     clone_into_place(src, dst, |tmp| {
         // Store files are read-only; this one is the app's own.

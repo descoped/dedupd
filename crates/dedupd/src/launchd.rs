@@ -86,30 +86,61 @@ fn plist(label: &str, exe: &str, home: &str, log: &str) -> String {
     )
 }
 
+/// Put the program `built` at `exe`, unless the two are one file under two
+/// names (a symlink to the installed program, a relative `--home`): then
+/// there is nothing to copy, and removing one would remove both. The copy
+/// is made beside `exe` and renamed onto it, so a copy that fails part of
+/// the way (a full disk) leaves the installed program as it was.
+fn install_program(built: &Path, exe: &Path) -> Result<()> {
+    let same = match (std::fs::canonicalize(built), std::fs::canonicalize(exe)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    };
+    if same {
+        return Ok(());
+    }
+    let folder = exe.parent().expect("bin folder");
+    std::fs::create_dir_all(folder)?;
+    let tmp = folder.join(format!(".dedupd-{}.tmp", std::process::id()));
+    let copied = std::fs::copy(built, &tmp)
+        .and_then(|_| std::fs::rename(&tmp, exe))
+        .with_context(|| format!("copying dedupd to {}", exe.display()));
+    if copied.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    copied
+}
+
+/// Write `text` to `path` through a temporary name beside it.
+fn write_whole(path: &Path, text: &str) -> Result<()> {
+    let tmp = path.with_extension(format!("tmp-{}", std::process::id()));
+    let written = std::fs::write(&tmp, text)
+        .and_then(|()| std::fs::rename(&tmp, path))
+        .with_context(|| format!("writing {}", path.display()));
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
+}
+
 pub fn cmd_install(o: &Opened, env: bool, label: &str) -> Result<()> {
     // The agent runs a copy under the home folder, so rebuilding or
     // cleaning the source tree cannot break the daemon.
     let built = std::env::current_exe().context("finding the dedupd binary")?;
     let exe = o.home.program_path();
-    if built != exe {
-        std::fs::create_dir_all(exe.parent().expect("bin folder"))?;
-        let _ = std::fs::remove_file(&exe);
-        std::fs::copy(&built, &exe)
-            .with_context(|| format!("copying dedupd to {}", exe.display()))?;
-    }
+    install_program(&built, &exe)?;
     let path = plist_path(label)?;
     let log = o.home.log_path();
     std::fs::create_dir_all(path.parent().expect("plist has a parent"))?;
-    std::fs::write(
+    write_whole(
         &path,
-        plist(
+        &plist(
             label,
             &exe.to_string_lossy(),
             &o.home.root().to_string_lossy(),
             &log.to_string_lossy(),
         ),
-    )
-    .with_context(|| format!("writing {}", path.display()))?;
+    )?;
     if env {
         // Asked for in so many words, so an existing `set_env = false` is
         // changed too; the rest of the file stays as it is.
@@ -269,6 +300,31 @@ pub fn cmd_agent(home: &Path, label: &str, json: bool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installing_through_another_name_for_the_program_keeps_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let exe = dir.path().join("bin/dedupd");
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"the program").unwrap();
+        let link = dir.path().join("dedupd-link");
+        std::os::unix::fs::symlink(&exe, &link).unwrap();
+
+        // Started through the link: the installed program is the same file.
+        install_program(&link, &exe).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"the program");
+
+        // Another build replaces it whole, and leaves nothing beside it.
+        let built = dir.path().join("built");
+        std::fs::write(&built, b"a newer program").unwrap();
+        install_program(&built, &exe).unwrap();
+        assert_eq!(std::fs::read(&exe).unwrap(), b"a newer program");
+        assert_eq!(std::fs::read_dir(exe.parent().unwrap()).unwrap().count(), 1);
+
+        // A program that cannot be read leaves the installed one alone.
+        assert!(install_program(&dir.path().join("missing"), &exe).is_err());
+        assert_eq!(std::fs::read(&exe).unwrap(), b"a newer program");
+    }
 
     #[test]
     fn same_file_compares_the_bytes() {

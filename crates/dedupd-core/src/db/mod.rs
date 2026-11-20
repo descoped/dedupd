@@ -286,20 +286,38 @@ impl Db {
     /// Create the schema in an empty database. One that holds another
     /// schema is refused: there are no migrations, so it has to be removed.
     fn init(conn: Connection) -> Result<Self> {
+        // First, so that everything below waits its turn.
+        conn.busy_timeout(std::time::Duration::from_secs(30))?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "foreign_keys", "ON")?;
-        conn.busy_timeout(std::time::Duration::from_secs(30))?;
-        let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
-        let tables: i64 = conn.query_row(
-            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
-            [],
-            |r| r.get(0),
-        )?;
-        if version == 0 && tables == 0 {
-            conn.execute_batch(&format!(
-                "BEGIN; {SCHEMA} PRAGMA user_version = {SCHEMA_VERSION}; COMMIT;"
-            ))?;
-        } else if version != SCHEMA_VERSION {
+        // The look and the creation are one step, under the write lock: two
+        // processes that open a new home at the same moment (the daemon and
+        // a command) take turns, and the second finds the schema made.
+        conn.execute_batch("BEGIN IMMEDIATE")?;
+        let made = (|| -> Result<i64> {
+            let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+            let tables: i64 = conn.query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
+                [],
+                |r| r.get(0),
+            )?;
+            if version == 0 && tables == 0 {
+                conn.execute_batch(&format!("{SCHEMA} PRAGMA user_version = {SCHEMA_VERSION};"))?;
+                return Ok(SCHEMA_VERSION);
+            }
+            Ok(version)
+        })();
+        let version = match made {
+            Ok(version) => {
+                conn.execute_batch("COMMIT")?;
+                version
+            }
+            Err(e) => {
+                let _ = conn.execute_batch("ROLLBACK");
+                return Err(e);
+            }
+        };
+        if version != SCHEMA_VERSION {
             anyhow::bail!(
                 "the database was made by another build of dedupd (schema {version}, this build uses \
                  {SCHEMA_VERSION}). dedupd does not migrate a database: remove it and its -wal and \
@@ -892,6 +910,25 @@ fn blob_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<BlobRow> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_database_opened_from_many_sides_at_once_is_made_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("dedupd.sqlite");
+        let gate = std::sync::Arc::new(std::sync::Barrier::new(8));
+        let opening: Vec<_> = (0..8)
+            .map(|_| {
+                let (path, gate) = (path.clone(), gate.clone());
+                std::thread::spawn(move || {
+                    gate.wait();
+                    Db::open(&path).map(|_| ())
+                })
+            })
+            .collect();
+        for one in opening {
+            one.join().unwrap().unwrap();
+        }
+    }
 
     #[test]
     fn schema_is_created_once_and_reopens() {

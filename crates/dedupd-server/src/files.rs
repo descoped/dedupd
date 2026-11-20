@@ -8,8 +8,8 @@ use axum::response::Response;
 use dedupd_core::hash::hash_file;
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
 
 /// Parse a `Range` header for a file of `size` bytes into an inclusive
@@ -110,41 +110,65 @@ pub(crate) async fn serve_stored(
 }
 
 /// A large file being put together from the ranges clients download. When
-/// every byte has passed through, it is hashed and moved into the store.
+/// every byte has passed through and no part is still being written, it is
+/// hashed and moved into the store.
 pub(crate) struct Assembly {
     sha256: String,
     size: u64,
     path: PathBuf,
     file: std::fs::File,
-    covered: Mutex<Vec<(u64, u64)>>,
-    finishing: AtomicBool,
+    state: Mutex<Progress>,
 }
 
-impl Assembly {
+struct Progress {
+    covered: Vec<(u64, u64)>,
+    /// The parts that still write through `file`. The file is not hashed
+    /// while there is one: a part that is slow, or asked for a second time,
+    /// could otherwise write into the file after it was found good and
+    /// moved into the store.
+    open: usize,
+    /// The file is being hashed; no new part is taken.
+    finishing: bool,
+    /// When a part last ended.
+    touched: Instant,
+}
+
+impl Progress {
     /// Record that `[start, end)` is on disk. True when the file is complete.
-    fn add(&self, start: u64, end: u64) -> bool {
-        let mut covered = self.covered.lock().expect("lock");
+    fn add(&mut self, start: u64, end: u64, size: u64) -> bool {
         if end > start {
-            covered.push((start, end));
-            covered.sort();
+            self.covered.push((start, end));
+            self.covered.sort();
             let mut merged: Vec<(u64, u64)> = Vec::new();
-            for &(s, e) in covered.iter() {
+            for &(s, e) in &self.covered {
                 match merged.last_mut() {
                     Some(last) if s <= last.1 => last.1 = last.1.max(e),
                     _ => merged.push((s, e)),
                 }
             }
-            *covered = merged;
+            self.covered = merged;
         }
-        covered.as_slice() == [(0, self.size)]
+        self.covered.as_slice() == [(0, size)]
     }
 }
 
+/// How long an assembly no part writes to is kept. A client that stopped
+/// part of the way (`ollama pull` cancelled) leaves one behind, up to the
+/// size of the model.
+pub(crate) const ASSEMBLY_IDLE: Duration = Duration::from_secs(15 * 60);
+
 impl Server {
-    fn assembly(&self, sha256: &str, size: u64) -> Option<Arc<Assembly>> {
+    /// The assembly for this file with one more part open on it, or `None`
+    /// when no copy is kept of this answer.
+    fn open_part(&self, sha256: &str, size: u64) -> Option<Arc<Assembly>> {
         let mut map = self.assemblies.lock().expect("lock");
         if let Some(a) = map.get(sha256) {
-            return (a.size == size).then(|| a.clone());
+            let mut state = a.state.lock().expect("lock");
+            if a.size != size || state.finishing {
+                return None;
+            }
+            state.open += 1;
+            return Some(a.clone());
         }
         let path = self.engine.store.tmp_path(&format!("{sha256}.asm"));
         let file = std::fs::OpenOptions::new()
@@ -158,33 +182,78 @@ impl Server {
             size,
             path,
             file,
-            covered: Mutex::new(Vec::new()),
-            finishing: AtomicBool::new(false),
+            state: Mutex::new(Progress {
+                covered: Vec::new(),
+                open: 1,
+                finishing: false,
+                touched: Instant::now(),
+            }),
         });
         map.insert(sha256.to_string(), a.clone());
         Some(a)
     }
 
-    /// A part finished (or was cut short). If the file is now whole, check
-    /// it and move it into the store.
+    /// A part finished (or was cut short), and writes no more. If the file
+    /// is now whole and no other part is open, check it and move it into
+    /// the store.
     fn part_done(self: &Arc<Self>, asm: &Arc<Assembly>, start: u64, end: u64) {
-        if !asm.add(start, end) || asm.finishing.swap(true, Ordering::SeqCst) {
-            return;
+        {
+            let mut state = asm.state.lock().expect("lock");
+            let whole = state.add(start, end, asm.size);
+            state.open = state.open.saturating_sub(1);
+            state.touched = Instant::now();
+            if !whole || state.open > 0 || state.finishing {
+                return;
+            }
+            state.finishing = true;
         }
         let (server, asm) = (self.clone(), asm.clone());
         tokio::task::spawn_blocking(move || {
             let ok = hash_file(&asm.path, false).is_ok_and(|h| h.sha256 == asm.sha256);
-            if ok
-                && server.engine.store.add_tmp(&asm.path, &asm.sha256).is_ok()
-                && let Err(e) = server.engine.db().upsert_blob(&asm.sha256, asm.size, None)
-            {
+            let stored = ok
+                && match server.engine.store.add_tmp(&asm.path, &asm.sha256) {
+                    Ok(_) => true,
+                    Err(e) => {
+                        eprintln!("dedupd: storing {}: {e:#}", asm.sha256);
+                        false
+                    }
+                };
+            if stored && let Err(e) = server.engine.db().upsert_blob(&asm.sha256, asm.size, None) {
                 eprintln!("dedupd: recording {}: {e:#}", asm.sha256);
             }
-            if !ok {
+            // Whatever kept the file out of the store, its copy goes.
+            if !stored {
                 let _ = std::fs::remove_file(&asm.path);
             }
             server.assemblies.lock().expect("lock").remove(&asm.sha256);
         });
+    }
+
+    /// Drop the assemblies no part has written to for `idle`, with their
+    /// files. Returns how many went.
+    pub fn drop_idle_assemblies(&self, idle: Duration) -> usize {
+        let mut map = self.assemblies.lock().expect("lock");
+        let gone: Vec<String> = map
+            .iter()
+            .filter(|(_, a)| {
+                let state = a.state.lock().expect("lock");
+                state.open == 0 && !state.finishing && state.touched.elapsed() >= idle
+            })
+            .map(|(sha, _)| sha.clone())
+            .collect();
+        let dropped: Vec<_> = gone.iter().filter_map(|sha| map.remove(sha)).collect();
+        // The files go after the lock is given back; no request waits on
+        // an unlink.
+        drop(map);
+        for assembly in &dropped {
+            let _ = std::fs::remove_file(&assembly.path);
+        }
+        dropped.len()
+    }
+
+    /// How many files are being put together now.
+    pub fn assemblies_open(&self) -> usize {
+        self.assemblies.lock().expect("lock").len()
     }
 }
 
@@ -205,8 +274,8 @@ impl Drop for Part {
 }
 
 /// Relay an upstream download of the file with this sha256 to the client,
-/// writing the same bytes into the file's assembly on the way.
-fn tee(server: &Arc<Server>, resp: reqwest::Response, sha256: &str) -> Body {
+/// writing the same bytes into the file's assembly on the way when `keep`.
+fn tee(server: &Arc<Server>, resp: reqwest::Response, sha256: &str, keep: bool) -> Body {
     let status = resp.status().as_u16();
     let header = |name: header::HeaderName| {
         resp.headers()
@@ -226,8 +295,8 @@ fn tee(server: &Arc<Server>, resp: reqwest::Response, sha256: &str) -> Body {
         }),
         _ => None,
     };
-    let part = placed.and_then(|(start, size)| {
-        server.assembly(sha256, size).map(|asm| Part {
+    let part = placed.filter(|_| keep).and_then(|(start, size)| {
+        server.open_part(sha256, size).map(|asm| Part {
             server: server.clone(),
             asm,
             start,
@@ -268,8 +337,10 @@ fn tee(server: &Arc<Server>, resp: reqwest::Response, sha256: &str) -> Body {
 
 /// Relay an upstream 200 or 206 for the file with this sha256, keeping a
 /// copy of the bytes (see `tee`). `extra` headers are added to the answer.
+/// The answer to a `HEAD` carries no bytes, so no copy is started for it.
 pub(crate) fn tee_response(
     server: &Arc<Server>,
+    call: &Call,
     resp: reqwest::Response,
     sha256: &str,
     content_type: Option<&str>,
@@ -288,7 +359,9 @@ pub(crate) fn tee_response(
     for (k, v) in extra {
         out = out.header(*k, v);
     }
-    out.body(tee(server, resp, sha256)).expect("valid response")
+    let keep = call.method != axum::http::Method::HEAD;
+    out.body(tee(server, resp, sha256, keep))
+        .expect("valid response")
 }
 
 #[cfg(test)]
