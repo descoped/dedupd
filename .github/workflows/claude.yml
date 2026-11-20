@@ -73,7 +73,33 @@ jobs:
             --disallowedTools "Agent"
             --allowedTools "Bash(gh pr diff:*),Bash(gh pr view:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          prompt: "Review this PR. Read .claude/CLAUDE.md, then read each file in .claude/rules/ that applies to the files this PR changes (its Applies to line says which). The never-violate rules are the sections Invariants and Protocol rules that are easy to get wrong in .claude/CLAUDE.md: weight files in the store are never transformed, placement is by clones and never by symlinks, hard links or copies, nothing is deleted without an explicit apply, Authorization goes to huggingface.co only, Xet stays hidden from clients, and the Ollama registry redirect rules. Review against them as written there, and when you flag a violation name the rule. Also check correctness, error handling, that all SQL stays in the db module, that the database has one flat schema and no migrations, that the macOS app talks to the daemon only through crates/dedupd-client and never embeds dedupd-core, that a change to the control API comes with re-recorded fixtures and a change to the client with regenerated Swift bindings, hardcoded values and leaked secrets, and AI attribution lines in commits or the PR body (none allowed). The tests cannot run here (they need macOS and APFS); the CI workflow runs them. Distinguish CRITICAL (must fix before merge) from SUGGESTION (non-blocking). Post one concise PR review with file:line citations. If the PR is clean, say so plainly; do not manufacture issues. Complete the entire review within this run and post the consolidated review before ending; never end the turn while any review pass is deferred, backgrounded or promised for later."
+          prompt: |
+            Review this PR. It may change the Rust daemon and command line (crates/), the macOS app in Swift (macos-app/), or both; review every part it changes.
+
+            First read .claude/CLAUDE.md, then each file in .claude/rules/ that applies to the files this PR changes (its Applies to line says which; macos-app.md covers macos-app/).
+
+            Never-violate rules, from the sections Invariants and Protocol rules that are easy to get wrong in .claude/CLAUDE.md: weight files in the store are never transformed; placement is by clones, never by symlinks, hard links or copies; nothing is deleted without an explicit apply; Authorization goes to huggingface.co only; Xet stays hidden from clients; the Ollama registry redirect rules. Review against them as written there, and when you flag a violation, name the rule.
+
+            Rust (crates/):
+            - Correctness and error handling: errors carry context and reach the caller or the log, nothing is silently dropped, no unwrap or expect on input that can fail outside tests.
+            - Async: no blocking file, hash or database work on the async runtime outside spawn_blocking; no std Mutex guard held across an await; a background task or a dropped request cannot leave state half-done (a flag set, a lock held).
+            - All SQL stays in the db module; one flat schema and no migrations.
+            - A name or path from outside (a client, the provider, a file) is checked before it is used in a path or a URL.
+            - The core modules do not depend on each other in a circle (crates/dedupd-core/tests/module_cycles.rs).
+            - A change to the control API comes with re-recorded fixtures (just fixtures); a change to dedupd-api or the client comes with regenerated Swift bindings.
+
+            Swift (macos-app/), against .claude/rules/macos-app.md:
+            - The app talks to the daemon only through crates/dedupd-client, through LiveDaemonClient off the main thread, and never embeds dedupd-core or opens the store.
+            - Swift 6 strict concurrency: @Observable @MainActor stores, no data races, no force unwraps, try! or as! without an inline SwiftLint disable comment that says why.
+            - project.yml is the source of truth: a file added, moved or removed comes with the regenerated Dedupd.xcodeproj. The generated bindings in DedupdClient/Generated are never edited by hand.
+            - One event subscription feeds every screen; no polling and no second subscription. Pure logic stays out of View types.
+            - Text a person types or pastes goes through ModelSpec; nothing from the daemon is shown as Markdown or a format string.
+            - The canned daemon holds nothing personal (paths under /Users/example, the archive at /Volumes/Archive) and no rule of its own about which app takes what.
+            - Elements a UI test reads have their accessibility text spelled out; a list row's .tag goes on last.
+
+            Also: hardcoded values, leaked secrets, and AI attribution lines in commits or the PR body (none allowed). Docs (README.md, docs/) say what the code now does.
+
+            The tests cannot run here: they need macOS and APFS. CI runs the Rust tests; the Swift app is built and tested locally with just app-check. Distinguish CRITICAL (must fix before merge) from SUGGESTION (non-blocking). Post one concise PR review with file:line citations, grouped by Rust and Swift when the PR changes both. If the PR is clean, say so plainly; do not manufacture issues. Complete the entire review within this run and post the consolidated review before ending; never end the turn while any review pass is deferred, backgrounded or promised for later.
           track_progress: true
           allowed_bots: 'renovate[bot]'
 
