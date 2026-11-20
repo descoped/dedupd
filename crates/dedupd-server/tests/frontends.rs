@@ -1006,7 +1006,6 @@ async fn a_model_an_app_downloaded_itself_is_shared_by_the_next_pass() {
     assert!(fx.server.engine.store.contains(&sha256(&fx.weights)));
 }
 
-/// Ask the control API and read the answer as JSON.
 #[tokio::test]
 async fn a_download_a_client_left_part_of_the_way_is_swept() {
     let fx = fixture().await;
@@ -1037,9 +1036,19 @@ async fn a_download_a_client_left_part_of_the_way_is_swept() {
     assert_eq!(part.bytes().await.unwrap().len(), 2000);
     assert_eq!((fx.server.assemblies_open(), kept()), (1, 1));
 
-    // Still fresh: the pass leaves it. Once idle, it and its file go.
+    // Still fresh: the pass leaves it. Once idle, it and its file go. The
+    // daemon's side of the part ends a moment after the client has its
+    // bytes, and only then is the assembly idle.
     assert_eq!(fx.server.drop_idle_assemblies(Duration::from_secs(60)), 0);
-    assert_eq!(fx.server.drop_idle_assemblies(Duration::ZERO), 1);
+    let mut swept = 0;
+    for _ in 0..500 {
+        swept = fx.server.drop_idle_assemblies(Duration::ZERO);
+        if swept == 1 {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    assert_eq!(swept, 1);
     assert_eq!((fx.server.assemblies_open(), kept()), (0, 0));
 
     // The layer can still be downloaded whole afterwards.
@@ -1052,6 +1061,13 @@ async fn a_download_a_client_left_part_of_the_way_is_swept() {
         .unwrap();
     assert_eq!(whole.bytes().await.unwrap(), fx.template);
     wait_for_store(&fx, &sha).await;
+    // The file is in the store a moment before its assembly is let go.
+    for _ in 0..500 {
+        if (fx.server.assemblies_open(), kept()) == (0, 0) {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
     assert_eq!((fx.server.assemblies_open(), kept()), (0, 0));
 }
 
@@ -1073,6 +1089,7 @@ async fn a_restart_does_not_wait_for_a_pull_that_is_waiting() {
     );
 }
 
+/// Ask the control API and read the answer as JSON.
 async fn control(fx: &Fixture, verb: &str, path: &str, body: Option<Value>) -> (u16, Value) {
     let url = format!("{}/dedupd/v1/{path}", fx.base);
     let req = match verb {

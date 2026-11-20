@@ -309,8 +309,15 @@ impl Scratch {
             .with_context(|| format!("running {}", self.command.display()))?;
         let started = Instant::now();
         let status = loop {
-            if let Some(status) = child.try_wait()? {
-                break status;
+            match child.try_wait() {
+                Ok(Some(status)) => break status,
+                Ok(None) => {}
+                Err(e) => {
+                    // Not left running in a folder that is about to go.
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(e).context("waiting for Ollama's answer");
+                }
             }
             if started.elapsed() >= self.limit {
                 let _ = child.kill();

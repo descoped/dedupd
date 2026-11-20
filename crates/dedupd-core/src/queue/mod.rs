@@ -19,7 +19,7 @@ use dedupd_api::jobs::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::sync::watch;
@@ -51,12 +51,33 @@ struct Job {
     /// Set when the owner stops the job, so a task that is being ended does
     /// not write a state after the one the owner chose.
     stopped: AtomicBool,
+    /// How many Pause or Cancel actions are between their check and their
+    /// last word. While one is, the job is not queued again: the files it
+    /// is about to clean up would be those of a task that runs anew.
+    settling: AtomicUsize,
     meter: Meter,
     /// Held, as a second reference, by the job's file downloads while any
     /// of them is alive. Ending the job's task ends them too, but each
     /// stops in its own time; `stop` waits here until all are gone, so
     /// nothing writes a file after the owner's action has cleaned up.
     alive: Arc<()>,
+}
+
+/// A job a Pause or Cancel has claimed, until the action has had its last
+/// word (also when it ends early).
+struct Settling(Arc<Job>);
+
+impl std::ops::Deref for Settling {
+    type Target = Arc<Job>;
+    fn deref(&self) -> &Arc<Job> {
+        &self.0
+    }
+}
+
+impl Drop for Settling {
+    fn drop(&mut self) {
+        self.0.settling.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 impl Job {
@@ -262,7 +283,7 @@ impl Queue {
     /// writes no state after this, with the task to end. A job that waits
     /// for its turn is taken out of the turn here. `start` and `start_now`
     /// hold the same lock, so neither can start the job in between.
-    fn claim(&self, id: i64, action: JobAction) -> Result<(Arc<Job>, Option<JoinHandle<()>>)> {
+    fn claim(&self, id: i64, action: JobAction) -> Result<(Settling, Option<JoinHandle<()>>)> {
         let jobs = self.jobs.lock().expect("lock");
         let Some(job) = jobs.get(&id).cloned() else {
             bail!("there is no download {id}");
@@ -275,12 +296,13 @@ impl Queue {
             // Under the record's lock, which `set` holds to look at the
             // mark: a task that is about to place sees it and ends.
             job.stopped.store(true, Ordering::SeqCst);
+            job.settling.fetch_add(1, Ordering::SeqCst);
             if r.state == JobState::Queued {
                 r.state = JobState::Paused;
             }
         }
         let handle = job.task.lock().expect("lock").take();
-        Ok((job, handle))
+        Ok((Settling(job), handle))
     }
 
     /// End the job's task, if one is running, and wait until it is gone.
@@ -360,6 +382,11 @@ impl Queue {
             let mut r = job.record();
             if !(r.state.allows(JobAction::Resume) || r.state.allows(JobAction::Retry)) {
                 bail!("{}", not_now(id, r.state, JobAction::Resume));
+            }
+            // A Pause or Cancel that has claimed the job (under this lock)
+            // and has not written its last word yet goes first.
+            if job.settling.load(Ordering::SeqCst) > 0 {
+                bail!("download {id} is being stopped; try again in a moment");
             }
             r.state = JobState::Queued;
             r.detail = None;
@@ -620,6 +647,7 @@ impl Job {
             record: Mutex::new(record),
             task: Mutex::new(None),
             stopped: AtomicBool::new(false),
+            settling: AtomicUsize::new(0),
             meter: Meter::new(),
             alive: Arc::new(()),
         }

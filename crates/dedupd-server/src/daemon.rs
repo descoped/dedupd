@@ -58,7 +58,13 @@ pub async fn pass_with(
 ) -> anyhow::Result<ScanResult> {
     let _guard = server.passes.lock.lock().await;
     // Files a client began to download through the daemon and left.
-    server.drop_idle_assemblies(crate::files::ASSEMBLY_IDLE);
+    {
+        let server = server.clone();
+        tokio::task::spawn_blocking(move || {
+            server.drop_idle_assemblies(crate::files::ASSEMBLY_IDLE)
+        })
+        .await?;
+    }
     let mut report = ScanResult::default();
     let (repos, scanned) = {
         let server = server.clone();

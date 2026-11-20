@@ -241,12 +241,14 @@ impl Server {
             })
             .map(|(sha, _)| sha.clone())
             .collect();
-        for sha in &gone {
-            if let Some(a) = map.remove(sha) {
-                let _ = std::fs::remove_file(&a.path);
-            }
+        let dropped: Vec<_> = gone.iter().filter_map(|sha| map.remove(sha)).collect();
+        // The files go after the lock is given back; no request waits on
+        // an unlink.
+        drop(map);
+        for assembly in &dropped {
+            let _ = std::fs::remove_file(&assembly.path);
         }
-        gone.len()
+        dropped.len()
     }
 
     /// How many files are being put together now.
