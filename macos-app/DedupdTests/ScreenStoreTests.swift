@@ -119,6 +119,10 @@ struct LibraryStoreTests {
         await library.loadDetail()
         #expect(library.detail.value?.placements.isEmpty == true)
         #expect(library.detail.value?.variants.first?.isStored == false)
+        #expect(
+            library.detail.value?.variants.allSatisfy { !$0.weightsStored && !$0.canActivate } == true,
+            "as the daemon says it: the weights are not in the store, so no app is offered Activate"
+        )
 
         await library.restore()
         #expect(await eventually { await daemon.moving?.kind == .restore })
