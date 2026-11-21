@@ -118,3 +118,16 @@ affected. When the daemon that answers is another build of dedupd than the app, 
 on this screen.
 
 ![The app without a daemon, offering to install it](images/install.png)
+
+## Updates
+
+The app checks for a new release once a day, starting with the first release that carries the updater. A new
+version is offered with what changed, and installed only when you say so. **Check for Updates…** in the app menu
+checks at once. Under Settings, Updates shows the app's version and lets you turn the daily check off.
+
+The feed the app reads and every update in it are signed; the app installs nothing whose signature does not match
+the key it carries. A check sends GitHub the app's version and nothing about the Mac.
+
+After an update, the app brings the installed daemon to the same version by itself, and the Daemon screen says
+so. It waits while a model is being archived or restored; downloads continue after the daemon has started again.
+A debug build of the app made from the source does not check for updates.

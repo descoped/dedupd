@@ -131,9 +131,17 @@ app-preview fixture="running" pane="library": app-build
 app-package: app-gen
     sh macos-app/scripts/release.sh --skip-notary
 
-# The release: sign with Developer ID, have Apple notarise it, and leave macos-app/build/release/dedupd-<version>.dmg
+# The release: the last version check, sign with Developer ID, have Apple notarise it, and leave macos-app/build/release/dedupd-<version>.dmg and the signed appcast.xml
 app-release: app-gen
     sh macos-app/scripts/release.sh
+
+# The last version check alone: is the version ready to be released? Builds nothing
+app-release-check:
+    sh macos-app/scripts/release.sh --check
+
+# Publish what app-release made: tag v<version>, push the tag, and make the GitHub release with the disk image and the feed (installed copies then offer it)
+app-publish:
+    sh macos-app/scripts/publish.sh
 
 # Open the app icon in Icon Composer (macos-app/Dedupd/AppIcon.icon: the monogram and the instrument behind it, as SVG layers)
 app-icon:

@@ -174,7 +174,6 @@ with tests against the real app.
 
 ## macOS
 
-- Updates for the app.
 - Downloads from Hugging Face through its Xet storage, which is faster than the plain download used today.
 
 ## Not planned
