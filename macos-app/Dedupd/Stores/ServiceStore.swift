@@ -109,19 +109,38 @@ final class ServiceStore {
     /// older one installed, so the two are one version again. Only an older
     /// daemon is replaced; another build of the same version is offered with
     /// Update instead. An archive or restore that runs is waited for, because
-    /// the daemon starts again. Downloads continue after the restart.
+    /// the daemon starts again; that is known only once the daemon has been
+    /// heard from, so the first answer is waited for too. Downloads continue
+    /// after the restart.
     func followAppVersion() async {
         await loadAgent()
         guard case let .ready(agent) = agent, agent.installed, let installed = agent.installedVersion,
               AppVersion.isOlder(installed, than: agent.version) else {
             return
         }
-        while daemon.moving?.running == true {
-            try? await Task.sleep(for: .seconds(10))
+        await waitUntil { [daemon] in
+            daemon.connection != .connecting && daemon.moving?.running != true
+        }
+        guard !Task.isCancelled else {
+            return
         }
         await run(.install(setEnvironment: false))
         if case let .ready(now) = self.agent, now.installedVersion == agent.version {
-            followed = "The daemon was updated from \(installed) to \(agent.version) together with this app."
+            followed = UpdateWords.daemonFollowed(from: installed, to: agent.version)
+        }
+    }
+
+    /// Wait, without polling, until `condition` holds: it is read again each
+    /// time something it reads changes.
+    private func waitUntil(_ condition: @escaping @MainActor () -> Bool) async {
+        while !condition(), !Task.isCancelled {
+            await withCheckedContinuation { (changed: CheckedContinuation<Void, Never>) in
+                withObservationTracking {
+                    _ = condition()
+                } onChange: {
+                    changed.resume()
+                }
+            }
         }
     }
 

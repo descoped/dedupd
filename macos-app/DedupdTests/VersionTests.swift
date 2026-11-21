@@ -48,16 +48,29 @@ struct VersionTests {
     @Test("After the app is updated, an older installed daemon is replaced; another build of one version is not")
     func daemonFollowsTheApp() async {
         let older = RecordingAgent(installedVersion: "0.0.9")
-        let service = ServiceStore(daemon: makeDaemon(.running), control: older)
+        let service = ServiceStore(daemon: await startedDaemon(.running), control: older)
         await service.followAppVersion()
         #expect(await older.installs == 1)
         #expect(service.followed == "The daemon was updated from 0.0.9 to \(AppVersion.current) together with this app.")
+        #expect(service.followed == UpdateWords.daemonFollowed(from: "0.0.9", to: AppVersion.current))
 
         let same = RecordingAgent(installedVersion: AppVersion.current)
         let untouched = ServiceStore(daemon: makeDaemon(.running), control: same)
         await untouched.followAppVersion()
         #expect(await same.installs == 0)
         #expect(untouched.followed == nil)
+
+        let waiting = RecordingAgent(installedVersion: "0.0.9")
+        let daemon = makeDaemon(.running)
+        let patient = ServiceStore(daemon: daemon, control: waiting)
+        let follow = Task { await patient.followAppVersion() }
+        // Until the daemon has been heard from, a running archive or restore
+        // cannot be ruled out, so nothing is installed.
+        try? await Task.sleep(for: .milliseconds(200))
+        #expect(await waiting.installs == 0)
+        daemon.start()
+        await follow.value
+        #expect(await waiting.installs == 1)
 
         let newer = RecordingAgent(installedVersion: "99.0.0")
         await ServiceStore(daemon: makeDaemon(.running), control: newer).followAppVersion()

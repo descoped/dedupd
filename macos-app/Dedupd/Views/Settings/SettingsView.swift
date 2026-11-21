@@ -98,17 +98,16 @@ struct SettingsView: View {
                         .disabled(!updates.canCheck)
                         Spacer()
                         if let checked = updates.lastChecked {
-                            Text("Last checked \(checked.formatted(.relative(presentation: .named)))")
+                            Text(UpdateWords.lastChecked(checked))
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
                     }
-                    Text("A new version is offered with what changed, and installed only when you say so. "
-                        + "The daemon is brought to the same version with it.")
+                    Text(UpdateWords.howItWorks)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("This copy does not check for updates; the released app from the download page does.")
+                    Text(UpdateWords.notChecking)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
