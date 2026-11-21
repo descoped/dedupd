@@ -16,6 +16,7 @@
     "@krantho/seo": "^1.1.1",
     "@krantho/static": "^1.1.1",
     "@krantho/ui-react": "^1.1.1",
+    "@plausible-analytics/tracker": "^0.4.7",
     "next": "^16.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

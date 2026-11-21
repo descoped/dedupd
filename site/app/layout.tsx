@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from 'next'
 import Link from 'next/link'
+import { Analytics } from '../components/analytics'
 import { GitHubLink, Logo } from '../components/brand'
 import { MenuButton } from '../components/menu-button'
 import { docLinks, site } from '../lib/krantho'
@@ -25,11 +26,6 @@ export const viewport: Viewport = {
   ],
 }
 
-// Plausible's start code, as its site gives it: events sent before the script
-// has loaded wait in a queue
-const plausibleStart =
-  'window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};plausible.init()'
-
 export default async function RootLayout({
   children,
 }: {
@@ -39,12 +35,6 @@ export default async function RootLayout({
   const groups = [...new Set(links.map((link) => link.group))]
   return (
     <html lang="en">
-      <head>
-        {/* Visitor counts by Plausible: no cookies and nothing personal kept.
-            It counts on dedupd.com only, not on a local build. */}
-        <script async src="https://plausible.io/js/pa-pVJk-vPEkrwnk8SufwfWj.js" />
-        <script dangerouslySetInnerHTML={{ __html: plausibleStart }} />
-      </head>
       <body>
         <header className="site-header">
           <div className="site-header-inner">
@@ -83,10 +73,14 @@ export default async function RootLayout({
               <a href="https://github.com/descoped/dedupd/blob/main/LICENSE">MIT licence</a>
             </span>
             <span>
+              Visits are counted with <a href="https://plausible.io/data-policy">Plausible</a>, without cookies
+            </span>
+            <span>
               Built with <a href="https://krantho.com">Krantho</a>
             </span>
           </div>
         </footer>
+        <Analytics />
       </body>
     </html>
   )
