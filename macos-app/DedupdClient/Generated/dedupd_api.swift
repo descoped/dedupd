@@ -4512,7 +4512,7 @@ public struct RestorePlan: Equatable, Hashable {
     public var files: UInt64
     public var bytes: UInt64
     /**
-     * Free space on the internal disk.
+     * Free space on the disk of the store it is restored into.
      */
     public var free: UInt64
     /**
@@ -4531,7 +4531,7 @@ public struct RestorePlan: Equatable, Hashable {
          * The store the files are copied into.
          */store: String, files: UInt64, bytes: UInt64, 
         /**
-         * Free space on the internal disk.
+         * Free space on the disk of the store it is restored into.
          */free: UInt64, 
         /**
          * Files that are on neither disk.

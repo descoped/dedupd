@@ -52,7 +52,7 @@ extension FixtureData {
     /// folder gets a `dedupd` folder, an empty name the disk's name, and
     /// two of one name or one folder are refused.
     static func archives(
-        from entries: [ArchiveEntry], backup: String?, known: [ArchiveSetting]
+        from entries: [ArchiveEntry], backup: String?, known: [ArchiveSetting], stores: [StoreSetting] = []
     ) throws -> [ArchiveSetting] {
         var list: [ArchiveSetting] = []
         for entry in entries {
@@ -67,6 +67,12 @@ extension FixtureData {
             }
             if list.contains(where: { $0.path == path }) {
                 throw ClientError.Failed(message: "\(path) is listed twice")
+            }
+            if let store = stores.first(where: { sharesFolder(path, $0.path) }) {
+                throw ClientError.Failed(
+                    message: "\(path) is the folder of the store \(store.name); "
+                        + "a store and an archive cannot share a folder"
+                )
             }
             let attached = known.first { $0.path == path }?.attached ?? true
             list.append(ArchiveSetting(name: name, path: path, backup: false, attached: attached, sameDiskAsStore: false))

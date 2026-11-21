@@ -32,7 +32,9 @@ extension FixtureData {
     /// name used twice or the primary's, are refused. The disk checks
     /// (APFS, one store per disk) are the daemon's and are not imitated:
     /// every canned disk passes them.
-    static func stores(from entries: [ArchiveEntry], known: [StoreSetting]) throws -> [StoreSetting] {
+    static func stores(
+        from entries: [ArchiveEntry], known: [StoreSetting], archives: [ArchiveSetting]
+    ) throws -> [StoreSetting] {
         guard let primary = known.first(where: \.primary) else {
             return known
         }
@@ -54,6 +56,12 @@ extension FixtureData {
             if path.hasPrefix(primary.path) {
                 throw ClientError.Failed(message: "\(path) is dedupd's own folder, which has its store already")
             }
+            if let archive = archives.first(where: { sharesFolder(path, $0.path) }) {
+                throw ClientError.Failed(
+                    message: "\(path) is the folder of the archive \(archive.name); "
+                        + "a store and an archive cannot share a folder"
+                )
+            }
             let old = known.first { $0.path == path }
             list.append(StoreSetting(
                 name: name, path: path, primary: false, attached: old?.attached ?? true, apps: old?.apps ?? [],
@@ -61,6 +69,11 @@ extension FixtureData {
             ))
         }
         return list
+    }
+
+    /// One folder is the other or holds it.
+    static func sharesFolder(_ one: String, _ other: String) -> Bool {
+        one == other || one.hasPrefix(other + "/") || other.hasPrefix(one + "/")
     }
 
     /// Each store but the primary as a location: the canned library is in

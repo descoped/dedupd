@@ -26,6 +26,11 @@ struct StoreListTests {
         #expect(await storage.addStore(folder: "/Volumes/Envoy/dedupd", name: "Again")
             == "/Volumes/Envoy/dedupd is listed twice")
         #expect(storage.stores.count == 3)
+        // A store and an archive never share a folder.
+        #expect(await storage.addStore(folder: "/Volumes/Drawer", name: "")?
+            .hasSuffix("a store and an archive cannot share a folder") == true)
+        #expect(await storage.addArchive(folder: "/Volumes/Studio", name: "", backup: false)?
+            .hasSuffix("a store and an archive cannot share a folder") == true)
 
         #expect(await storage.rename(envoy, to: "Fast SSD") == nil)
         #expect(storage.stores.last?.name == "Fast SSD")

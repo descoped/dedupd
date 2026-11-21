@@ -177,18 +177,19 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
                     }
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(blob) = blobs.get(i) else { break };
-                    // On this Mac, the file is checked in each store that
-                    // has it; the first such store is the one counted.
-                    let path = if archive {
-                        root.blob_path(&blob.sha256)
+                    // On this Mac, the file is checked in every store that
+                    // has it; it counts once, and as damaged when any copy
+                    // is.
+                    let copies: Vec<PathBuf> = if archive {
+                        vec![root.blob_path(&blob.sha256)]
                     } else {
                         stores
                             .iter()
                             .map(|s| s.home.blob_path(&blob.sha256))
-                            .find(|p| p.is_file())
-                            .unwrap_or_else(|| root.blob_path(&blob.sha256))
+                            .filter(|p| p.is_file())
+                            .collect()
                     };
-                    if !path.is_file() {
+                    if !copies.iter().any(|p| p.is_file()) {
                         let mut r = report.lock().expect("lock");
                         if archive && store.contains_anywhere(&blob.sha256) {
                             r.not_backed_up += 1;
@@ -203,26 +204,36 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
                         }
                         continue;
                     }
-                    let read = hash_file(&path, false);
-                    let mut r = report.lock().expect("lock");
-                    match read {
-                        Ok(hashes) => {
-                            r.checked += 1;
-                            r.bytes += blob.size;
-                            if hashes.sha256 != blob.sha256 {
-                                r.damaged.push(blob.sha256.clone());
+                    let (mut read_one, mut damaged) = (false, false);
+                    for path in &copies {
+                        let read = hash_file(path, false);
+                        match read {
+                            Ok(hashes) => {
+                                read_one = true;
+                                damaged |= hashes.sha256 != blob.sha256;
+                            }
+                            // A file that cannot be read says nothing about
+                            // its content. When it is the archive disk that
+                            // went away, nothing after this can be told
+                            // either: the check stops.
+                            Err(e) => {
+                                let mut r = report.lock().expect("lock");
+                                r.unreadable.push((blob.sha256.clone(), e.to_string()));
+                                if archive && !root.attached() {
+                                    gone.store(true, Ordering::Relaxed);
+                                }
                             }
                         }
-                        // A file that cannot be read says nothing about
-                        // its content. When it is the archive disk that
-                        // went away, nothing after this can be told
-                        // either: the check stops.
-                        Err(e) => {
-                            r.unreadable.push((blob.sha256.clone(), e.to_string()));
-                            if archive && !root.attached() {
-                                gone.store(true, Ordering::Relaxed);
-                                break;
-                            }
+                    }
+                    if gone.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    if read_one {
+                        let mut r = report.lock().expect("lock");
+                        r.checked += 1;
+                        r.bytes += blob.size;
+                        if damaged {
+                            r.damaged.push(blob.sha256.clone());
                         }
                     }
                 }

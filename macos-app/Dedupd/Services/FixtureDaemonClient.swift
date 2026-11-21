@@ -287,14 +287,14 @@ actor FixtureDaemonClient: DaemonClient {
         if moving?.running == true {
             throw ClientError.Failed(message: "dedupd is working on a model; change the stores when that has finished")
         }
-        stores = try FixtureData.stores(from: entries, known: stores)
+        stores = try FixtureData.stores(from: entries, known: stores, archives: archives)
         changed()
         return try await settings(at: address)
     }
 
     func setArchives(_ entries: [ArchiveEntry], backup: String?, at address: String) async throws -> DaemonSettings {
         try await answering(address)
-        archives = try FixtureData.archives(from: entries, backup: backup, known: archives)
+        archives = try FixtureData.archives(from: entries, backup: backup, known: archives, stores: stores)
         changed()
         return try await settings(at: address)
     }

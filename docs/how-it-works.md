@@ -111,7 +111,7 @@ example on an external SSD that holds Ollama's models while Bionic's stay on the
 store that serves every application it is for, otherwise to the store in dedupd's home. Activating a model in an
 application whose store lacks it copies the files into that store from another store or an archive first, with the
 size shown before. An application on a volume with no store cannot be given models. Removing a store from the list
-deletes nothing.
+deletes nothing. A store and an archive cannot share a folder, because archiving removes a model from every store.
 
 ## Archives
 

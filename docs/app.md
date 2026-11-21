@@ -97,7 +97,7 @@ and what it holds. The store in dedupd's home is always there. **Add Store…** 
 models, for example an external SSD that holds Ollama's folder, and a name, by default the disk's; dedupd keeps its
 files in a folder named `dedupd` there. The disk must be APFS and attached, and hold no store yet. Each store's menu,
 also on a right-click, renames it, shows it in the Finder or removes it; removing a store deletes nothing on its disk.
-A change takes effect at once.
+A change takes effect at once. A store and an archive cannot share a folder.
 
 The Archives card lists each archive: its name, its folder, whether its disk is attached and what it holds. **Add
 Archive…** asks for a disk or a folder (dedupd keeps its files in a folder named `dedupd` there) and a name, by

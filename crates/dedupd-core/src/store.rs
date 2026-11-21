@@ -180,15 +180,13 @@ impl Store {
     /// there decides. Fails with [`NoStoreThere`] when no attached store is
     /// on that volume.
     pub fn for_folder(&self, dir: &Path) -> Result<Store> {
-        let mut there = dir;
-        while !there.exists() {
-            match there.parent() {
-                Some(parent) => there = parent,
-                None => break,
-            }
-        }
+        // A folder on a disk that is away has no volume: it is not taken
+        // for the root volume, which `/Volumes` is on.
+        let Ok(volume) = crate::paths::volume_of(dir) else {
+            return Err(NoStoreThere(dir.to_path_buf()).into());
+        };
         for root in self.attached_stores() {
-            if same_volume(there, &root.home.store_dir()).unwrap_or(false) {
+            if crate::paths::volume_of(&root.home.store_dir()).is_ok_and(|v| v == volume) {
                 return Ok(self.view(root));
             }
         }
@@ -244,7 +242,18 @@ impl Store {
     /// Remove the file from every attached store. Returns the bytes freed.
     pub fn remove_everywhere(&self, sha256: &str) -> Result<u64> {
         let mut freed = 0;
+        let archives = self.archives();
         for root in self.attached_stores() {
+            // A second guard beside the config's rule: a store that is (or
+            // holds, or is in) an archive's folder is never emptied here,
+            // because its file may be the archive's only copy.
+            let (r, held) = (root.home.root(), &archives);
+            if held
+                .iter()
+                .any(|a| r.starts_with(a.home.root()) || a.home.root().starts_with(r))
+            {
+                continue;
+            }
             let path = root.home.blob_path(sha256);
             if let Ok(meta) = fs::metadata(&path) {
                 fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;

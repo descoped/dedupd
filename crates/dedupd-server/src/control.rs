@@ -610,7 +610,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
         }
         (&Method::PUT, ["config", "stores"]) => {
             // A store that goes away under a move or a download would leave
-            // it half done.
+            // it half done: both are refused here.
             if let Some(now) = server.moving.borrow().as_ref().filter(|m| m.running) {
                 return error(
                     StatusCode::CONFLICT,
@@ -619,6 +619,20 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                         now.repo,
                         now.kind.as_str()
                     ),
+                );
+            }
+            // A download keeps the store it writes to until it ends.
+            if server
+                .queue
+                .snapshot()
+                .jobs
+                .iter()
+                .any(|j| j.state.is_working())
+            {
+                return error(
+                    StatusCode::CONFLICT,
+                    "a download or activation is running; change the stores when it has finished"
+                        .to_string(),
                 );
             }
             let wanted: StoresBody = match body(call) {

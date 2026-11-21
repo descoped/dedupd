@@ -1213,6 +1213,18 @@ async fn a_model_goes_to_the_store_on_the_disk_of_the_app_and_is_copied_between_
         .join(&weights);
     assert_eq!(fs::read(blob).unwrap(), up.weights);
 
+    // The check reads the copy in each store: a damaged one in the other
+    // store is found although the one here is whole.
+    let there = envoy.blob_path(&weights);
+    let mut perms = fs::metadata(&there).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    fs::set_permissions(&there, perms).unwrap();
+    fs::write(&there, b"damaged").unwrap();
+    let check = maintain::verify(&e.db, &e.store, false, 1).unwrap();
+    assert_eq!(check.damaged, vec![weights.clone()]);
+    fs::write(&there, &up.weights).unwrap();
+
     // An app folder on a disk with no store is not given the model, and
     // trying again does not help until a store is added there.
     e.store.set_stores(vec![]);

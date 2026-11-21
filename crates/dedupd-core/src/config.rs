@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 use dedupd_api::daemon::Setting;
 use serde::Deserialize;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 pub const DEFAULT_LISTEN: &str = dedupd_api::daemon::DEFAULT_ADDRESS;
 
@@ -242,6 +242,7 @@ impl Config {
     /// included). Refused, with nothing written, when a name or a folder is
     /// there twice, or a rule does not hold.
     pub fn set_stores(home: &Home, stores: &[NamedArchive]) -> Result<Self> {
+        let archives = Self::load(home)?.archive_list();
         let known: Vec<PathBuf> = Self::load(home)?
             .store_list()
             .into_iter()
@@ -278,6 +279,15 @@ impl Config {
                 anyhow::bail!(
                     "{} is dedupd's own folder, which has its store already",
                     path.display()
+                );
+            }
+            // Archiving removes a model from every store once the archive
+            // holds it: in one folder, that would be the only copy.
+            if let Some(a) = archives.iter().find(|a| overlaps(&path, a.home.root())) {
+                anyhow::bail!(
+                    "{} is the folder of the archive {}; a store and an archive cannot share a folder",
+                    path.display(),
+                    a.name
                 );
             }
             // A store already in use keeps its place while its disk is away.
@@ -374,6 +384,7 @@ impl Config {
                 archive_folder_for(picked)
             }
         };
+        let stores = Self::load(home)?.store_list();
         let mut list: Vec<NamedArchive> = Vec::new();
         for a in archives {
             if !a.path.is_absolute() {
@@ -397,6 +408,15 @@ impl Config {
                 anyhow::bail!(
                     "{} is dedupd's own folder; an archive must be a folder of its own",
                     path.display()
+                );
+            }
+            // Archiving removes a model from every store once the archive
+            // holds it: in one folder, that would be the only copy.
+            if let Some(s) = stores.iter().find(|s| overlaps(&path, s.home.root())) {
+                anyhow::bail!(
+                    "{} is the folder of the store {}; a store and an archive cannot share a folder",
+                    path.display(),
+                    s.name
                 );
             }
             list.push(NamedArchive { name, path });
@@ -438,6 +458,11 @@ impl Config {
     }
 }
 
+/// One folder is the other or holds it.
+fn overlaps(a: &Path, b: &Path) -> bool {
+    a.starts_with(b) || b.starts_with(a)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -474,6 +499,38 @@ mod tests {
         let away = Config::set_stores(&home, &[entry("Gone", Path::new("/Volumes/dedupd-none"))])
             .unwrap_err();
         assert!(away.to_string().contains("not attached"), "{away:#}");
+        // A store and an archive never share a folder, either way round:
+        // archiving would remove the archive's only copy from the store.
+        Config::set_archives(
+            &home,
+            &[entry("Ext", Path::new("/Volumes/dedupd-ext"))],
+            None,
+        )
+        .unwrap();
+        let shared = Config::set_stores(&home, &[entry("Ext", Path::new("/Volumes/dedupd-ext"))])
+            .unwrap_err();
+        assert!(
+            shared.to_string().contains("cannot share a folder"),
+            "{shared:#}"
+        );
+        let other = Home::new(dir.path().join("other"));
+        std::fs::create_dir_all(other.root()).unwrap();
+        std::fs::write(
+            other.root().join("config.toml"),
+            "[[stores]]\nname = \"Studio\"\npath = \"/Volumes/dedupd-studio/dedupd\"\n",
+        )
+        .unwrap();
+        let shared = Config::set_archives(
+            &other,
+            &[entry("Studio", Path::new("/Volumes/dedupd-studio"))],
+            None,
+        )
+        .unwrap_err();
+        assert!(
+            shared.to_string().contains("cannot share a folder"),
+            "{shared:#}"
+        );
+        Config::set_archives(&home, &[], None).unwrap();
         // Nothing was written; an empty list is accepted.
         assert!(Config::load(&home).unwrap().stores.is_none());
         assert!(

@@ -44,7 +44,7 @@ struct StoresCard: View {
             RenameStoreSheet(store: store)
         }
         .confirmationDialog(
-            "Remove the store “\(removing?.name ?? "")”?",
+            Text(verbatim: "Remove the store “\(removing?.name ?? "")”?"),
             isPresented: Binding(get: { removing != nil }, set: { if !$0 { removing = nil } }),
             presenting: removing
         ) { store in

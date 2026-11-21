@@ -165,7 +165,7 @@ pub struct RestorePlan {
     pub store: String,
     pub files: u64,
     pub bytes: u64,
-    /// Free space on the internal disk.
+    /// Free space on the disk of the store it is restored into.
     pub free: u64,
     /// Files that are on neither disk.
     pub missing: u64,
