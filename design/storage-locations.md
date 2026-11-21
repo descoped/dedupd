@@ -139,6 +139,25 @@ Owner            App                 Daemon                        Store on the 
 - **Control API and app:** the Storage screen lists every store and archive; Archive asks "to which archive", Restore
   asks "to which store"; settings add, rename and remove locations.
 
+## How it is built (decided 2026-11-21; the choices marked "Claude's" can be changed)
+
+1. **Phase 1, several archives** (cold). `config.toml` keeps `archive` for the archive that gets a copy of every
+   download (the backup, as today) and adds `[[archives]]` (`name`, `path`) for more cold locations, which get
+   only what the owner archives to them (Claude's choice for open point 1). Archive asks which archive; restore
+   takes each file from any attached archive that holds it. Which archive holds a model is read from the disks, not
+   kept in the database, so the schema does not change in this phase. Settings: a list of archives with Add
+   (a folder picker), the volume's name as the default name, and Remove (files are never deleted; a model whose
+   only copy is there is named first). The Storage screen has a row per archive; the inspector of an archived model
+   says which archives hold it.
+2. **Phase 2, several stores** (warm). `[[stores]]` (`name`, `path`) besides the home's store; each app folder is
+   served by the store on its volume; Restore asks which store; Activate copies what the store on the app's volume
+   lacks, with its size shown before (Claude's choice for open points 2 and 3: the owner presses Activate and the
+   copy is part of it). A download goes to the store of each app it is for.
+3. **Phase 3, the database:** the index on file names (the owner's go-ahead of 2026-11-21) and a record per model on
+   each archive, in one schema change, so the database is removed once.
+
+Export and import (open point 4) is an archive on a removable disk for now; the pin (open point 5) waits.
+
 ## Open points
 
 1. **Backup at download.** Today every downloaded file is also copied to the one archive. With several archives:
