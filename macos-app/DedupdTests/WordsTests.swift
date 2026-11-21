@@ -11,7 +11,8 @@ struct WordsTests {
     ) -> Variant {
         Variant(
             kind: .gguf, format: .gguf, name: "Q4_K_M", spec: "org/Repo-GGUF:Q4_K_M", files: 4, bytes: 1000,
-            storedBytes: stored, weightsStored: weights, usableBy: usable, placedIn: placed, decisions: []
+            storedBytes: stored, weightsStored: weights, usableBy: usable, placedIn: placed, decisions: [],
+            copies: []
         )
     }
 

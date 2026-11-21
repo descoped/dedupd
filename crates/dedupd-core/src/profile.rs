@@ -467,8 +467,8 @@ pub fn decide_for(
     if ggufs == 0 {
         traits = traits.with_bits(
             config
-                .filter(|sha| store.contains(sha))
-                .and_then(|sha| quantization_of(&store.blob_path(sha))),
+                .and_then(|sha| store.find(sha))
+                .and_then(|path| quantization_of(&path)),
         );
     }
     Judged {

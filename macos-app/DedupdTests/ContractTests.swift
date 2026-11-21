@@ -166,10 +166,10 @@ struct ContractTests {
         }
 
         let address = server.address
-        let back = try await Self.blocking { try DedupdClient.restorePlan(address: address, repo: "org/Repo-GGUF") }
+        let back = try await Self.blocking { try DedupdClient.restorePlan(address: address, repo: "org/Repo-GGUF", into: nil) }
         #expect(back == RestorePlan(
-            repo: "org/Repo-GGUF", archive: "/Users/example/trunk/dedupd", archives: ["trunk"], files: 2, bytes: 300_008,
-            free: 400_000_000_000, missing: 0
+            repo: "org/Repo-GGUF", archive: "/Users/example/trunk/dedupd", archives: ["trunk"], store: "Internal",
+            files: 2, bytes: 300_008, free: 400_000_000_000, missing: 0
         ))
         let move = try await Self.blocking { try DedupdClient.modelMove(address: address) }
         #expect(move == ModelMove(

@@ -12,6 +12,7 @@ use anyhow::Result;
 use dedupd_api::app::App;
 use dedupd_api::library::VerifyState;
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -282,9 +283,12 @@ async fn plan_repo(
         };
         // Also in a dry run, where there is no repository id to write
         // under: a file that is recorded and unchanged is not read again.
+        // The store on the disk of the app's folder is the one an adopted
+        // file is cloned into; with none there, the primary store refuses
+        // the clone as it always has.
         if let Some(known) = known
             && known.fingerprint() == file.fingerprint
-            && store.contains(&known.sha256)
+            && store_for(store, &file.abs_path).contains(&known.sha256)
             && (!needs_git_oid_now || known.git_oid.is_some())
         {
             let v = check(
@@ -359,7 +363,11 @@ fn record_hashed(
     let action = match state.repo_id {
         None => Action::DryRun,
         Some(repo_id) => {
-            let added = store.add_clone(&file.abs_path, &hashes.sha256, file.fingerprint)?;
+            let added = store_for(store, &file.abs_path).add_clone(
+                &file.abs_path,
+                &hashes.sha256,
+                file.fingerprint,
+            )?;
             lock(db).upsert_blob(&hashes.sha256, hashes.size, hashes.git_oid.as_deref())?;
             lock(db).upsert_placement(&state.placement(
                 repo_id,
@@ -498,11 +506,27 @@ pub fn recognise_stored(
         .collect();
     looked_at.retain(|sha, _| !known.contains(sha));
     let mut found = Recognised::default();
-    for sha in store.stored_hashes() {
+    let stored: Vec<PathBuf> = store
+        .attached_stores()
+        .into_iter()
+        .flat_map(|root| {
+            let view = store.named(&root.name).ok();
+            view.map(|v| {
+                v.stored_hashes()
+                    .into_iter()
+                    .map(|sha| v.blob_path(&sha))
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+        })
+        .collect();
+    for path in stored {
+        let Some(sha) = path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
         if known.contains(&sha) {
             continue;
         }
-        let path = store.blob_path(&sha);
         // Gone a moment later (`gc`), or unreadable: not recorded.
         let Ok(seen) = Fingerprint::of(&path) else {
             continue;
@@ -600,4 +624,10 @@ pub fn scan_apps(
         }
     }
     Ok(repos)
+}
+
+/// The store an app's file is adopted into: the one on its disk, or the
+/// primary store when there is none there (which then refuses the clone).
+fn store_for(store: &Store, file: &Path) -> Store {
+    store.for_folder(file).unwrap_or_else(|_| store.primary())
 }

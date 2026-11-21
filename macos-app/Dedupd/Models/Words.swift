@@ -159,9 +159,10 @@ extension Variant {
 
 extension [Variant] {
     /// The variants an app can be given now: it can use them, does not
-    /// have them, and their weights are stored.
+    /// have them, their weights are stored, and the disk of the app's folder
+    /// has a store.
     func activatable(in app: ModelApp) -> [Variant] {
-        filter { $0.usableApps.contains(app) && !$0.isPlaced(in: app) && $0.canActivate }
+        filter { $0.usableApps.contains(app) && !$0.isPlaced(in: app) && $0.canActivate && $0.hasStore(for: app) }
     }
 }
 

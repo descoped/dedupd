@@ -103,22 +103,29 @@ pub(crate) async fn serve_stored(
     // Its length is read in the same step: a file that went away in
     // between (a `gc --offload` at that moment) is not held, and is never
     // answered as an empty one.
+    // Served from whichever store holds it; only a file that is in an
+    // archive alone is copied back first.
     let local = server
-        .off(move |e| -> anyhow::Result<Option<u64>> {
-            if !e.store.ensure_local(&sha)? {
-                return Ok(None);
-            }
-            Ok(Some(std::fs::metadata(e.store.blob_path(&sha))?.len()))
-        })
+        .off(
+            move |e| -> anyhow::Result<Option<(std::path::PathBuf, u64)>> {
+                if !e.store.ensure_stored(&sha)? {
+                    return Ok(None);
+                }
+                let Some(path) = e.store.find(&sha) else {
+                    return Ok(None);
+                };
+                let len = std::fs::metadata(&path)?.len();
+                Ok(Some((path, len)))
+            },
+        )
         .await;
-    let on_disk = match local {
+    let (file, on_disk) = match local {
         Ok(found) => found?,
         Err(e) => {
             eprintln!("dedupd: {sha256} could not be read from the store: {e:#}");
             return None;
         }
     };
-    let file = server.engine.store.blob_path(sha256);
     Some(serve_file(call, &file, size.unwrap_or(on_disk), extra).await)
 }
 

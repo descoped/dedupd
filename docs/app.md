@@ -92,6 +92,13 @@ list, which is kept in `~/.dedupd/activity.jsonl`.
 
 Where the files are, and how much space sharing saves.
 
+The Stores card lists each store: its name, its folder, the apps whose folders are on its disk (the apps it serves)
+and what it holds. The store in dedupd's home is always there. **Add Store…** asks for a disk where an app keeps its
+models, for example an external SSD that holds Ollama's folder, and a name, by default the disk's; dedupd keeps its
+files in a folder named `dedupd` there. The disk must be APFS and attached, and hold no store yet. Each store's menu,
+also on a right-click, renames it, shows it in the Finder or removes it; removing a store deletes nothing on its disk.
+A change takes effect at once. A store and an archive cannot share a folder.
+
 The Archives card lists each archive: its name, its folder, whether its disk is attached and what it holds. **Add
 Archive…** asks for a disk or a folder (dedupd keeps its files in a folder named `dedupd` there) and a name, by
 default the disk's. The first archive can be made the backup archive, which gets a copy of every download. Each
@@ -109,8 +116,17 @@ as missing.
 With an archive set, a model can be moved off the internal disk. **Archive…** asks which archive, when there is more
 than one attached; the backup archive is offered first. The app says what will happen before it does anything, and
 nothing is removed unless every copy in that archive has been verified. The model's inspector names the archives that
-hold a copy of it. Restore brings the model back from any attached archive that holds it. While a model is being
-archived or restored, it cannot be activated or deactivated.
+hold a copy of it. Restore brings the model back from any attached archive that holds it; with more than one store
+attached, it asks which store, with the space free on each. While a model is being archived or restored, it cannot be
+activated or deactivated.
+
+## Stores on several disks
+
+An app is given a model as clones of the files in the store on the disk of its folder, because a clone cannot cross
+disks. A download goes to the store that serves the apps it is for, or to the store in dedupd's home when they are on
+different disks. When a model is in one store and an app on another disk wants it, **Activate** says how much it will
+copy into that disk's store and asks before it does; the other copy stays. An app whose folder is on a disk with no
+store is not offered Activate; the Library says to add a store under Storage.
 
 ![The question the app asks before it archives a model](images/archive.png)
 

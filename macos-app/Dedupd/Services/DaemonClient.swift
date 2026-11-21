@@ -63,8 +63,9 @@ protocol DaemonClient: Sendable {
     func archivePlan(_ repo: String, to archive: String?, at address: String) async throws -> ArchivePlan
     /// Start archiving a model. Returns at once; the events tell how it goes.
     func archive(_ repo: String, to archive: String?, at address: String) async throws
-    /// Start copying an archived model back. Returns at once.
-    func restore(_ repo: String, at address: String) async throws
+    /// Start copying an archived model back into the store named `into`
+    /// (nil: the store in dedupd's home). Returns at once.
+    func restore(_ repo: String, into store: String?, at address: String) async throws
 
     func gcPlan(offload: Bool, at address: String) async throws -> GcPlan
     func gcApply(orphans: [String], offload: [String], at address: String) async throws -> GcPlan
@@ -76,6 +77,9 @@ protocol DaemonClient: Sendable {
     /// Set the whole list of archives and which one is the backup (by its
     /// folder). It takes effect at once.
     func setArchives(_ archives: [ArchiveEntry], backup: String?, at address: String) async throws -> DaemonSettings
+    /// Set the stores besides the one in dedupd's home. It takes effect at
+    /// once; the daemon refuses a folder that cannot hold a store.
+    func setStores(_ stores: [ArchiveEntry], at address: String) async throws -> DaemonSettings
     func logTail(lines: UInt32, at address: String) async throws -> LogTail
     func restart(at address: String) async throws
 }
@@ -88,6 +92,11 @@ extension DaemonClient {
 
     func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan {
         try await archivePlan(repo, to: nil, at: address)
+    }
+
+    /// Restore into the store in dedupd's home.
+    func restore(_ repo: String, at address: String) async throws {
+        try await restore(repo, into: nil, at: address)
     }
 }
 
@@ -198,8 +207,8 @@ struct LiveDaemonClient: DaemonClient {
         try await Self.blocking { try DedupdClient.archiveModel(address: address, repo: repo, to: archive) }
     }
 
-    func restore(_ repo: String, at address: String) async throws {
-        try await Self.blocking { try DedupdClient.restoreModel(address: address, repo: repo) }
+    func restore(_ repo: String, into store: String?, at address: String) async throws {
+        try await Self.blocking { try DedupdClient.restoreModel(address: address, repo: repo, into: store) }
     }
 
     func gcPlan(offload: Bool, at address: String) async throws -> GcPlan {
@@ -228,6 +237,10 @@ struct LiveDaemonClient: DaemonClient {
 
     func setArchives(_ archives: [ArchiveEntry], backup: String?, at address: String) async throws -> DaemonSettings {
         try await Self.blocking { try DedupdClient.setArchives(address: address, archives: archives, backup: backup) }
+    }
+
+    func setStores(_ stores: [ArchiveEntry], at address: String) async throws -> DaemonSettings {
+        try await Self.blocking { try DedupdClient.setStores(address: address, stores: stores) }
     }
 
     func logTail(lines: UInt32, at address: String) async throws -> LogTail {

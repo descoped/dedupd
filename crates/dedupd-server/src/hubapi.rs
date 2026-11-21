@@ -492,7 +492,11 @@ async fn fetch_small(
         .await;
     match fetched {
         Ok(got) => {
-            let file = engine.store.blob_path(&got.sha256);
+            // Where the fetcher found it or put it: any store.
+            let file = engine
+                .store
+                .find(&got.sha256)
+                .unwrap_or_else(|| engine.store.blob_path(&got.sha256));
             let size = got.size;
             let recorded = server
                 .off(move |e| {

@@ -7,5 +7,6 @@
   "files": 2,
   "free": 400000000000,
   "missing": 0,
-  "repo": "org/Repo-GGUF"
+  "repo": "org/Repo-GGUF",
+  "store": "Internal"
 }

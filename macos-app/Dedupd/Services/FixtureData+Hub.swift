@@ -89,7 +89,7 @@ extension FixtureData {
                 return Variant(
                     kind: .gguf, format: judged.format, name: quant, spec: "\(repo):\(quant)", files: 4,
                     bytes: bytes, storedBytes: here ? bytes : 0, weightsStored: here, usableBy: judged.usableBy,
-                    placedIn: here ? local?.appNames ?? [] : [], decisions: judged.decisions
+                    placedIn: here ? local?.appNames ?? [] : [], decisions: judged.decisions, copies: copies
                 )
             }
             files = quants.map { quant, bytes in
@@ -109,7 +109,7 @@ extension FixtureData {
                     kind: .files, format: judged.format, name: "all files", spec: repo, files: 8, bytes: bytes,
                     storedBytes: weights ? bytes : (inStore ? bytes - offloadBytes : 0), weightsStored: weights,
                     usableBy: judged.usableBy,
-                    placedIn: local?.appNames ?? [], decisions: judged.decisions
+                    placedIn: local?.appNames ?? [], decisions: judged.decisions, copies: copies
                 ),
             ]
             files = [

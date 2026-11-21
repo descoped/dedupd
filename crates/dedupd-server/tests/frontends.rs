@@ -1908,10 +1908,10 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
         assert!(library[0].archived_at.is_some());
         assert!(library[0].apps.is_empty());
 
-        let plan = client::restore_plan(a.clone(), REPO.into())?;
+        let plan = client::restore_plan(a.clone(), REPO.into(), None)?;
         assert_eq!((plan.files, plan.bytes, plan.missing), (2, 300_008, 0));
         assert!(plan.free > plan.bytes);
-        client::restore_model(a.clone(), REPO.into())?;
+        client::restore_model(a.clone(), REPO.into(), None)?;
         let state = wait(MoveKind::Restore)?;
         assert_eq!((state.error, state.files), (None, 2));
         let library = client::models(a.clone())?;
@@ -1970,7 +1970,9 @@ async fn control_api_answers_match_the_recorded_ones() {
                         "version" if field.is_string() => json!("0.0.0"),
                         "executable" => json!("/Users/example/bin/dedupd"),
                         "pid" => json!(1),
-                        "volume_total" => json!(1_000_000_000_000u64),
+                        "volume_total" | "total" if field.is_number() => {
+                            json!(1_000_000_000_000u64)
+                        }
                         "volume_free" | "free" => json!(400_000_000_000u64),
                         "speed" => json!(0),
                         "resets_in" => json!(100),

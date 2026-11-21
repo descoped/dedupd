@@ -323,6 +323,23 @@ pub struct Variant {
     pub placed_in: Vec<App>,
     /// For every app: whether it can take this, how, at what cost, and why.
     pub decisions: Vec<Decision>,
+    /// For every app: the store on the disk of its folder, and what of this
+    /// variant that store lacks and Activate copies in from another store.
+    #[serde(default)]
+    pub copies: Vec<StoreCopy>,
+}
+
+/// What activating a variant in one app copies first.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct StoreCopy {
+    pub app: App,
+    /// The store on the disk of the app's folder; none when that disk has
+    /// no store, and the app cannot be given the model.
+    pub store: Option<String>,
+    /// The files another store on this Mac has and this one lacks.
+    pub files: u64,
+    pub bytes: u64,
 }
 
 /// Everything about one model in the library.
@@ -347,7 +364,7 @@ pub struct ModelDetail {
 #[serde(rename_all = "lowercase")]
 #[cfg_attr(feature = "ffi", derive(uniffi::Enum))]
 pub enum LocationKind {
-    /// The store on the internal disk.
+    /// A store: the one in dedupd's home, or another on its own disk.
     Store,
     /// The copy on the archive disk.
     Archive,
@@ -388,6 +405,9 @@ pub struct Locations {
     pub volume_total: u64,
     pub volume_free: u64,
     pub store: Location,
+    /// The stores besides the one in dedupd's home.
+    #[serde(default)]
+    pub stores: Vec<Location>,
     /// Every archive, the backup archive first.
     pub archives: Vec<Location>,
     pub apps: Vec<Location>,

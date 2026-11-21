@@ -9,8 +9,8 @@ use dedupd_api::moves::{ModelMove, MoveKind};
 use dedupd_core::{activity, archive};
 use std::sync::Arc;
 
-/// The size of the files a move would deal with, and for an archive the
-/// name of the archive it goes to.
+/// The size of the files a move would deal with, and the name of the
+/// archive it goes to or the store it is restored into.
 fn bytes(
     server: &Server,
     kind: MoveKind,
@@ -23,7 +23,10 @@ fn bytes(
             let plan = archive::archive_plan(&e.db, &e.store, &e.dirs, repo, to)?;
             (plan.bytes, Some(plan.archive_name))
         }
-        MoveKind::Restore => (archive::restore_plan(&e.db, &e.store, repo)?.bytes, None),
+        MoveKind::Restore => {
+            let plan = archive::restore_plan(&e.db, &e.store, repo, to)?;
+            (plan.bytes, Some(plan.store))
+        }
     })
 }
 
@@ -162,7 +165,13 @@ async fn begin(
                     }
                     MoveKind::Restore => {
                         // A restore with files that are nowhere is an error.
-                        let r = archive::restore(&e.db, &e.store, &repo, &mut on_file)?;
+                        let r = archive::restore(
+                            &e.db,
+                            &e.store,
+                            &repo,
+                            archive_name.as_deref(),
+                            &mut on_file,
+                        )?;
                         (r.files, r.bytes, 0)
                     }
                 })

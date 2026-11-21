@@ -1,8 +1,8 @@
 # Storage locations: stores and archives
 
 Internal developer notes. This folder is not part of the documentation site (the site reads `docs/` only).
-Status: **design agreed in outline with the owner on 2026-11-21.** Phase 1 (several archives) is built; phases 2 and 3
-are not. Open points are listed at the end.
+Status: **design agreed in outline with the owner on 2026-11-21.** Phases 1 (several archives) and 2 (several stores)
+are built; phase 3 is not. Open points are listed at the end.
 
 Three tiers, confirmed by the owner on 2026-11-21:
 
@@ -142,7 +142,7 @@ Owner            App                 Daemon                        Store on the 
 
 ## How it is built (decided 2026-11-21; the choices marked "Claude's" can be changed)
 
-1. **Phase 1, several archives** (cold). `config.toml` keeps `archive` for the archive that gets a copy of every
+1. **Phase 1, several archives** (cold; built). `config.toml` keeps `archive` for the archive that gets a copy of every
    download (the backup, as today) and adds `[[archives]]` (`name`, `path`) for more cold locations, which get
    only what the owner archives to them (Claude's choice for open point 1). Archive asks which archive; restore
    takes each file from any attached archive that holds it. Which archive holds a model is read from the disks, not
@@ -150,7 +150,7 @@ Owner            App                 Daemon                        Store on the 
    (a folder picker), the volume's name as the default name, and Remove (files are never deleted; a model whose
    only copy is there is named first). The Storage screen has a row per archive; the inspector of an archived model
    says which archives hold it.
-2. **Phase 2, several stores** (warm). `[[stores]]` (`name`, `path`) besides the home's store; each app folder is
+2. **Phase 2, several stores** (warm; built). `[[stores]]` (`name`, `path`) besides the home's store; each app folder is
    served by the store on its volume; Restore asks which store; Activate copies what the store on the app's volume
    lacks, with its size shown before (Claude's choice for open points 2 and 3: the owner presses Activate and the
    copy is part of it). A download goes to the store of each app it is for.

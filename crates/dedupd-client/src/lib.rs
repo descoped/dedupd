@@ -10,7 +10,7 @@ use dedupd_api::activity::{ActivityEntry, ActivityList};
 use dedupd_api::app::{App, AppInfo, AppList};
 use dedupd_api::daemon::{
     ArchiveEntry, ArchivesBody, DEFAULT_ADDRESS, DaemonSettings, DaemonStatus, Failure, LogTail,
-    ScanResult, SettingChange, Started, StoreCheck,
+    ScanResult, SettingChange, Started, StoreCheck, StoresBody,
 };
 use dedupd_api::favorites::{FavoriteBody, Favorites};
 use dedupd_api::hub::{HubModel, SearchPage, SearchQuery};
@@ -431,24 +431,34 @@ pub fn archive_model(address: String, repo: String, to: Option<String>) -> Resul
     post::<Started>(&address, "archive", &body, PATIENT).map(|_| ())
 }
 
-/// What restoring `repo` would copy back from the archive disk.
+/// What restoring `repo` into the store named `into` (without it, the
+/// primary store) would copy, and from where.
 #[uniffi::export]
-pub fn restore_plan(address: String, repo: String) -> Result<RestorePlan, ClientError> {
+pub fn restore_plan(
+    address: String,
+    repo: String,
+    into: Option<String>,
+) -> Result<RestorePlan, ClientError> {
     let body = MoveBody {
         repo,
-        to: None,
+        to: into,
         apply: false,
     };
     post(&address, "restore", &body, PATIENT)
 }
 
-/// Copy `repo` back from the archive disk. Returns at once; the event
+/// Copy `repo` into the store named `into` (without it, the primary
+/// store), from another store or an archive. Returns at once; the event
 /// stream tells how it goes (`moving`). The model is put into no app.
 #[uniffi::export]
-pub fn restore_model(address: String, repo: String) -> Result<(), ClientError> {
+pub fn restore_model(
+    address: String,
+    repo: String,
+    into: Option<String>,
+) -> Result<(), ClientError> {
     let body = MoveBody {
         repo,
-        to: None,
+        to: into,
         apply: true,
     };
     post::<Started>(&address, "restore", &body, PATIENT).map(|_| ())
@@ -525,6 +535,21 @@ pub fn set_archives(
     let body = ArchivesBody { archives, backup };
     let sent = agent(Some(QUICK))
         .put(url(&address, "config/archives")?)
+        .send_json(&body);
+    finish(&address, sent)
+}
+
+/// Set the stores besides the one in dedupd's home. It takes effect at
+/// once. Refused, with nothing changed, when a store would not be on an
+/// attached APFS disk of its own, or two have one name or one folder.
+#[uniffi::export]
+pub fn set_stores(
+    address: String,
+    stores: Vec<ArchiveEntry>,
+) -> Result<DaemonSettings, ClientError> {
+    let body = StoresBody { stores };
+    let sent = agent(Some(QUICK))
+        .put(url(&address, "config/stores")?)
         .send_json(&body);
     finish(&address, sent)
 }

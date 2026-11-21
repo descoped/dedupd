@@ -89,6 +89,26 @@
   "variants": [
     {
       "bytes": 300008,
+      "copies": [
+        {
+          "app": "bionic",
+          "bytes": 0,
+          "files": 0,
+          "store": "Internal"
+        },
+        {
+          "app": "ollama",
+          "bytes": 0,
+          "files": 0,
+          "store": "Internal"
+        },
+        {
+          "app": "hf",
+          "bytes": 0,
+          "files": 0,
+          "store": "Internal"
+        }
+      ],
       "decisions": [
         {
           "app": "bionic",

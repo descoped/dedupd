@@ -207,11 +207,13 @@ pub(crate) fn place_clone(
         return Ok(());
     }
 
-    let store = dest.store;
+    let parent = dst.parent().context("destination has no parent folder")?;
+    // The clone is made from the store on the disk of the app's folder;
+    // a file it lacks is copied in first, from another store or an archive.
+    let store = dest.store.for_folder(parent)?;
     if !store.ensure_local(t.sha256)? {
         bail!("{} is not in the store", t.sha256);
     }
-    let parent = dst.parent().context("destination has no parent folder")?;
     fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
     let blob = store.blob_path(t.sha256);
     if !crate::clone::same_volume(parent, &blob)? {

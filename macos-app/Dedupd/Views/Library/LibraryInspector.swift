@@ -153,7 +153,20 @@ private struct LibraryOverview: View {
             }
             .help("Look at the model on Hugging Face: its other variants and files")
             Spacer()
-            if model.isArchived {
+            if model.isArchived, library.storeChoices.count > 1 {
+                // With stores on several disks, the owner says which one.
+                Menu("Restore") {
+                    ForEach(library.storeChoices) { store in
+                        Button(StoreWords.restoreChoice(store)) {
+                            Task { await library.restore(into: store.name) }
+                        }
+                    }
+                }
+                .fixedSize()
+                .disabled(library.isMoving || !ArchiveWords.canMove(daemon.status))
+                .help(ArchiveWords.restoreHelp(daemon.status))
+                .accessibilityIdentifier("restore-model")
+            } else if model.isArchived {
                 Button("Restore") {
                     Task { await library.restore() }
                 }
@@ -219,6 +232,9 @@ private struct AppRow: View {
 
     @Environment(LibraryStore.self) private var library
     @Environment(DaemonStore.self) private var daemon
+    /// A variant whose activation copies files between stores first, until
+    /// the owner agrees.
+    @State private var copying: Variant?
 
     /// A download or activation of this model for this app is under way.
     private var isActivating: Bool {
@@ -269,7 +285,7 @@ private struct AppRow: View {
                 .accessibilityIdentifier("remove-\(app.name)")
             } else if placeable.count == 1, let variant = placeable.first {
                 Button("Activate") {
-                    Task { await library.place(variant, into: app) }
+                    activate(variant)
                 }
                 .controlSize(.small)
                 .disabled(isMoving)
@@ -279,7 +295,7 @@ private struct AppRow: View {
                 Menu("Activate") {
                     ForEach(placeable) { variant in
                         Button(variant.name) {
-                            Task { await library.place(variant, into: app) }
+                            activate(variant)
                         }
                     }
                 }
@@ -292,6 +308,28 @@ private struct AppRow: View {
         // when Activate appears.
         .frame(minHeight: 28)
         .accessibilityElement(children: .contain)
+        .confirmationDialog(
+            Text(verbatim: "Copy to the store on the disk of \(app.title)?"),
+            isPresented: Binding(get: { copying != nil }, set: { if !$0 { copying = nil } }),
+            presenting: copying
+        ) { variant in
+            Button("Copy and Activate") {
+                Task { await library.place(variant, into: app) }
+            }
+            .accessibilityIdentifier("confirm-copy-\(app.name)")
+        } message: { variant in
+            Text(verbatim: variant.copyQuestion(for: app))
+        }
+    }
+
+    /// Activate at once, or first ask when the files must be copied into
+    /// the store on the app's disk.
+    private func activate(_ variant: Variant) {
+        if variant.copyBytes(for: app) > 0 {
+            copying = variant
+        } else {
+            Task { await library.place(variant, into: app) }
+        }
     }
 
     private var detail: String { presence?.summary ?? variants.note(for: app) }

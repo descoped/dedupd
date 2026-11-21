@@ -1726,26 +1726,30 @@ public func restart(address: String)throws   {try rustCallWithError(FfiConverter
 }
 }
 /**
- * Copy `repo` back from the archive disk. Returns at once; the event
+ * Copy `repo` into the store named `into` (without it, the primary
+ * store), from another store or an archive. Returns at once; the event
  * stream tells how it goes (`moving`). The model is put into no app.
  */
-public func restoreModel(address: String, repo: String)throws   {try rustCallWithError(FfiConverterTypeClientError_lift) {
+public func restoreModel(address: String, repo: String, into: String?)throws   {try rustCallWithError(FfiConverterTypeClientError_lift) {
         uniffiCallStatus in
     uniffi_dedupd_client_fn_func_restore_model(
         FfiConverterString.lower(address),
-        FfiConverterString.lower(repo),uniffiCallStatus
+        FfiConverterString.lower(repo),
+        FfiConverterOptionString.lower(into),uniffiCallStatus
     )
 }
 }
 /**
- * What restoring `repo` would copy back from the archive disk.
+ * What restoring `repo` into the store named `into` (without it, the
+ * primary store) would copy, and from where.
  */
-public func restorePlan(address: String, repo: String)throws  -> RestorePlan  {
+public func restorePlan(address: String, repo: String, into: String?)throws  -> RestorePlan  {
     return try  FfiConverterTypeRestorePlan_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
         uniffiCallStatus in
     uniffi_dedupd_client_fn_func_restore_plan(
         FfiConverterString.lower(address),
-        FfiConverterString.lower(repo),uniffiCallStatus
+        FfiConverterString.lower(repo),
+        FfiConverterOptionString.lower(into),uniffiCallStatus
     )
 })
 }
@@ -1799,6 +1803,20 @@ public func setFavorite(address: String, repo: String, favorite: Bool)throws  ->
         FfiConverterString.lower(address),
         FfiConverterString.lower(repo),
         FfiConverterBool.lower(favorite),uniffiCallStatus
+    )
+})
+}
+/**
+ * Set the stores besides the one in dedupd's home. It takes effect at
+ * once. Refused, with nothing changed, when a store would not be on an
+ * attached APFS disk of its own, or two have one name or one folder.
+ */
+public func setStores(address: String, stores: [ArchiveEntry])throws  -> DaemonSettings  {
+    return try  FfiConverterTypeDaemonSettings_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_set_stores(
+        FfiConverterString.lower(address),
+        FfiConverterSequenceTypeArchiveEntry.lower(stores),uniffiCallStatus
     )
 })
 }
@@ -1992,10 +2010,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_func_restart() != 33512) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_func_restore_model() != 30179) {
+    if (uniffi_dedupd_client_checksum_func_restore_model() != 35252) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_func_restore_plan() != 30185) {
+    if (uniffi_dedupd_client_checksum_func_restore_plan() != 50123) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_scan() != 22202) {
@@ -2008,6 +2026,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_set_favorite() != 53814) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dedupd_client_checksum_func_set_stores() != 39371) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_settings() != 39721) {

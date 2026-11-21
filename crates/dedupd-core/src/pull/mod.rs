@@ -7,9 +7,10 @@ use crate::fetch::{Progress, Unavailable, Wait, Watch};
 use crate::hub::{Snapshot, TreeEntry};
 use crate::names::parse_model;
 use crate::ollama_mlx;
-use crate::place::{self, Dest, Item};
+use crate::place::{self, AppDirs, Dest, Item};
 use crate::profile;
 use crate::select::{self, Selection};
+use crate::store::Store;
 use anyhow::{Context, Result, bail};
 use dedupd_api::app::App;
 use dedupd_api::jobs::{NotActivated, PlacedApp, PullResult};
@@ -202,7 +203,7 @@ pub async fn fetch(
         // A copy that cannot be brought back from the archive disk (detached
         // mid-copy, damaged) is downloaded again when that is allowed.
         let sha = b.sha256.clone();
-        let local = match blocking(engine, move |engine| engine.store.ensure_local(&sha)).await {
+        let local = match blocking(engine, move |engine| engine.store.ensure_stored(&sha)).await {
             Err(e) if req.offline => return Err(e),
             other => other.unwrap_or(false),
         };
@@ -232,10 +233,14 @@ pub async fn fetch(
 
     let downloaded = missing.len();
     watch.fetching(downloaded);
+    // Into the store of the apps it is for, when they are on one disk, so
+    // a model for an app on an external disk does not pass through the
+    // internal one; otherwise into the primary store.
+    let target = download_store(&engine.store, &engine.dirs, &req.apps);
     let limit = Arc::new(Semaphore::new(req.jobs.max(1)));
     let mut running: JoinSet<Result<Item>> = JoinSet::new();
     for (index, e) in missing {
-        let (engine, limit) = (engine.clone(), limit.clone());
+        let (engine, limit, target) = (engine.clone(), limit.clone(), target.clone());
         let url = engine.fetcher.resolve_url(&req.repo, commit, &e.path);
         let file = FileWatch {
             watch: watch.clone(),
@@ -245,7 +250,7 @@ pub async fn fetch(
             let _permit = limit.acquire_owned().await.expect("semaphore is open");
             let got = engine
                 .fetcher
-                .fetch(&engine.store, &url, Some(e.size), &e.expect(), &file)
+                .fetch(&target, &url, Some(e.size), &e.expect(), &file)
                 .await
                 .with_context(|| format!("fetching {}", e.path))?;
             engine
@@ -310,6 +315,23 @@ pub async fn plan(engine: &Engine, req: &PullRequest, pinned: Option<&str>) -> R
     })
 }
 
+/// The store a download goes to: the one on the disk of every app in
+/// `apps`, when there is one; otherwise the primary store.
+pub fn download_store(store: &Store, dirs: &AppDirs, apps: &[App]) -> Store {
+    let mut chosen: Option<Store> = None;
+    for app in apps {
+        let Ok(view) = store.for_folder(dirs.models(*app)) else {
+            return store.primary();
+        };
+        match &chosen {
+            Some(c) if c.root().home.root() != view.root().home.root() => return store.primary(),
+            Some(_) => {}
+            None => chosen = Some(view),
+        }
+    }
+    chosen.unwrap_or_else(|| store.primary())
+}
+
 /// Put the plan's files, now in the store, into `req.apps`. Returns what was
 /// placed and the things that did not stop it but the owner should know.
 pub async fn place(
@@ -365,7 +387,8 @@ pub async fn place(
                 done.skipped.push(NotActivated {
                     app: *app,
                     reason: format!("{e:#}"),
-                    temporary: e.downcast_ref::<crate::clone::OtherVolume>().is_none(),
+                    temporary: e.downcast_ref::<crate::clone::OtherVolume>().is_none()
+                        && e.downcast_ref::<crate::store::NoStoreThere>().is_none(),
                 });
                 continue;
             }

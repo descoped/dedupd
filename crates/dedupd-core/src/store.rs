@@ -1,14 +1,27 @@
 use crate::clone::{clone_file, same_volume};
-use crate::paths::{Archive, Home};
+use crate::paths::{Archive, Home, PRIMARY_STORE, StoreRoot};
 use anyhow::{Context, Result, bail};
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-/// The content-addressed folder. Files are named by their sha256 and are
-/// read-only once inside.
+/// The content-addressed folder: a view of one store (`root`), the one it
+/// writes to, with every other store and archive in sight. Files are named
+/// by their sha256 and are read-only once inside. A view is cheap to clone;
+/// `for_folder` and `named` give the view of another store.
+#[derive(Clone)]
 pub struct Store {
+    root: StoreRoot,
+    shared: std::sync::Arc<Shared>,
+}
+
+/// What every view of the store shares.
+struct Shared {
+    /// dedupd's own home: the database, the activity list, the refusals.
     home: Home,
+    /// The stores (warm locations), the primary store first. Changed while
+    /// the daemon runs, when the owner adds or removes one.
+    stores: std::sync::RwLock<Vec<StoreRoot>>,
     /// The archives (cold locations), the backup archive first. Files
     /// missing here are brought back from any of them on demand. Changed
     /// while the daemon runs, when the owner adds or removes one.
@@ -17,7 +30,8 @@ pub struct Store {
     /// one external disk, and two copies read from it at once are slower
     /// than one after the other. A request for a small file therefore
     /// waits for a large one that is being copied back. Files that are in
-    /// the store never wait here.
+    /// the store never wait here. A copy from one store to another waits
+    /// here too.
     restoring: std::sync::Mutex<()>,
     /// One copy to the archive at a time, for the same reason: the
     /// daemon's backup and an archive the owner asked for may also want
@@ -25,6 +39,15 @@ pub struct Store {
     /// the temporary name, which carries the process id.
     copying: std::sync::Mutex<()>,
 }
+
+/// No store is on the volume of an app's folder, so nothing can be cloned
+/// into it.
+#[derive(Debug, thiserror::Error)]
+#[error(
+    "no store is on the disk of {0}: a model can be activated only in an app folder on the disk of a store; \
+     add a store on that disk on the Storage screen"
+)]
+pub struct NoStoreThere(pub PathBuf);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Added {
@@ -74,12 +97,170 @@ impl Store {
             .with_context(|| format!("creating {}", home.store_dir().display()))?;
         fs::create_dir_all(home.tmp_dir())
             .with_context(|| format!("creating {}", home.tmp_dir().display()))?;
-        Ok(Self {
+        let primary = StoreRoot {
+            name: PRIMARY_STORE.to_string(),
             home: home.clone(),
-            archives: std::sync::RwLock::new(Vec::new()),
-            restoring: std::sync::Mutex::new(()),
-            copying: std::sync::Mutex::new(()),
+            primary: true,
+        };
+        Ok(Self {
+            root: primary.clone(),
+            shared: std::sync::Arc::new(Shared {
+                home: home.clone(),
+                stores: std::sync::RwLock::new(vec![primary]),
+                archives: std::sync::RwLock::new(Vec::new()),
+                restoring: std::sync::Mutex::new(()),
+                copying: std::sync::Mutex::new(()),
+            }),
         })
+    }
+
+    /// Use these stores besides the primary one, which stays first. Their
+    /// folders are made when their disks are attached.
+    pub fn set_stores(&self, others: Vec<StoreRoot>) {
+        let primary = self.primary_root();
+        let mut all = vec![primary];
+        for other in others.into_iter().filter(|s| !s.primary) {
+            if other.home.attached() {
+                let _ = fs::create_dir_all(other.home.store_dir().join("sha256"));
+                let _ = fs::create_dir_all(other.home.tmp_dir());
+            }
+            all.push(other);
+        }
+        *self
+            .shared
+            .stores
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = all;
+    }
+
+    /// Every store, the primary store first; a disk may be detached.
+    pub fn stores(&self) -> Vec<StoreRoot> {
+        self.shared
+            .stores
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// The stores whose disks are attached, the primary store first.
+    pub fn attached_stores(&self) -> Vec<StoreRoot> {
+        self.stores()
+            .into_iter()
+            .filter(|s| s.primary || s.home.store_dir().is_dir())
+            .collect()
+    }
+
+    fn primary_root(&self) -> StoreRoot {
+        StoreRoot {
+            name: PRIMARY_STORE.to_string(),
+            home: self.shared.home.clone(),
+            primary: true,
+        }
+    }
+
+    /// The view of the primary store.
+    pub fn primary(&self) -> Store {
+        self.view(self.primary_root())
+    }
+
+    fn view(&self, root: StoreRoot) -> Store {
+        Store {
+            root,
+            shared: self.shared.clone(),
+        }
+    }
+
+    /// The store this view writes to.
+    pub fn root(&self) -> &StoreRoot {
+        &self.root
+    }
+
+    /// The view of the store on the volume of `dir` (an app's folder, or a
+    /// file in it), which may not be there yet: its nearest folder that is
+    /// there decides. Fails with [`NoStoreThere`] when no attached store is
+    /// on that volume.
+    pub fn for_folder(&self, dir: &Path) -> Result<Store> {
+        // A folder on a disk that is away has no volume: it is not taken
+        // for the root volume, which `/Volumes` is on.
+        let Ok(volume) = crate::paths::volume_of(dir) else {
+            return Err(NoStoreThere(dir.to_path_buf()).into());
+        };
+        for root in self.attached_stores() {
+            if crate::paths::volume_of(&root.home.store_dir()).is_ok_and(|v| v == volume) {
+                return Ok(self.view(root));
+            }
+        }
+        Err(NoStoreThere(dir.to_path_buf()).into())
+    }
+
+    /// The view of the store with this name, when its disk is attached.
+    pub fn named(&self, name: &str) -> Result<Store> {
+        let all = self.stores();
+        let Some(root) = all.iter().find(|s| s.name.eq_ignore_ascii_case(name)) else {
+            let names: Vec<_> = all.iter().map(|s| s.name.as_str()).collect();
+            bail!(
+                "there is no store named {name}; the stores are {}",
+                names.join(", ")
+            );
+        };
+        if !root.primary && !root.home.store_dir().is_dir() {
+            bail!(
+                "the disk of the store {} is not attached ({} not found)",
+                root.name,
+                root.home.root().display()
+            );
+        }
+        Ok(self.view(root.clone()))
+    }
+
+    /// Whether any attached store has the file.
+    pub fn contains_anywhere(&self, sha256: &str) -> bool {
+        self.find(sha256).is_some()
+    }
+
+    /// Where an attached store keeps the file: this one first.
+    pub fn find(&self, sha256: &str) -> Option<PathBuf> {
+        let here = self.blob_path(sha256);
+        if here.is_file() {
+            return Some(here);
+        }
+        self.attached_stores()
+            .into_iter()
+            .map(|s| s.home.blob_path(sha256))
+            .find(|p| p.is_file())
+    }
+
+    /// Make sure some store has the file, bringing it back from an archive
+    /// into this one when no store has it. Returns false when none has it.
+    pub fn ensure_stored(&self, sha256: &str) -> Result<bool> {
+        if self.contains_anywhere(sha256) {
+            return Ok(true);
+        }
+        self.ensure_local(sha256)
+    }
+
+    /// Remove the file from every attached store. Returns the bytes freed.
+    pub fn remove_everywhere(&self, sha256: &str) -> Result<u64> {
+        let mut freed = 0;
+        let archives = self.archives();
+        for root in self.attached_stores() {
+            // A second guard beside the config's rule: a store that is (or
+            // holds, or is in) an archive's folder is never emptied here,
+            // because its file may be the archive's only copy.
+            let (r, held) = (root.home.root(), &archives);
+            if held
+                .iter()
+                .any(|a| r.starts_with(a.home.root()) || a.home.root().starts_with(r))
+            {
+                continue;
+            }
+            let path = root.home.blob_path(sha256);
+            if let Ok(meta) = fs::metadata(&path) {
+                fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+                freed += meta.len();
+            }
+        }
+        Ok(freed)
     }
 
     /// Use `archive` as the backup archive, named after its disk. It may be
@@ -102,12 +283,17 @@ impl Store {
     /// Use these archives from now on (the backup archive first, as
     /// `Config::archive_list` gives them).
     pub fn set_archives(&self, archives: Vec<Archive>) {
-        *self.archives.write().unwrap_or_else(|e| e.into_inner()) = archives;
+        *self
+            .shared
+            .archives
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = archives;
     }
 
     /// Every archive, the backup archive first; their disks may be detached.
     pub fn archives(&self) -> Vec<Archive> {
-        self.archives
+        self.shared
+            .archives
             .read()
             .unwrap_or_else(|e| e.into_inner())
             .clone()
@@ -124,12 +310,16 @@ impl Store {
     /// The turn to copy a file to the archive disk; held while one is
     /// written.
     pub(crate) fn copying_to_archive(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.copying.lock().unwrap_or_else(|e| e.into_inner())
+        self.shared
+            .copying
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
     }
 
-    /// The home this store is in.
+    /// dedupd's own home (the database, the activity list), whichever store
+    /// this view writes to.
     pub fn home(&self) -> &Home {
-        &self.home
+        &self.shared.home
     }
 
     /// Whether an attached archive has the file. Asks for the list of
@@ -156,7 +346,7 @@ impl Store {
     /// The size of the volume the store is on and the bytes free on it.
     pub fn volume(&self) -> Result<(u64, u64)> {
         use std::os::unix::ffi::OsStrExt;
-        let dir = self.home.store_dir();
+        let dir = self.root.home.store_dir();
         let path = std::ffi::CString::new(dir.as_os_str().as_bytes())?;
         // SAFETY: `statvfs` is plain data, and `path` is a valid C string
         // that outlives the call.
@@ -179,7 +369,7 @@ impl Store {
         let name = Path::new(name)
             .file_name()
             .unwrap_or(std::ffi::OsStr::new("unnamed"));
-        self.home.tmp_dir().join(name)
+        self.root.home.tmp_dir().join(name)
     }
 
     /// Move a finished temp file into the store. The caller has verified that
@@ -197,17 +387,23 @@ impl Store {
         Ok(Added::Stored)
     }
 
-    /// Make sure the file is in the local store, copying it back from an
-    /// attached archive if that is the only place it is (the backup archive
-    /// first; a damaged copy is passed over for the next archive). Returns
-    /// false when none has it.
+    /// Make sure the file is in this store: copied from another store on
+    /// this Mac, or else back from an attached archive (the backup archive
+    /// first; a damaged copy is passed over for the next one). Returns false
+    /// when none has it.
     pub fn ensure_local(&self, sha256: &str) -> Result<bool> {
         if self.contains(sha256) {
             return Ok(true);
         }
         let mut damaged = None;
-        for archive in self.attached_archives() {
-            let src = archive.home.blob_path(sha256);
+        let others = self
+            .attached_stores()
+            .into_iter()
+            .filter(|s| s.home.root() != self.root.home.root())
+            .map(|s| s.home);
+        let archives = self.attached_archives().into_iter().map(|a| a.home);
+        for from in others.chain(archives) {
+            let src = from.blob_path(sha256);
             if !src.is_file() {
                 continue;
             }
@@ -224,7 +420,11 @@ impl Store {
 
     /// Copy one file back from an archive, hashing it as it is written.
     fn copy_back(&self, src: &Path, sha256: &str) -> Result<()> {
-        let _restoring = self.restoring.lock().unwrap_or_else(|e| e.into_inner());
+        let _restoring = self
+            .shared
+            .restoring
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if self.contains(sha256) {
             // Another caller restored it while this one waited.
             return Ok(());
@@ -261,7 +461,11 @@ impl Store {
     /// how many were removed.
     pub fn clear_leftovers(&self) -> usize {
         let quiet_for = std::time::Duration::from_secs(600);
-        let mut dirs = vec![self.home.tmp_dir()];
+        let mut dirs: Vec<PathBuf> = self
+            .attached_stores()
+            .iter()
+            .map(|s| s.home.tmp_dir())
+            .collect();
         dirs.extend(self.attached_archives().iter().map(|a| a.home.tmp_dir()));
         let mut removed = 0;
         for entry in dirs
@@ -307,7 +511,7 @@ impl Store {
     /// caller only adds records for what is listed. Do not use the list to
     /// decide what to remove.
     pub fn stored_hashes(&self) -> Vec<String> {
-        let root = self.home.store_dir().join("sha256");
+        let root = self.root.home.store_dir().join("sha256");
         let mut out = Vec::new();
         for prefix in fs::read_dir(&root).into_iter().flatten().flatten() {
             let prefix_name = prefix.file_name().to_string_lossy().into_owned();
@@ -325,7 +529,7 @@ impl Store {
 
     /// Where the store keeps the file with this sha256, there or not.
     pub fn blob_path(&self, sha256: &str) -> PathBuf {
-        self.home.blob_path(sha256)
+        self.root.home.blob_path(sha256)
     }
 
     /// Whether the file is in the store on this disk (the archive disk
@@ -351,15 +555,16 @@ impl Store {
             return Ok(Added::AlreadyPresent);
         }
 
-        if !same_volume(src, &self.home.store_dir())? {
+        if !same_volume(src, &self.root.home.store_dir())? {
             bail!(
                 "{} is on a different volume from the store at {}; clones need one APFS volume",
                 src.display(),
-                self.home.store_dir().display()
+                self.root.home.store_dir().display()
             );
         }
 
         let tmp = self
+            .root
             .home
             .tmp_dir()
             .join(format!("{sha256}.{}", std::process::id()));

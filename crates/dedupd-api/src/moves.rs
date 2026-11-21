@@ -76,7 +76,8 @@ impl MoveKind {
 pub struct MoveBody {
     pub repo: String,
     /// For an archive: the name of the archive to move it to. Without it,
-    /// the backup archive, or the only archive there is.
+    /// the backup archive, or the only archive there is. For a restore: the
+    /// name of the store to copy it into. Without it, the primary store.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub to: Option<String>,
     /// Do it. Without it the answer only says what would happen.
@@ -91,7 +92,7 @@ pub struct MoveBody {
 pub struct ModelMove {
     pub kind: MoveKind,
     pub repo: String,
-    /// For an archive: the name of the archive it goes to.
+    /// The archive it goes to, or the store it is restored into.
     #[serde(default)]
     pub archive: Option<String>,
     pub running: bool,
@@ -159,9 +160,12 @@ pub struct RestorePlan {
     /// every archive they come from.
     pub archive: String,
     pub archives: Vec<String>,
+    /// The store the files are copied into.
+    #[serde(default)]
+    pub store: String,
     pub files: u64,
     pub bytes: u64,
-    /// Free space on the internal disk.
+    /// Free space on the disk of the store it is restored into.
     pub free: u64,
     /// Files that are on neither disk.
     pub missing: u64,

@@ -141,7 +141,9 @@ fn moved_by_daemon(
         MoveKind::Archive => {
             dedupd_client::archive_model(address.clone(), repo.to_string(), to.map(str::to_string))?
         }
-        MoveKind::Restore => dedupd_client::restore_model(address.clone(), repo.to_string())?,
+        MoveKind::Restore => {
+            dedupd_client::restore_model(address.clone(), repo.to_string(), to.map(str::to_string))?
+        }
     }
     let mut said = String::new();
     loop {
@@ -250,22 +252,26 @@ pub fn cmd_archive(o: &Opened, repo: &str, to: Option<&str>, apply: bool) -> Res
     Ok(())
 }
 
-pub fn cmd_restore(o: &Opened, repo: &str) -> Result<()> {
+pub fn cmd_restore(o: &Opened, repo: &str, into: Option<&str>) -> Result<()> {
     let e = &o.engine;
-    let plan = archive::restore_plan(&e.db, &e.store, repo)?;
+    let plan = archive::restore_plan(&e.db, &e.store, repo, into)?;
     if plan.copy.is_empty() && plan.missing.is_empty() {
-        archive::restore(&e.db, &e.store, repo, &mut |_| {})?;
-        println!("{repo} is on the internal disk already. Nothing to copy.");
+        archive::restore(&e.db, &e.store, repo, Some(&plan.store), &mut |_| {})?;
+        println!(
+            "{repo} is in the store {} already. Nothing to copy.",
+            plan.store
+        );
         return Ok(());
     }
     eprintln!(
-        "Copying {} files ({}) back from {}.",
+        "Copying {} files ({}) into the store {}, from {}.",
         plan.copy.len(),
         human(plan.bytes),
-        plan.archive
+        plan.store,
+        plan.archives.join(", ")
     );
     let started = Instant::now();
-    if let Some(done) = moved_by_daemon(o, repo, MoveKind::Restore, None)? {
+    if let Some(done) = moved_by_daemon(o, repo, MoveKind::Restore, Some(&plan.store))? {
         println!(
             "Restored {repo} in {:.0?}: {} files. It is in no app yet; `dedupd activate <model> --for <apps>` puts it into one.",
             started.elapsed(),
@@ -274,7 +280,9 @@ pub fn cmd_restore(o: &Opened, repo: &str) -> Result<()> {
         return Ok(());
     }
     let mut said = Progress::new("copied", plan.bytes);
-    let report = match archive::restore(&e.db, &e.store, repo, &mut |size| said.add(size)) {
+    let report = match archive::restore(&e.db, &e.store, repo, Some(&plan.store), &mut |size| {
+        said.add(size)
+    }) {
         Ok(report) => report,
         Err(e) => {
             // Say which files are nowhere before giving up.

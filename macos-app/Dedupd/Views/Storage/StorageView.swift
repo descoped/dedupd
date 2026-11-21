@@ -42,6 +42,7 @@ struct StorageView: View {
                     case let .ready(locations):
                         VolumeCard(locations: locations)
                         LocationsCard(locations: locations)
+                        StoresCard()
                         ArchivesCard()
                     case let .failed(message):
                         FailureLabel(message: message)

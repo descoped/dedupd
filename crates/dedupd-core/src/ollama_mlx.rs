@@ -482,10 +482,13 @@ fn ask_ollama(
         )));
     }
 
+    // What Ollama gives is cloned into its folder: it goes into the store
+    // on that folder's disk.
+    let store = dest.store.for_folder(&dest.dirs.ollama)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
-    let dir = dest.store.tmp_path(&format!(
+    let dir = store.tmp_path(&format!(
         "{}{}-{now}",
         crate::store::ASKED_FOLDER,
         std::process::id()
@@ -545,7 +548,7 @@ fn ask_ollama(
         if Some(hashes.sha256.as_str()) != digest_hex(digest) {
             bail!("the layer {digest} Ollama wrote holds other bytes than its name says");
         }
-        dest.store.add_tmp(&path, &hashes.sha256)?;
+        store.add_tmp(&path, &hashes.sha256)?;
         lock(dest.db).upsert_blob(&hashes.sha256, hashes.size, None)?;
     }
     manifest["layers"] = Value::Array(kept);
@@ -672,14 +675,17 @@ pub fn place(
     items: &[Item],
 ) -> Result<Result<Placed, NotPlaced>> {
     let mut out = Placed::default();
+    // The clones are made from the store on the disk of Ollama's folder;
+    // what it lacks is copied in first.
+    let store = dest.store.for_folder(&dest.dirs.ollama)?;
     // Ollama imports the files at the top of a model folder.
     let top: Vec<&Item> = items.iter().filter(|i| !i.rel_path.contains('/')).collect();
     for item in &top {
-        if !dest.store.ensure_local(&item.sha256)? {
+        if !store.ensure_local(&item.sha256)? {
             bail!("{} is not in the store", item.rel_path);
         }
     }
-    let path_of = |item: &Item| dest.store.blob_path(&item.sha256);
+    let path_of = |item: &Item| store.blob_path(&item.sha256);
     let mut weights: Vec<&Item> = top
         .iter()
         .copied()

@@ -243,7 +243,7 @@ async fn a_model_is_removed_from_an_app_and_placed_again() {
 
     // The library says where the model is and what it can be used as.
     let installed = Installed::detect(&e.dirs);
-    let detail = library::model(&e.db, &e.store, REPO, &installed)
+    let detail = library::model(&e.db, &e.store, &e.dirs, REPO, &installed)
         .unwrap()
         .unwrap();
     assert_eq!(detail.model.apps.len(), 3);
@@ -480,7 +480,7 @@ async fn a_model_is_archived_to_the_archive_named_and_restored_from_it() {
         assert!(!e.store.contains(&blob.sha256));
     }
     let installed = Installed::detect(&e.dirs);
-    let detail = library::model(&e.db, &e.store, REPO, &installed)
+    let detail = library::model(&e.db, &e.store, &e.dirs, REPO, &installed)
         .unwrap()
         .unwrap();
     assert_eq!(detail.archives, ["Drawer"]);
@@ -509,16 +509,27 @@ async fn a_model_is_archived_to_the_archive_named_and_restored_from_it() {
     assert_eq!(check.archive_away, plan.remove.len());
     fs::rename(dir.path().join("drawer-away"), dir.path().join("drawer")).unwrap();
 
-    let restore_plan = archive::restore_plan(&e.db, &e.store, REPO).unwrap();
+    let restore_plan = archive::restore_plan(&e.db, &e.store, REPO, None).unwrap();
     assert_eq!(restore_plan.archives, ["Drawer"]);
-    archive::restore(&e.db, &e.store, REPO, &mut |_| {}).unwrap();
+    archive::restore(&e.db, &e.store, REPO, None, &mut |_| {}).unwrap();
     for blob in &plan.remove {
         assert!(e.store.contains(&blob.sha256));
     }
 
-    // With the disk away, a restore names the archives.
+    // A model whose files are all in a store needs nothing restored, with
+    // or without an archive in sight.
     e.store.set_archives(vec![named("NAS", &nas)]);
-    let none = archive::restore_plan(&e.db, &e.store, REPO).unwrap_err();
+    let nothing = archive::restore_plan(&e.db, &e.store, REPO, None).unwrap_err();
+    assert!(
+        nothing.to_string().contains("nothing to restore"),
+        "{nothing}"
+    );
+    // With files that are in no store and the disk away, a restore names
+    // the archives.
+    for blob in &plan.remove {
+        e.store.remove_everywhere(&blob.sha256).unwrap();
+    }
+    let none = archive::restore_plan(&e.db, &e.store, REPO, None).unwrap_err();
     assert!(none.to_string().contains("(NAS)"), "{none}");
 }
 
@@ -536,7 +547,7 @@ async fn a_model_is_archived_and_restored() {
         .unwrap();
     let installed = Installed::detect(&e.dirs);
     let archived_at = |e: &dedupd_core::engine::Engine| {
-        library::model(&e.db, &e.store, REPO, &installed)
+        library::model(&e.db, &e.store, &e.dirs, REPO, &installed)
             .unwrap()
             .unwrap()
             .model
@@ -626,7 +637,7 @@ async fn a_model_is_archived_and_restored() {
         assert!(!e.store.contains(sha));
         assert!(archive_home.blob_path(sha).is_file());
     }
-    let detail = library::model(&e.db, &e.store, REPO, &installed)
+    let detail = library::model(&e.db, &e.store, &e.dirs, REPO, &installed)
         .unwrap()
         .unwrap();
     assert!(detail.model.archived_at.is_some());
@@ -642,10 +653,10 @@ async fn a_model_is_archived_and_restored() {
     assert!(again.deactivate.is_empty() && again.remove.is_empty());
 
     // Restoring copies the files back and puts the model into no app.
-    let plan = archive::restore_plan(&e.db, &e.store, REPO).unwrap();
+    let plan = archive::restore_plan(&e.db, &e.store, REPO, None).unwrap();
     assert_eq!((plan.copy.len(), plan.missing.len()), (4, 0));
     assert!(!e.store.contains(&all[0]));
-    let report = archive::restore(&e.db, &e.store, REPO, &mut |_| {}).unwrap();
+    let report = archive::restore(&e.db, &e.store, REPO, None, &mut |_| {}).unwrap();
     assert_eq!((report.files, report.bytes), (4, plan.bytes));
     for sha in &all {
         assert!(e.store.contains(sha));
@@ -749,9 +760,11 @@ fn an_mlx_model_tells_each_app_what_it_can_do() {
     let installed = Installed::unknown().with(App::Ollama, "0.40.16");
     let formats = ["mlx".to_string(), "safetensors".to_string()];
     let variant = |entries: &[TreeEntry]| {
-        library::local_variants(&e.db, &e.store, "org/m", entries, &formats, &installed)
-            .unwrap()
-            .remove(0)
+        library::local_variants(
+            &e.db, &e.store, &e.dirs, "org/m", entries, &formats, &installed,
+        )
+        .unwrap()
+        .remove(0)
     };
     let ollama = |entries: &[TreeEntry]| {
         let mut found = variant(entries).decisions.into_iter();
@@ -899,7 +912,7 @@ async fn files_only_the_store_has_are_recorded_again_after_the_database_is_remov
     .unwrap();
     let q4 = || {
         let installed = Installed::detect(&e.dirs);
-        library::model(&e.db, &e.store, REPO, &installed)
+        library::model(&e.db, &e.store, &e.dirs, REPO, &installed)
             .unwrap()
             .unwrap()
             .variants
@@ -1081,4 +1094,148 @@ async fn one_apps_failure_does_not_stop_the_others() {
     // The history is told of all three.
     let told = dedupd_core::activity::recent(&home, 10);
     assert_eq!(told.len(), 3, "{told:?}");
+}
+
+/// A scratch APFS volume, a disk image attached for one test and detached
+/// when it ends. `None` where `hdiutil` cannot make one.
+struct ScratchVolume {
+    mount: std::path::PathBuf,
+}
+
+impl ScratchVolume {
+    fn attach(dir: &std::path::Path) -> Option<Self> {
+        let name = format!("dedupd-test-{}", std::process::id());
+        let image = dir.join("volume.dmg");
+        let made = std::process::Command::new("hdiutil")
+            .args([
+                "create", "-quiet", "-size", "64m", "-fs", "APFS", "-volname", &name,
+            ])
+            .arg(&image)
+            .status()
+            .ok()?;
+        if !made.success() {
+            return None;
+        }
+        let mount = dir.join("mount");
+        fs::create_dir_all(&mount).ok()?;
+        let attached = std::process::Command::new("hdiutil")
+            .args(["attach", "-quiet", "-nobrowse", "-mountpoint"])
+            .arg(&mount)
+            .arg(&image)
+            .status()
+            .ok()?;
+        attached.success().then_some(Self { mount })
+    }
+}
+
+impl Drop for ScratchVolume {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("hdiutil")
+            .args(["detach", "-quiet", "-force"])
+            .arg(&self.mount)
+            .status();
+    }
+}
+
+#[tokio::test]
+async fn a_model_goes_to_the_store_on_the_disk_of_the_app_and_is_copied_between_stores() {
+    let up = upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let Some(volume) = ScratchVolume::attach(dir.path()) else {
+        eprintln!("skipped: hdiutil could not attach a scratch APFS volume");
+        return;
+    };
+    let home = Home::new(dir.path().join("home"));
+    let engine = engine(&home, &up.server.uri(), &dir.path().join("apps"), None);
+    // Bionic keeps its models on the other disk; the cache stays here.
+    let mut owned = Arc::try_unwrap(engine).ok().unwrap();
+    owned.dirs.bionic = volume.mount.join("bionic");
+    let e = Arc::new(owned);
+    let envoy = Home::new(volume.mount.join("dedupd"));
+    fs::create_dir_all(envoy.root()).unwrap();
+    e.store.set_stores(vec![dedupd_core::paths::StoreRoot {
+        name: "Envoy".into(),
+        home: envoy.clone(),
+        primary: false,
+    }]);
+    let weights = sha256(&up.weights);
+
+    // For Bionic alone, the download goes to the store on its disk, and
+    // the internal disk holds none of it.
+    let progress = Arc::new(Progress::default());
+    let out = pull::pull(&e, &request(&[App::Bionic], false), &progress)
+        .await
+        .unwrap();
+    assert_eq!(out.downloaded, 2);
+    assert_eq!(out.placed.len(), 1, "{:?}", out.skipped);
+    assert!(envoy.blob_path(&weights).is_file());
+    assert!(!home.blob_path(&weights).is_file());
+    let placed = e.dirs.bionic.join(REPO).join("model-Q4_K_M.gguf");
+    assert_eq!(fs::read(&placed).unwrap(), up.weights);
+    assert!(e.store.contains_anywhere(&weights));
+
+    // Before the cache is given it, the library says what activating it
+    // there copies: the files, from the other store.
+    let installed = Installed::default();
+    let detail = library::model(&e.db, &e.store, &e.dirs, REPO, &installed)
+        .unwrap()
+        .unwrap();
+    let variant = detail
+        .variants
+        .iter()
+        .find(|v| v.weights_stored)
+        .expect("a stored variant");
+    let to_cache = variant.copies.iter().find(|c| c.app == App::Hf).unwrap();
+    assert_eq!(to_cache.store.as_deref(), Some("Internal"));
+    assert_eq!(to_cache.bytes, variant.bytes);
+    let to_bionic = variant
+        .copies
+        .iter()
+        .find(|c| c.app == App::Bionic)
+        .unwrap();
+    assert_eq!(
+        (to_bionic.store.as_deref(), to_bionic.bytes),
+        (Some("Envoy"), 0)
+    );
+
+    // The cache is on the internal disk: nothing is downloaded again, the
+    // files are copied from the other store into this one.
+    let out = pull::pull(&e, &request(&[App::Hf], false), &progress)
+        .await
+        .unwrap();
+    assert_eq!(out.downloaded, 0);
+    assert_eq!(out.placed.len(), 1, "{:?}", out.skipped);
+    assert!(home.blob_path(&weights).is_file());
+    let blob = e
+        .dirs
+        .hf_cache
+        .join("models--org--Repo-GGUF/blobs")
+        .join(&weights);
+    assert_eq!(fs::read(blob).unwrap(), up.weights);
+
+    // The check reads the copy in each store: a damaged one in the other
+    // store is found although the one here is whole.
+    let there = envoy.blob_path(&weights);
+    let mut perms = fs::metadata(&there).unwrap().permissions();
+    #[allow(clippy::permissions_set_readonly_false)]
+    perms.set_readonly(false);
+    fs::set_permissions(&there, perms).unwrap();
+    fs::write(&there, b"damaged").unwrap();
+    let check = maintain::verify(&e.db, &e.store, false, 1).unwrap();
+    assert_eq!(check.damaged, vec![weights.clone()]);
+    fs::write(&there, &up.weights).unwrap();
+
+    // An app folder on a disk with no store is not given the model, and
+    // trying again does not help until a store is added there.
+    e.store.set_stores(vec![]);
+    fs::remove_dir_all(e.dirs.bionic.join(REPO)).unwrap();
+    let out = pull::pull(&e, &request(&[App::Bionic], false), &progress)
+        .await
+        .unwrap();
+    assert!(out.placed.is_empty());
+    let skipped = &out.skipped[0];
+    assert!(!skipped.temporary, "{skipped:?}");
+    assert!(skipped.reason.contains("no store"), "{}", skipped.reason);
+    drop(e);
+    drop(volume);
 }

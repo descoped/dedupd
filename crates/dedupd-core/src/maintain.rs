@@ -68,10 +68,14 @@ pub fn reclaim(
             if age < min_age {
                 return Ok(Some("written too recently".into()));
             }
-            if !store.contains(&p.sha256) {
-                return Ok(Some("its content is not in the local store".into()));
+            // The clone comes from the store on the app file's disk.
+            let Ok(here) = store.for_folder(path) else {
+                return Ok(Some("no store is on the disk of this file".into()));
+            };
+            if !here.contains(&p.sha256) {
+                return Ok(Some("its content is not in the store on its disk".into()));
             }
-            let blob = store.blob_path(&p.sha256);
+            let blob = here.blob_path(&p.sha256);
             if !same_volume(path, &blob)? {
                 return Ok(Some("on a different volume from the store".into()));
             }
@@ -156,8 +160,9 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
         (false, _) => store.home().clone(),
     };
 
-    // Taken once: the archives are asked about every file that is not here.
+    // Taken once: the stores and archives are asked about every file.
     let attached = store.attached_archives();
+    let stores = store.attached_stores();
     let some_away = store.archives().iter().any(|a| !a.home.attached());
     let next = AtomicUsize::new(0);
     // Set when the archive disk goes away while it is being checked.
@@ -172,10 +177,21 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
                     }
                     let i = next.fetch_add(1, Ordering::Relaxed);
                     let Some(blob) = blobs.get(i) else { break };
-                    let path = root.blob_path(&blob.sha256);
-                    if !path.is_file() {
+                    // On this Mac, the file is checked in every store that
+                    // has it; it counts once, and as damaged when any copy
+                    // is.
+                    let copies: Vec<PathBuf> = if archive {
+                        vec![root.blob_path(&blob.sha256)]
+                    } else {
+                        stores
+                            .iter()
+                            .map(|s| s.home.blob_path(&blob.sha256))
+                            .filter(|p| p.is_file())
+                            .collect()
+                    };
+                    if !copies.iter().any(|p| p.is_file()) {
                         let mut r = report.lock().expect("lock");
-                        if archive && store.contains(&blob.sha256) {
+                        if archive && store.contains_anywhere(&blob.sha256) {
                             r.not_backed_up += 1;
                         } else if !archive && crate::store::in_any(&attached, &blob.sha256) {
                             r.only_in_archive += 1;
@@ -188,26 +204,36 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
                         }
                         continue;
                     }
-                    let read = hash_file(&path, false);
-                    let mut r = report.lock().expect("lock");
-                    match read {
-                        Ok(hashes) => {
-                            r.checked += 1;
-                            r.bytes += blob.size;
-                            if hashes.sha256 != blob.sha256 {
-                                r.damaged.push(blob.sha256.clone());
+                    let (mut read_one, mut damaged) = (false, false);
+                    for path in &copies {
+                        let read = hash_file(path, false);
+                        match read {
+                            Ok(hashes) => {
+                                read_one = true;
+                                damaged |= hashes.sha256 != blob.sha256;
+                            }
+                            // A file that cannot be read says nothing about
+                            // its content. When it is the archive disk that
+                            // went away, nothing after this can be told
+                            // either: the check stops.
+                            Err(e) => {
+                                let mut r = report.lock().expect("lock");
+                                r.unreadable.push((blob.sha256.clone(), e.to_string()));
+                                if archive && !root.attached() {
+                                    gone.store(true, Ordering::Relaxed);
+                                }
                             }
                         }
-                        // A file that cannot be read says nothing about
-                        // its content. When it is the archive disk that
-                        // went away, nothing after this can be told
-                        // either: the check stops.
-                        Err(e) => {
-                            r.unreadable.push((blob.sha256.clone(), e.to_string()));
-                            if archive && !root.attached() {
-                                gone.store(true, Ordering::Relaxed);
-                                break;
-                            }
+                    }
+                    if gone.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    if read_one {
+                        let mut r = report.lock().expect("lock");
+                        r.checked += 1;
+                        r.bytes += blob.size;
+                        if damaged {
+                            r.damaged.push(blob.sha256.clone());
                         }
                     }
                 }
@@ -287,7 +313,7 @@ pub fn gc_plan(db: &Mutex<Db>, store: &Store, offload: bool) -> Result<GcPlan> {
         plan.offload = unplaced
             .into_iter()
             .filter(|b| !orphans.contains(b.sha256.as_str()))
-            .filter(|b| store.contains(&b.sha256))
+            .filter(|b| store.contains_anywhere(&b.sha256))
             .filter(|b| fs::metadata(archive.blob_path(&b.sha256)).is_ok_and(|m| m.len() == b.size))
             .collect();
         // A revision lists a large file by its sha256 and a small one by
@@ -308,12 +334,8 @@ pub fn gc_plan(db: &Mutex<Db>, store: &Store, offload: bool) -> Result<GcPlan> {
 pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
     // Remove the local copy; the bytes that freed.
     let remove_local = |blob: &BlobRow| -> Result<u64> {
-        let path = store.blob_path(&blob.sha256);
-        if !path.is_file() {
-            return Ok(0);
-        }
-        fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
-        Ok(blob.size)
+        // From every store on this Mac.
+        store.remove_everywhere(&blob.sha256)
     };
     let mut freed = 0;
     // An archive whose disk is away: the orphans' local copies go, and
@@ -511,7 +533,10 @@ pub fn unplace_plan(
             Ok(_) if used_elsewhere.contains(p.derived_sha256.as_ref().unwrap_or(&p.sha256)) => {
                 Some(Kept::UsedByAnotherModel)
             }
-            Ok(_) if !store.contains(&p.sha256) && !crate::store::in_any(&attached, &p.sha256) => {
+            Ok(_)
+                if !store.contains_anywhere(&p.sha256)
+                    && !crate::store::in_any(&attached, &p.sha256) =>
+            {
                 Some(Kept::NoStoredCopy)
             }
             Ok(_) => None,

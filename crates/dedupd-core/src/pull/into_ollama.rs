@@ -112,11 +112,13 @@ async fn ollama_manifest(
         // In the store, or brought back from the archive disk; recorded
         // when the database does not know it yet.
         let local = blocking(engine, move |engine| {
-            if !engine.store.ensure_local(&owned)? {
+            if !engine.store.ensure_stored(&owned)? {
                 return Ok(false);
             }
-            if engine.db().blob(&owned)?.is_none() {
-                let size = std::fs::metadata(engine.store.blob_path(&owned))?.len();
+            if engine.db().blob(&owned)?.is_none()
+                && let Some(path) = engine.store.find(&owned)
+            {
+                let size = std::fs::metadata(path)?.len();
                 engine.db().upsert_blob(&owned, size, None)?;
             }
             Ok(true)

@@ -153,6 +153,30 @@ extension Variant: @retroactive Identifiable {
         decisions.first { $0.app == app }
     }
 
+    /// What activating this in an app copies first: the store on the disk
+    /// of the app's folder, and what of this it lacks that another store has.
+    func storeCopy(for app: ModelApp) -> StoreCopy? {
+        copies.first { $0.app == app }
+    }
+
+    /// The disk of the app's folder has a store, so the app can be given
+    /// this. A daemon that does not say counts as yes.
+    func hasStore(for app: ModelApp) -> Bool {
+        copies.isEmpty || storeCopy(for: app)?.store != nil
+    }
+
+    /// The bytes Activate copies into the store on the app's disk first.
+    func copyBytes(for app: ModelApp) -> UInt64 {
+        storeCopy(for: app)?.bytes ?? 0
+    }
+
+    /// The sentence that asks before such a copy.
+    func copyQuestion(for app: ModelApp) -> String {
+        let store = storeCopy(for: app)?.store ?? "the store"
+        return "Activating \(name) in \(app.title) first copies \(ByteFormat.string(copyBytes(for: app))) "
+            + "into the store \(store), on the disk of \(app.title)'s folder. The other copy stays."
+    }
+
     /// What placing this into an app does and what it costs, as the daemon
     /// decided it.
     func placeHelp(for app: ModelApp) -> String {
@@ -165,7 +189,12 @@ extension Variant: @retroactive Identifiable {
         case .nothing, nil:
             "Give \(app.title) the model as a clone of the stored copy. It takes no extra space."
         }
-        return isStored ? how : how + " First the \(ByteFormat.string(missingBytes)) of small files it lacks are fetched."
+        let fetched = isStored ? how : how + " First the \(ByteFormat.string(missingBytes)) of small files it lacks are fetched."
+        let copy = copyBytes(for: app)
+        guard copy > 0, let store = storeCopy(for: app)?.store else {
+            return fetched
+        }
+        return fetched + " Before that, \(ByteFormat.string(copy)) is copied into the store \(store), on the disk of its folder."
     }
 }
 
@@ -178,6 +207,9 @@ extension [Variant] {
         guard isEmpty || contains(where: { $0.usableApps.contains(app) }) else {
             return decisions.first?.reason ?? "Cannot use this model"
         }
+        if !isEmpty, !contains(where: { $0.hasStore(for: app) }) {
+            return "No store on the disk of its folder · add one under Storage"
+        }
         let untried = decisions.first { $0.state == .ready && $0.versionState == .untested }
         if let version = untried?.version {
             return "Does not have it · dedupd was not tested with version \(version)"
@@ -189,11 +221,17 @@ extension [Variant] {
 extension Job: @retroactive Identifiable {}
 
 extension Location: @retroactive Identifiable {
-    public var id: String { app?.name ?? (kind == .store ? "store" : "archive-\(name ?? path)") }
+    public var id: String {
+        switch kind {
+        case .store: name.map { "store-\($0)" } ?? "store"
+        case .archive: "archive-\(name ?? path)"
+        case .app: app?.name ?? path
+        }
+    }
 
     var title: String {
         switch kind {
-        case .store: "Store"
+        case .store: name ?? "Store"
         case .archive: name ?? "Archive"
         case .app: app?.title ?? "App"
         }
