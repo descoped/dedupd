@@ -156,6 +156,9 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
         (false, _) => store.home().clone(),
     };
 
+    // Taken once: the archives are asked about every file that is not here.
+    let attached = store.attached_archives();
+    let some_away = store.archives().iter().any(|a| !a.home.attached());
     let next = AtomicUsize::new(0);
     // Set when the archive disk goes away while it is being checked.
     let gone = std::sync::atomic::AtomicBool::new(false);
@@ -174,9 +177,11 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
                         let mut r = report.lock().expect("lock");
                         if archive && store.contains(&blob.sha256) {
                             r.not_backed_up += 1;
-                        } else if !archive && store.in_an_archive(&blob.sha256) {
+                        } else if !archive && crate::store::in_any(&attached, &blob.sha256) {
                             r.only_in_archive += 1;
-                        } else if !archive && store.archive().is_some_and(|a| !a.attached()) {
+                        } else if !archive && some_away {
+                            // Any archive whose disk is away may hold it:
+                            // a cold archive is detached most of the time.
                             r.archive_away += 1;
                         } else {
                             r.missing.push(blob.sha256.clone());
@@ -311,10 +316,11 @@ pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
         Ok(blob.size)
     };
     let mut freed = 0;
-    // An archive disk that is away: the orphans' local copies go, and
-    // their records stay, so a later `gc` with the disk attached still
+    // An archive whose disk is away: the orphans' local copies go, and
+    // their records stay, so a later `gc` with every disk attached still
     // knows of the copies there and removes them.
-    let archive_away = store.archive().is_some_and(|a| !a.attached());
+    let archives = store.archives();
+    let archive_away = archives.iter().any(|a| !a.home.attached());
     for blob in &plan.orphans {
         {
             // Asked again, and removed, under the database lock: a model
@@ -331,8 +337,10 @@ pub fn gc_apply(db: &Mutex<Db>, store: &Store, plan: &GcPlan) -> Result<u64> {
                 db.delete_blob(&blob.sha256)?;
             }
         }
-        if let Some(archive) = store.archive().filter(|_| !archive_away) {
-            let _ = fs::remove_file(archive.blob_path(&blob.sha256));
+        if !archive_away {
+            for archive in &archives {
+                let _ = fs::remove_file(archive.home.blob_path(&blob.sha256));
+            }
         }
     }
     // The local copy of a file to offload goes only once the archive disk's
@@ -494,6 +502,7 @@ pub fn unplace_plan(
     // Whether the model can leave Ollama whole: every file of it goes, is
     // gone already, or stays only for another model.
     let mut whole = true;
+    let attached = store.attached_archives();
     for p in placed {
         let reason = match Fingerprint::of(Path::new(&p.path)) {
             Err(_) => Some(Kept::Gone),
@@ -502,7 +511,7 @@ pub fn unplace_plan(
             Ok(_) if used_elsewhere.contains(p.derived_sha256.as_ref().unwrap_or(&p.sha256)) => {
                 Some(Kept::UsedByAnotherModel)
             }
-            Ok(_) if !store.contains(&p.sha256) && !store.in_an_archive(&p.sha256) => {
+            Ok(_) if !store.contains(&p.sha256) && !crate::store::in_any(&attached, &p.sha256) => {
                 Some(Kept::NoStoredCopy)
             }
             Ok(_) => None,

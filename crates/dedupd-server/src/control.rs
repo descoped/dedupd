@@ -565,6 +565,18 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
             }
         }
         (&Method::PUT, ["config", "archives"]) => {
+            // The move names its archive in the events; the list does not
+            // change under it.
+            if let Some(now) = server.moving.borrow().as_ref().filter(|m| m.running) {
+                return error(
+                    StatusCode::CONFLICT,
+                    format!(
+                        "dedupd is working on {} ({}); change the archives when that has finished",
+                        now.repo,
+                        now.kind.as_str()
+                    ),
+                );
+            }
             let wanted: ArchivesBody = match body(call) {
                 Ok(b) => b,
                 Err(refused) => return *refused,

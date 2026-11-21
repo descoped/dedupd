@@ -128,6 +128,7 @@ final class DedupdUITests: XCTestCase {
         element("archive-model", in: window).click()
         XCTAssertTrue(element("confirm-archive", in: window).exists, "nothing is archived before the owner has seen what it does")
         XCTAssertTrue(element("archive-steps", in: window).label.contains("The model is taken out of Bionic."))
+        XCTAssertTrue(element("archive-to", in: window).exists, "with two archives, the owner chooses")
         screenshot(window, "05-archive-a-model")
 
         element("confirm-archive", in: window).click()
@@ -212,7 +213,9 @@ final class DedupdUITests: XCTestCase {
         let window = launch("running", pane: "storage")
 
         XCTAssertTrue(element("location-store", in: window).exists)
-        XCTAssertTrue(element("location-archive", in: window).exists)
+        XCTAssertTrue(element("archive-Archive", in: window).exists, "each archive has its row")
+        XCTAssertTrue(element("archive-Drawer", in: window).exists)
+        XCTAssertTrue(element("add-archive", in: window).exists)
         XCTAssertTrue(element("sharing-saves", in: window).exists)
         XCTAssertTrue(element("check-result", in: window).exists)
         screenshot(window, "11-storage")
@@ -254,7 +257,7 @@ final class DedupdUITests: XCTestCase {
         XCTAssertTrue(text("Running, version \(appVersion)", in: window).waitForExistence(timeout: 5))
         XCTAssertEqual(element("tile-store", in: window).label, "Store, 275.72 GB, 61 files")
         XCTAssertEqual(element("tile-shared", in: window).label, "Shared with apps, 270.83 GB, not stored twice")
-        XCTAssertEqual(element("tile-archive", in: window).label, "Archive, Attached, dedupd")
+        XCTAssertEqual(element("tile-archive", in: window).label, "Archives, 2 of 2 attached, backup: Archive")
         XCTAssertTrue(labelled("Downloading, 41.94 MB of 106.07 MB", in: window).exists, "the download in flight")
         XCTAssertTrue(element("open-main", in: window).isEnabled)
         screenshot(window, "16-menu-panel")

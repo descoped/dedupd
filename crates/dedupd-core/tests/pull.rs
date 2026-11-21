@@ -501,6 +501,14 @@ async fn a_model_is_archived_to_the_archive_named_and_restored_from_it() {
         last[0].text
     );
 
+    // The drawer is unplugged, as a cold archive mostly is: a check of the
+    // store counts the model's files as not looked for, never as missing.
+    fs::rename(dir.path().join("drawer"), dir.path().join("drawer-away")).unwrap();
+    let check = dedupd_core::maintain::verify(&e.db, &e.store, false, 1).unwrap();
+    assert!(check.missing.is_empty(), "{:?}", check.missing);
+    assert_eq!(check.archive_away, plan.remove.len());
+    fs::rename(dir.path().join("drawer-away"), dir.path().join("drawer")).unwrap();
+
     let restore_plan = archive::restore_plan(&e.db, &e.store, REPO).unwrap();
     assert_eq!(restore_plan.archives, ["Drawer"]);
     archive::restore(&e.db, &e.store, REPO, &mut |_| {}).unwrap();

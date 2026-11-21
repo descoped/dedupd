@@ -132,11 +132,11 @@ impl Store {
         &self.home
     }
 
-    /// Whether an attached archive has the file.
+    /// Whether an attached archive has the file. Asks for the list of
+    /// archives on each call; a loop over many files takes
+    /// `attached_archives` once and asks `in_any`.
     pub fn in_an_archive(&self, sha256: &str) -> bool {
-        self.attached_archives()
-            .iter()
-            .any(|a| a.home.blob_path(sha256).is_file())
+        in_any(&self.attached_archives(), sha256)
     }
 
     /// The home of the backup archive, when one is configured; its disk
@@ -385,6 +385,11 @@ impl Store {
         }
         Ok(Added::Stored)
     }
+}
+
+/// Whether one of `archives` has the file.
+pub fn in_any(archives: &[Archive], sha256: &str) -> bool {
+    archives.iter().any(|a| a.home.blob_path(sha256).is_file())
 }
 
 /// A temp file named as a copy on its way into the store or the archive:

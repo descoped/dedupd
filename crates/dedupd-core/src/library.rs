@@ -244,6 +244,7 @@ pub fn model(
     for p in &placements {
         holders.entry(&p.sha256).or_default().insert(p.app);
     }
+    let attached = store.attached_archives();
     let mut revisions = Vec::new();
     let mut readme = None;
     for (row, entries) in rows.iter().zip(&listed) {
@@ -259,7 +260,9 @@ pub fn model(
                 git_oid: e.git_oid.clone(),
                 lfs: e.lfs_sha256.is_some(),
                 stored,
-                archived: sha.as_deref().is_some_and(|s| store.in_an_archive(s)),
+                archived: sha
+                    .as_deref()
+                    .is_some_and(|s| crate::store::in_any(&attached, s)),
                 apps: sha
                     .as_deref()
                     .and_then(|s| holders.get(s))

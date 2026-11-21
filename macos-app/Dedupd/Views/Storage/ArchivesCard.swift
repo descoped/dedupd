@@ -232,6 +232,7 @@ private struct RenameArchiveSheet: View {
                 .font(.headline)
             TextField("Name", text: $name)
                 .textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("rename-archive-name")
             if let problem {
                 FailureLabel(message: problem)
             }
@@ -249,6 +250,7 @@ private struct RenameArchiveSheet: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+                .accessibilityIdentifier("confirm-rename-archive")
             }
         }
         .padding(20)

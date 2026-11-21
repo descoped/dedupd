@@ -588,11 +588,13 @@ fn cmd_status(o: &Opened, json: bool) -> Result<()> {
         "  {} of app files share these blocks instead of being copies",
         human(s.shared_bytes)
     );
-    if let Some(a) = o.config.archive_home() {
+    for a in o.engine.store.archives() {
         println!(
-            "Archive: {}{}",
-            a.root().display(),
-            if a.attached() {
+            "Archive {}{}: {}{}",
+            a.name,
+            if a.backup { " (backup)" } else { "" },
+            a.home.root().display(),
+            if a.home.attached() {
                 ""
             } else {
                 " (disk not attached)"

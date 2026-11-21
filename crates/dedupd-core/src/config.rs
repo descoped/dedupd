@@ -257,6 +257,22 @@ impl Config {
         archives: &[NamedArchive],
         backup: Option<&std::path::Path>,
     ) -> Result<Self> {
+        // A folder that is an archive already stays as it is, whatever its
+        // name and whether its disk is attached: the app sends the whole
+        // list with every change. Only a newly picked folder gets the
+        // `dedupd` folder in it.
+        let known: Vec<PathBuf> = Self::load(home)?
+            .archive_list()
+            .into_iter()
+            .map(|a| a.home.root().to_path_buf())
+            .collect();
+        let folder = |picked: &std::path::Path| {
+            if known.iter().any(|k| k == picked) {
+                picked.to_path_buf()
+            } else {
+                archive_folder_for(picked)
+            }
+        };
         let mut list: Vec<NamedArchive> = Vec::new();
         for a in archives {
             if !a.path.is_absolute() {
@@ -265,7 +281,7 @@ impl Config {
                     a.path.display()
                 );
             }
-            let path = archive_folder_for(&a.path);
+            let path = folder(&a.path);
             let name = match a.name.trim() {
                 "" => default_archive_name(&path),
                 name => name.to_string(),
@@ -287,7 +303,7 @@ impl Config {
         let backup = match backup {
             None => None,
             Some(b) => {
-                let b = archive_folder_for(b);
+                let b = folder(b);
                 if !list.iter().any(|a| a.path == b) {
                     anyhow::bail!(
                         "the backup archive {} is not one of the archives",
@@ -452,6 +468,37 @@ mod tests {
         assert_eq!(
             std::fs::read_to_string(Config::path(&home)).unwrap(),
             "# mine\nverify_days = 30\n"
+        );
+
+        // An archive written before, whose folder is not named dedupd and
+        // whose disk is away, keeps its folder when the list is sent again.
+        let ext = std::path::PathBuf::from("/Volumes/Ext/models-backup");
+        std::fs::write(
+            Config::path(&home),
+            "archive = \"/Volumes/Ext/models-backup\"\n",
+        )
+        .unwrap();
+        let mut again: Vec<NamedArchive> = Config::load(&home)
+            .unwrap()
+            .archive_list()
+            .into_iter()
+            .map(|a| NamedArchive {
+                name: a.name,
+                path: a.home.root().to_path_buf(),
+            })
+            .collect();
+        again.push(NamedArchive {
+            name: "NAS".into(),
+            path: nas.clone(),
+        });
+        let kept = Config::set_archives(&home, &again, Some(&ext)).unwrap();
+        assert_eq!(kept.archive.as_ref(), Some(&ext));
+        assert_eq!(
+            kept.archive_list()
+                .iter()
+                .map(|a| (a.name.as_str(), a.home.root().to_path_buf()))
+                .collect::<Vec<_>>(),
+            [("Ext", ext.clone()), ("NAS", nas.clone())]
         );
     }
 
