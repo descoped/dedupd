@@ -231,8 +231,8 @@ struct FixtureAgent: AgentControl {
             running: installed,
             home: "/Users/example/.dedupd",
             program: "/Users/example/.dedupd/bin/dedupd",
-            installedVersion: installed ? "0.1.0" : nil,
-            version: "0.1.0",
+            installedVersion: installed ? AppVersion.current : nil,
+            version: AppVersion.current,
             log: "/Users/example/.dedupd/daemon.log"
         )
     }

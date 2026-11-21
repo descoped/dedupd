@@ -144,9 +144,14 @@ private struct AgentCard: View {
                 FactRow("Agent", agent.plist, monospaced: true)
                 FactRow("Runs", "\(agent.program)\(agent.installedVersion.map { " (version \($0))" } ?? " (not there)")", monospaced: true)
             }
-            FactRow("This app carries", "dedupd \(agent.version)")
+            FactRow("This app carries", AppVersion.titled(agent.version))
         }
         .accessibilityIdentifier("agent-state")
+        if let followed = service.followed {
+            Label(followed, systemImage: "checkmark.circle")
+                .foregroundStyle(.secondary)
+                .accessibilityIdentifier("agent-followed")
+        }
         if agent.needsUpdate {
             Label(agent.updateReason, systemImage: "arrow.up.circle")
             .foregroundStyle(.orange)

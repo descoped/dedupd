@@ -13,6 +13,9 @@ final class ServiceStore {
     private(set) var lastOutput: String?
     private(set) var settings: Loaded<DaemonSettings> = .idle
     private(set) var log: LogTail?
+    /// What the app did by itself to the installed daemon after it was
+    /// updated, in a sentence.
+    private(set) var followed: String?
 
     @ObservationIgnored private let daemon: DaemonStore
     @ObservationIgnored private let control: any AgentControl
@@ -100,6 +103,26 @@ final class ServiceStore {
             daemon.problem = describe(error)
         }
         await loadAgent()
+    }
+
+    /// After the app was updated, put the daemon it carries in place of the
+    /// older one installed, so the two are one version again. Only an older
+    /// daemon is replaced; another build of the same version is offered with
+    /// Update instead. An archive or restore that runs is waited for, because
+    /// the daemon starts again. Downloads continue after the restart.
+    func followAppVersion() async {
+        await loadAgent()
+        guard case let .ready(agent) = agent, agent.installed, let installed = agent.installedVersion,
+              AppVersion.isOlder(installed, than: agent.version) else {
+            return
+        }
+        while daemon.moving?.running == true {
+            try? await Task.sleep(for: .seconds(10))
+        }
+        await run(.install(setEnvironment: false))
+        if case let .ready(now) = self.agent, now.installedVersion == agent.version {
+            followed = "The daemon was updated from \(installed) to \(agent.version) together with this app."
+        }
     }
 
     /// Change settings in the daemon's config file. The daemon says whether

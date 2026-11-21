@@ -14,6 +14,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         center.addObserver(self, selector: #selector(windowAppeared), name: NSWindow.didBecomeKeyNotification, object: nil)
         center.addObserver(self, selector: #selector(windowClosing), name: NSWindow.willCloseNotification, object: nil)
         environment.daemon.start()
+        if environment.followsDaemon {
+            Task { await environment.service.followAppVersion() }
+        }
         if environment.options.showsPanelWindow {
             showPanelInWindow(environment)
         }

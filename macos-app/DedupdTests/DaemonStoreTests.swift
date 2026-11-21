@@ -22,8 +22,9 @@ struct DaemonStoreTests {
         let daemon = makeDaemon()
         await daemon.receive(.connected)
         #expect(daemon.connection == .running)
-        #expect(daemon.status?.version == "0.1.0")
-        #expect(daemon.summary == "Running, version 0.1.0")
+        // The canned daemon is the one this app carries: one version.
+        #expect(daemon.status?.version == AppVersion.current)
+        #expect(daemon.summary == "Running, version \(AppVersion.current)")
         #expect(daemon.revision == 1)
         #expect(daemon.menuBarSymbol == "square.stack.3d.up.fill")
     }

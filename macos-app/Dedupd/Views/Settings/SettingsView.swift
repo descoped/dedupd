@@ -7,6 +7,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(AppSettings.self) private var settings
     @Environment(DaemonStore.self) private var daemon
+    @Environment(UpdateStore.self) private var updates
     /// The address as it is being typed. It becomes the setting on Return
     /// and when the field is left, so the app does not try to reach every
     /// half-typed address.
@@ -83,6 +84,34 @@ struct SettingsView: View {
                 Text("Each app gets what it can use. The same choice is offered, and remembered, where you download.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+            Section("Updates") {
+                LabeledContent("This app", value: AppVersion.title)
+                    .accessibilityIdentifier("settings-app-version")
+                if updates.isAvailable {
+                    @Bindable var updates = updates
+                    Toggle("Check for updates automatically", isOn: $updates.checksAutomatically)
+                    HStack {
+                        Button("Check for Updates…") {
+                            updates.check()
+                        }
+                        .disabled(!updates.canCheck)
+                        Spacer()
+                        if let checked = updates.lastChecked {
+                            Text("Last checked \(checked.formatted(.relative(presentation: .named)))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    Text("A new version is offered with what changed, and installed only when you say so. "
+                        + "The daemon is brought to the same version with it.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("This copy does not check for updates; the released app from the download page does.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Section("General") {
                 Toggle("Tell me when a download is done or needs me", isOn: $settings.notifications)

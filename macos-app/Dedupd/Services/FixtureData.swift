@@ -75,7 +75,8 @@ enum FixtureData {
             return held.files == 0 ? nil : AppUsage(app: app, files: held.files, bytes: held.bytes)
         }
         return DaemonStatus(
-            version: "0.1.0",
+            // The canned daemon is the one this app carries.
+            version: AppVersion.current,
             home: "/Users/example/.dedupd",
             endpoint: "https://huggingface.co",
             archivePath: archiveFolder,
@@ -445,7 +446,7 @@ extension FixtureData {
     static let log = LogTail(
         path: "/Users/example/.dedupd/daemon.log",
         lines: [
-            "2026-11-11T08:00:01Z dedupd 0.1.0 listening on 127.0.0.1:8642 and localhost:8642",
+            "2026-11-11T08:00:01Z dedupd \(AppVersion.current) listening on 127.0.0.1:8642 and localhost:8642",
             "2026-11-11T08:00:01Z watching 3 app folders",
             "2026-11-11T08:05:02Z pass: nothing new",
             "2026-11-11T09:14:40Z download 7: bartowski/SmolLM2-135M-Instruct-GGUF:Q8_0 queued",

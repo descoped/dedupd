@@ -9,6 +9,9 @@ import XCTest
 @MainActor
 final class DedupdUITests: XCTestCase {
     private var app = XCUIApplication()
+    /// The version the app under test carries: this bundle is built from the
+    /// same Version.xcconfig.
+    private let appVersion = Bundle(for: DedupdUITests.self).infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
 
     override func setUp() async throws {
         continueAfterFailure = false
@@ -95,7 +98,7 @@ final class DedupdUITests: XCTestCase {
             element("model-mlx-community/SmolLM-135M-Instruct-4bit", in: window).exists,
             "a model no app has is listed too"
         )
-        XCTAssertEqual(element("sidebar-status", in: window).label, "Running, version 0.1.0")
+        XCTAssertEqual(element("sidebar-status", in: window).label, "Running, version \(appVersion)")
         screenshot(window, "01-library")
 
         model.click()
@@ -225,7 +228,7 @@ final class DedupdUITests: XCTestCase {
     func testDaemonScreenShowsTheServiceAndItsSettings() {
         let window = launch("running", pane: "daemon")
 
-        XCTAssertTrue(text("Running, version 0.1.0", in: window).waitForExistence(timeout: 5))
+        XCTAssertTrue(text("Running, version \(appVersion)", in: window).waitForExistence(timeout: 5))
         XCTAssertTrue(element("stop-agent", in: window).exists)
         XCTAssertTrue(element("uninstall-agent", in: window).exists)
         XCTAssertTrue(element("apply-settings", in: window).exists)
@@ -248,7 +251,7 @@ final class DedupdUITests: XCTestCase {
     func testMenuBarPanelShowsTheStateAtAGlance() {
         let window = launch(arguments: ["-uiTestFixture", "downloading", "-panelWindow", "YES"])
 
-        XCTAssertTrue(text("Running, version 0.1.0", in: window).waitForExistence(timeout: 5))
+        XCTAssertTrue(text("Running, version \(appVersion)", in: window).waitForExistence(timeout: 5))
         XCTAssertEqual(element("tile-store", in: window).label, "Store, 275.72 GB, 61 files")
         XCTAssertEqual(element("tile-shared", in: window).label, "Shared with apps, 270.83 GB, not stored twice")
         XCTAssertEqual(element("tile-archive", in: window).label, "Archive, Attached, dedupd")
