@@ -2,6 +2,22 @@
 
 Internal developer notes. This folder is not part of the documentation site (the site reads `docs/` only).
 Status: **design agreed in outline with the owner on 2026-11-21; not built.** Open points are listed at the end.
+
+Three tiers, confirmed by the owner on 2026-11-21:
+
+1. **Archive (cold).** Locations the owner defines. Archiving a model, the owner chooses which one.
+2. **Store (warm).** Restoring a model, the owner chooses into which store, on any volume.
+3. **App.** A model is activated or deactivated only in apps whose folder is on the same APFS volume as the store
+   that holds it. Apps on different volumes are fine at the same time, for example Ollama on an external SSD and
+   Bionic on the internal disk, each served by the store on its own volume.
+
+**The default that ships is today's configuration:**
+
+- one store, `~/.dedupd/store`, on the internal disk;
+- the apps' own folders where they keep them;
+- one archive, if one is set.
+
+More stores and archives are added by the owner; nothing changes for someone who adds none.
 What is built today is described in `docs/how-it-works.md` and `.claude/CLAUDE.md`.
 
 ## Words
@@ -129,7 +145,8 @@ Owner            App                 Daemon                        Store on the 
    no automatic copy, or archives marked to receive every download?
 2. **Downloads go to which store:** the store of the apps chosen, or a default store?
 3. **Moving a model between stores** (an app folder moved to another volume): one action, or deactivate, archive
-   and restore?
+   and restore? Related: a model wanted in apps on two volumes needs a copy in each volume's store (a clone cannot
+   cross volumes). Is that copy made by Activate on its own, or only by an explicit restore into that store?
 4. **Export and import:** is an archive on a removable disk enough (each model's record makes it readable on its
    own), or a single file as well?
 5. **A pin per model** (stays on one revision until moved): wanted?
