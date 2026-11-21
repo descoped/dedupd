@@ -6,8 +6,8 @@ import { useEffect } from 'react'
 // The address the site is published at; nowhere else is a visit counted
 const DOMAIN = 'dedupd.com'
 
-// Events go to Descoped's own relay
-const ENDPOINT = 'https://e.descoped.io/e'
+// Events go to a relay on the site's own domain
+const ENDPOINT = 'https://d.dedupd.com/e'
 
 let started = false
 
