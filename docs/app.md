@@ -130,4 +130,4 @@ the key it carries. A check sends GitHub the app's version and nothing about the
 
 After an update, the app brings the installed daemon to the same version by itself, and the Daemon screen says
 so. It waits while a model is being archived or restored; downloads continue after the daemon has started again.
-A build of the app made from the source does not check for updates.
+A debug build of the app made from the source does not check for updates.

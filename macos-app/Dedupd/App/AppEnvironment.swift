@@ -119,8 +119,15 @@ final class AppEnvironment {
         let isReal = options.fixture == nil && !options.isHostingUnitTests
         loginItem = LoginItemStore(item: isReal ? SystemLoginItem() : FixtureLoginItem())
         notifier = Notifier(isLive: options.fixture == nil && !options.isHostingUnitTests)
+        // A debug build is built from the source on this Mac and checks only
+        // when a trial names its own feed.
+        #if DEBUG
+        let checksUpdates = isReal && options.updateFeed != nil
+        #else
+        let checksUpdates = isReal
+        #endif
         updates = UpdateStore(
-            isAllowed: isReal,
+            isAllowed: checksUpdates,
             publicKey: Bundle.main.infoDictionary?["SUPublicEDKey"] as? String,
             feedOverride: options.updateFeed
         )

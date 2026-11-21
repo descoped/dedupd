@@ -5,9 +5,10 @@ import Sparkle
 /// New releases of the app: checks the release feed and installs a new
 /// version on the owner's yes, with Sparkle.
 ///
-/// Only a released copy checks: a build without the update key (a debug
-/// build), the canned daemon of the UI tests and the unit tests' host do not.
-/// A trial may name a feed on this Mac with `-updateFeed`.
+/// Only a release build that carries the update key checks. A debug build
+/// (as `just app-install` makes), the canned daemon of the UI tests and the
+/// unit tests' host do not; a debug build checks only when a trial names a
+/// feed on this Mac with `-updateFeed`.
 @MainActor
 @Observable
 final class UpdateStore {

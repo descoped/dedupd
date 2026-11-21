@@ -74,7 +74,14 @@ step() {
 }
 
 # A refusal of a real release; for a package that is only checked, a warning.
+# With --check every refusal is listed, and the check fails at its end.
+refused=no
 refuse() {
+  if [ "$check_only" = yes ]; then
+    echo "refused: $*" >&2
+    refused=yes
+    return 0
+  fi
   if [ "$notarise" = yes ]; then
     fail "$*"
   fi
@@ -119,7 +126,8 @@ notes=$app_dir/release-notes/$version.md
 # Local.xcconfig over it) and the private half in the keychain must match,
 # or installed copies could never take this release.
 xcodebuild -resolvePackageDependencies -scheme Dedupd -derivedDataPath "$app_dir/build/DerivedData" \
-  -project "$app_dir/Dedupd.xcodeproj" -quiet >/dev/null
+  -project "$app_dir/Dedupd.xcodeproj" -quiet >/dev/null ||
+  fail "Xcode could not fetch the Sparkle package (is this Mac online?)."
 public_key=$(xcodebuild -showBuildSettings -scheme Dedupd -configuration Release \
   -project "$app_dir/Dedupd.xcodeproj" 2>/dev/null | sed -n 's/^ *SPARKLE_PUBLIC_KEY = //p' | head -1)
 feed=yes
@@ -133,9 +141,13 @@ else
   echo "The app carries the update key, and its private half is in the keychain."
 fi
 if [ "$check_only" = yes ]; then
+  [ "$refused" = no ] || fail "the last version check refused $version for the reasons above."
   echo "The last version check passed for $version."
   exit 0
 fi
+# The feed is written only for a release that goes to people: a package
+# that is only checked must never leave a feed that points at its image.
+[ "$notarise" = yes ] || feed=no
 
 # Everything this needs is checked before the long build starts.
 security find-identity -v -p codesigning | grep -q "\"$identity:" ||
@@ -178,8 +190,11 @@ notarise() {
 }
 
 step "Archive a Release build"
+built_from=$(git rev-parse HEAD)
 rm -rf "$out"
 mkdir -p "$out"
+# publish.sh tags this commit, and refuses when HEAD has moved since.
+echo "$built_from" >"$out/commit"
 cd "$app_dir"
 xcodebuild -scheme Dedupd -destination 'generic/platform=macOS' -configuration Release \
   -derivedDataPath build/DerivedData -archivePath "$archive" -quiet archive
@@ -199,6 +214,10 @@ step "Sign the updater's helpers for release"
 # removed. The helpers, the framework and then the app are signed again,
 # inside out, as Sparkle's documentation says.
 sparkle_framework=$app/Contents/Frameworks/Sparkle.framework
+for service in SUEnableInstallerLauncherService SUEnableDownloaderService; do
+  [ "$(/usr/libexec/PlistBuddy -c "Print :$service" "$app/Contents/Info.plist" 2>/dev/null)" != true ] ||
+    fail "Info.plist turns on $service, which needs the XPC services this script removes."
+done
 rm -rf "$sparkle_framework/Versions/B/XPCServices" "$sparkle_framework/XPCServices"
 for helper in "$sparkle_framework/Versions/B/Autoupdate" "$sparkle_framework/Versions/B/Updater.app" "$sparkle_framework"; do
   codesign --force --sign "$identity" --timestamp --options runtime "$helper"
@@ -252,6 +271,7 @@ if [ "$feed" = yes ]; then
   # The feed of the latest release is the start, so it keeps the earlier
   # entries; the new entry points at this release's disk image.
   feed_dir=$out/feed
+  rm -rf "$feed_dir"
   mkdir -p "$feed_dir"
   if [ -n "$latest" ]; then
     gh release download "v$latest" --repo "$repo" --pattern appcast.xml --dir "$feed_dir" 2>/dev/null ||
@@ -264,6 +284,8 @@ if [ "$feed" = yes ]; then
   "$sparkle/sign_update" --verify "$feed_dir/appcast.xml"
   grep -q "<sparkle:version>$version</sparkle:version>" "$feed_dir/appcast.xml" ||
     fail "the feed has no entry for $version."
+  grep -q "url=\"https://github.com/$repo/releases/download/v$version/dedupd-$version.dmg\"" "$feed_dir/appcast.xml" ||
+    fail "the feed's entry for $version does not point at this release's disk image."
   cp "$feed_dir/appcast.xml" "$out/appcast.xml"
   echo "The feed is signed and offers $version: $out/appcast.xml"
 fi

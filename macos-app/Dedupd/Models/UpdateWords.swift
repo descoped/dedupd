@@ -14,7 +14,7 @@ enum UpdateWords {
     /// In Settings, for a copy that does not check: a build of its own, or the
     /// canned daemon of the tests. Every released copy checks: the release
     /// script refuses to make one without the update key.
-    static let notChecking = "This copy does not check for updates: it was built here, not released."
+    static let notChecking = "This copy does not check for updates: it is a build of its own, not a release."
 
     /// When the last check was made.
     static func lastChecked(_ date: Date, now: Date = .now) -> String {
