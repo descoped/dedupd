@@ -1,5 +1,6 @@
 {
   "archive": "/Users/example/trunk/dedupd",
+  "archive_name": "trunk",
   "bytes": 300008,
   "copy_bytes": 0,
   "copy_files": 0,

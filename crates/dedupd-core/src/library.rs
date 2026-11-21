@@ -203,7 +203,7 @@ pub fn model(
 ) -> Result<Option<ModelDetail>> {
     /// One file of a revision with the stored file it is, when known.
     type Listed = (TreeEntry, Option<String>);
-    let (name, model, placements, refs, rows, listed, variant_rows) = {
+    let (name, model, placements, refs, rows, listed, variant_rows, blobs) = {
         let db = crate::db::lock(db);
         let Some(row) = db.repo_rows(Some(repo))?.into_iter().next() else {
             return Ok(None);
@@ -227,14 +227,24 @@ pub fn model(
             .map(|files| files.iter().map(|(e, _)| e.clone()).collect())
             .unwrap_or_default();
         let variant_rows = variant_rows(&db, &name, &newest)?;
-        (name, model, placements, refs, rows, listed, variant_rows)
+        let blobs = db.repo_blobs(repo_id)?;
+        (
+            name,
+            model,
+            placements,
+            refs,
+            rows,
+            listed,
+            variant_rows,
+            blobs,
+        )
     };
 
     let mut holders: BTreeMap<&str, BTreeSet<App>> = BTreeMap::new();
     for p in &placements {
         holders.entry(&p.sha256).or_default().insert(p.app);
     }
-    let archive = store.archive().filter(|a| a.attached());
+    let attached = store.attached_archives();
     let mut revisions = Vec::new();
     let mut readme = None;
     for (row, entries) in rows.iter().zip(&listed) {
@@ -250,10 +260,9 @@ pub fn model(
                 git_oid: e.git_oid.clone(),
                 lfs: e.lfs_sha256.is_some(),
                 stored,
-                archived: match (sha, archive) {
-                    (Some(s), Some(a)) => a.blob_path(s).is_file(),
-                    _ => false,
-                },
+                archived: sha
+                    .as_deref()
+                    .is_some_and(|s| crate::store::in_any(&attached, s)),
                 apps: sha
                     .as_deref()
                     .and_then(|s| holders.get(s))
@@ -296,6 +305,7 @@ pub fn model(
         variants,
         info_json: rows.into_iter().next().map(|r| r.info_json),
         readme,
+        archives: crate::archive::archives_holding(store, &blobs),
     }))
 }
 
@@ -367,6 +377,8 @@ pub fn locations(db: &Mutex<Db>, store: &Store, dirs: &AppDirs) -> Result<Locati
         apps.push(Location {
             kind: LocationKind::App,
             app: Some(app),
+            name: None,
+            backup: false,
             path: path.to_string_lossy().into_owned(),
             present: path.is_dir(),
             files: totals.files,
@@ -381,6 +393,8 @@ pub fn locations(db: &Mutex<Db>, store: &Store, dirs: &AppDirs) -> Result<Locati
         store: Location {
             kind: LocationKind::Store,
             app: None,
+            name: None,
+            backup: false,
             path: store.home().store_dir().to_string_lossy().into_owned(),
             present: true,
             files,
@@ -388,19 +402,25 @@ pub fn locations(db: &Mutex<Db>, store: &Store, dirs: &AppDirs) -> Result<Locati
             shared_bytes: 0,
             models: repos,
         },
-        archive: store.archive().map(|a| {
-            let (files, bytes, models) = on_archive(a, &blobs, &by_repo);
-            Location {
-                kind: LocationKind::Archive,
-                app: None,
-                path: a.root().to_string_lossy().into_owned(),
-                present: a.attached(),
-                files,
-                bytes,
-                shared_bytes: 0,
-                models,
-            }
-        }),
+        archives: store
+            .archives()
+            .into_iter()
+            .map(|a| {
+                let (files, bytes, models) = on_archive(&a.home, &blobs, &by_repo);
+                Location {
+                    kind: LocationKind::Archive,
+                    app: None,
+                    name: Some(a.name),
+                    backup: a.backup,
+                    path: a.home.root().to_string_lossy().into_owned(),
+                    present: a.home.attached(),
+                    files,
+                    bytes,
+                    shared_bytes: 0,
+                    models,
+                }
+            })
+            .collect(),
         apps,
     })
 }

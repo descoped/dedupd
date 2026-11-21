@@ -336,6 +336,10 @@ pub struct ModelDetail {
     /// The provider's own description of the newest revision, as it sent it.
     pub info_json: Option<String>,
     pub readme: Option<String>,
+    /// The names of the attached archives that hold every file of the
+    /// model.
+    #[serde(default)]
+    pub archives: Vec<String>,
 }
 
 /// What a folder is to dedupd.
@@ -358,6 +362,13 @@ pub struct Location {
     pub kind: LocationKind,
     /// The app, for an app's folder.
     pub app: Option<App>,
+    /// The archive's name, for an archive.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// For an archive: it is the backup archive, which gets a copy of
+    /// every stored file.
+    #[serde(default)]
+    pub backup: bool,
     pub path: String,
     /// The folder is there. For the archive: the disk is attached.
     pub present: bool,
@@ -377,7 +388,8 @@ pub struct Locations {
     pub volume_total: u64,
     pub volume_free: u64,
     pub store: Location,
-    pub archive: Option<Location>,
+    /// Every archive, the backup archive first.
+    pub archives: Vec<Location>,
     pub apps: Vec<Location>,
 }
 

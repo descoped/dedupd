@@ -37,7 +37,7 @@ struct WordsTests {
     func storedWords() {
         #expect(variant(stored: 1000).storedWords(archived: false) == "stored")
         #expect(variant().storedWords(archived: false) == "not on this Mac")
-        #expect(variant().storedWords(archived: true) == "on the archive disk")
+        #expect(variant().storedWords(archived: true) == "in an archive")
         #expect(variant(stored: 400).storedWords(archived: false) == "400 B stored")
         #expect(variant(stored: 990, weights: true).storedWords(archived: false).hasPrefix("stored; 10 B of small files"))
         #expect(variant(stored: 1000, placed: [.bionic]).hubDetail == "1.00 KB · 4 files · in Bionic")

@@ -186,7 +186,7 @@ struct ScreenContractTests {
 
         let locations = try await client.locations(at: server.address)
         #expect(locations.store.title == "Store")
-        #expect(locations.archive == nil)
+        #expect(locations.archives.isEmpty)
         #expect(locations.apps.map(\.id) == ["bionic", "ollama", "hf"])
         #expect(locations.apps.map(\.present) == [true, false, true])
         #expect(locations.volumeTotal == 1_000_000_000_000)

@@ -64,8 +64,10 @@ enum FixtureData {
     /// The status of a daemon that holds this library. Every figure is
     /// added up from the models, as the real daemon adds up its records.
     static func status(
-        jobs: [Job] = [], library: [LibraryModel] = models, cleaned: Bool = false, offloaded: Bool = false
+        jobs: [Job] = [], library: [LibraryModel] = models, cleaned: Bool = false, offloaded: Bool = false,
+        archives: [ArchiveSetting] = archives
     ) -> DaemonStatus {
+        let backup = archives.first(where: \.backup)
         let active = jobs.filter { $0.state.isActive }
         let store = stored(of: library, cleaned: cleaned, offloaded: offloaded)
         // By the app's name, as the daemon lists them; an app with nothing
@@ -79,8 +81,9 @@ enum FixtureData {
             version: AppVersion.current,
             home: "/Users/example/.dedupd",
             endpoint: "https://huggingface.co",
-            archivePath: archiveFolder,
-            archiveAttached: true,
+            archivePath: backup?.path,
+            archiveAttached: backup?.attached ?? false,
+            archives: archives,
             storeFiles: store.files,
             storeBytes: store.bytes,
             // Every canned app file is a clone of the stored one.
@@ -292,7 +295,9 @@ extension FixtureData {
     /// A model in full, as the daemon holds it now: its files are where the
     /// model's own figures say (in the store unless it is archived, in the
     /// apps it lists).
-    static func detail(of model: LibraryModel, offloaded: Bool = false) -> ModelDetail {
+    static func detail(
+        of model: LibraryModel, offloaded: Bool = false, archives: [String] = ["Archive"]
+    ) -> ModelDetail {
         let repo = model.repo
         let here = !model.isArchived
         let away = weightsAway(model, offloaded: offloaded)
@@ -350,7 +355,8 @@ extension FixtureData {
             placements: placements,
             variants: variants(of: model, offloaded: offloaded),
             infoJson: #"{"id":"\#(repo)","pipeline_tag":"text-generation","private":false,"gated":false}"#,
-            readme: readme
+            readme: readme,
+            archives: archives
         )
     }
 
@@ -431,6 +437,7 @@ extension FixtureData {
         listen: address,
         hfEndpoint: "https://huggingface.co",
         archive: "/Volumes/Archive/dedupd",
+        archives: archives,
         bionicModels: "/Users/example/.lmstudio/models",
         ollamaModels: "/Users/example/.ollama/models",
         hfCache: "/Users/example/.cache/huggingface/hub",

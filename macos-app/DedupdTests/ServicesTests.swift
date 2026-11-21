@@ -97,9 +97,10 @@ struct ServicesTests {
             #expect(places.store.files == status.storeFiles && places.store.bytes == status.storeBytes)
             #expect(places.store.sharedBytes == 0, "as the daemon counts it")
             // The archive disk holds every model whole, an archived one too.
-            #expect(places.archive?.models == UInt64(models.count))
+            let backup = places.archives.first { $0.backup }
+            #expect(backup?.models == UInt64(models.count))
             let known = models.map(\.storedBytes).reduce(0, +)
-            #expect([known, known + FixtureData.orphanBytes].contains(places.archive?.bytes ?? 0))
+            #expect([known, known + FixtureData.orphanBytes].contains(backup?.bytes ?? 0))
             for place in places.apps {
                 let held = models.compactMap { model in model.apps.first { $0.app == place.app } }
                 #expect(place.files == held.map(\.files).reduce(0, +))
@@ -140,12 +141,12 @@ struct ServicesTests {
         // store again, in no app.
         let before = try await client.status(at: "a").storeBytes
         try await client.archive(FixtureData.qwen, at: "a")
-        #expect(try await client.activity(at: "a").first?.text == "Moved to the archive disk: 13 files, 16.08 GB freed on this Mac")
+        #expect(try await client.activity(at: "a").first?.text == "Archived to Archive: 13 files, 16.08 GB freed on this Mac")
         #expect(try await client.status(at: "a").storeBytes == before - 16_080_000_000)
         #expect(try await client.hubModel(FixtureData.qwen, at: "a").variants.allSatisfy { !$0.weightsStored })
         try await agree()
         try await client.restore(FixtureData.qwen, at: "a")
-        #expect(try await client.activity(at: "a").first?.text == "Brought back from the archive disk: 13 files, 16.08 GB")
+        #expect(try await client.activity(at: "a").first?.text == "Restored: 13 files, 16.08 GB")
         #expect(try await model(FixtureData.qwen).apps.isEmpty)
         #expect(try await client.status(at: "a").storeBytes == before)
 
@@ -190,7 +191,7 @@ struct ServicesTests {
 
         // Archiving it moves only what was left; then nothing can be offered.
         try await client.archive(FixtureData.smolMLX, at: "a")
-        #expect(try await client.activity(at: "a").first?.text == "Moved to the archive disk: 7 files, 10.00 KB freed on this Mac")
+        #expect(try await client.activity(at: "a").first?.text == "Archived to Archive: 7 files, 10.00 KB freed on this Mac")
         #expect(try await client.gcPlan(offload: true, at: "a").offload.isEmpty)
         try await client.restore(FixtureData.smolMLX, at: "a")
         #expect(try await client.model(FixtureData.smolMLX, at: "a").variants.allSatisfy(\.weightsStored))

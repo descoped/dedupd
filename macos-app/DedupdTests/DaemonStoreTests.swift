@@ -187,7 +187,7 @@ struct DaemonStoreTests {
             Issue.record("the scan did not finish: \(daemon.scanActivity)")
             return
         }
-        #expect(result.summary == "Adopted 2 files (4.92 GB), freed 4.92 GB by sharing 2 files, backed up 2 files to the archive disk.")
+        #expect(result.summary == "Adopted 2 files (4.92 GB), freed 4.92 GB by sharing 2 files, backed up 2 files to the backup archive.")
         #expect(daemon.revision == before + 1)
         daemon.dismissScan()
         #expect(daemon.scanActivity == .idle)

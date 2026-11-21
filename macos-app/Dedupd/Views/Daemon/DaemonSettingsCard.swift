@@ -94,10 +94,7 @@ struct DaemonSettingsCard: View {
 
     @ViewBuilder
     private func folders(_ draft: Binding<SettingsDraft>) -> some View {
-        heading("Folders", nil)
-        row("Archive disk") {
-            FolderField(path: draft.archive, prompt: "None: no second copy")
-        }
+        heading("App folders", "Archives are on the Storage screen.")
         row("Bionic and LM Studio") {
             FolderField(path: draft.bionic, prompt: "~/.lmstudio/models")
         }

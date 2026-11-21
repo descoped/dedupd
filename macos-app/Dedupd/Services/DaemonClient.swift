@@ -57,11 +57,12 @@ protocol DaemonClient: Sendable {
     /// `paths` limits the removal to the files the owner saw and agreed to.
     func unplace(_ repo: String, app: ModelApp, paths: [String]?, apply: Bool, at address: String) async throws
         -> UnplacePlan
-    /// What archiving a model would do: which apps it is taken out of and
+    /// What archiving a model to the archive named `to` would do (nil: the
+    /// backup archive, or the only one): which apps it is taken out of and
     /// how much leaves the internal disk.
-    func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan
+    func archivePlan(_ repo: String, to archive: String?, at address: String) async throws -> ArchivePlan
     /// Start archiving a model. Returns at once; the events tell how it goes.
-    func archive(_ repo: String, at address: String) async throws
+    func archive(_ repo: String, to archive: String?, at address: String) async throws
     /// Start copying an archived model back. Returns at once.
     func restore(_ repo: String, at address: String) async throws
 
@@ -72,8 +73,22 @@ protocol DaemonClient: Sendable {
 
     func settings(at address: String) async throws -> DaemonSettings
     func updateSettings(_ changes: [SettingChange], at address: String) async throws -> DaemonSettings
+    /// Set the whole list of archives and which one is the backup (by its
+    /// folder). It takes effect at once.
+    func setArchives(_ archives: [ArchiveEntry], backup: String?, at address: String) async throws -> DaemonSettings
     func logTail(lines: UInt32, at address: String) async throws -> LogTail
     func restart(at address: String) async throws
+}
+
+extension DaemonClient {
+    /// Archive to the backup archive, or the only one.
+    func archive(_ repo: String, at address: String) async throws {
+        try await archive(repo, to: nil, at: address)
+    }
+
+    func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan {
+        try await archivePlan(repo, to: nil, at: address)
+    }
 }
 
 /// Calls the daemon through the Rust client linked into the app.
@@ -175,12 +190,12 @@ struct LiveDaemonClient: DaemonClient {
         }
     }
 
-    func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan {
-        try await Self.blocking { try DedupdClient.archivePlan(address: address, repo: repo) }
+    func archivePlan(_ repo: String, to archive: String?, at address: String) async throws -> ArchivePlan {
+        try await Self.blocking { try DedupdClient.archivePlan(address: address, repo: repo, to: archive) }
     }
 
-    func archive(_ repo: String, at address: String) async throws {
-        try await Self.blocking { try DedupdClient.archiveModel(address: address, repo: repo) }
+    func archive(_ repo: String, to archive: String?, at address: String) async throws {
+        try await Self.blocking { try DedupdClient.archiveModel(address: address, repo: repo, to: archive) }
     }
 
     func restore(_ repo: String, at address: String) async throws {
@@ -209,6 +224,10 @@ struct LiveDaemonClient: DaemonClient {
 
     func updateSettings(_ changes: [SettingChange], at address: String) async throws -> DaemonSettings {
         try await Self.blocking { try DedupdClient.updateSettings(address: address, changes: changes) }
+    }
+
+    func setArchives(_ archives: [ArchiveEntry], backup: String?, at address: String) async throws -> DaemonSettings {
+        try await Self.blocking { try DedupdClient.setArchives(address: address, archives: archives, backup: backup) }
     }
 
     func logTail(lines: UInt32, at address: String) async throws -> LogTail {

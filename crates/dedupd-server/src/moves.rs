@@ -9,12 +9,21 @@ use dedupd_api::moves::{ModelMove, MoveKind};
 use dedupd_core::{activity, archive};
 use std::sync::Arc;
 
-/// The size of the files a move would deal with.
-fn bytes(server: &Server, kind: MoveKind, repo: &str) -> anyhow::Result<u64> {
+/// The size of the files a move would deal with, and for an archive the
+/// name of the archive it goes to.
+fn bytes(
+    server: &Server,
+    kind: MoveKind,
+    repo: &str,
+    to: Option<&str>,
+) -> anyhow::Result<(u64, Option<String>)> {
     let e = &server.engine;
     Ok(match kind {
-        MoveKind::Archive => archive::archive_plan(&e.db, &e.store, &e.dirs, repo)?.bytes,
-        MoveKind::Restore => archive::restore_plan(&e.db, &e.store, repo)?.bytes,
+        MoveKind::Archive => {
+            let plan = archive::archive_plan(&e.db, &e.store, &e.dirs, repo, to)?;
+            (plan.bytes, Some(plan.archive_name))
+        }
+        MoveKind::Restore => (archive::restore_plan(&e.db, &e.store, repo)?.bytes, None),
     })
 }
 
@@ -45,8 +54,9 @@ pub(crate) async fn start(
     server: &Arc<Server>,
     kind: MoveKind,
     repo: String,
+    to: Option<String>,
 ) -> Result<(), String> {
-    let started = begin(server, kind, repo.clone()).await;
+    let started = begin(server, kind, repo.clone(), to).await;
     if let Err(why) = &started
         && dedupd_core::names::is_repo_name(&repo)
     {
@@ -72,10 +82,15 @@ pub(crate) async fn start(
     started
 }
 
-async fn begin(server: &Arc<Server>, kind: MoveKind, repo: String) -> Result<(), String> {
-    let total = {
-        let (server, repo) = (server.clone(), repo.clone());
-        tokio::task::spawn_blocking(move || bytes(&server, kind, &repo))
+async fn begin(
+    server: &Arc<Server>,
+    kind: MoveKind,
+    repo: String,
+    to: Option<String>,
+) -> Result<(), String> {
+    let (total, archive_name) = {
+        let (server, repo, to) = (server.clone(), repo.clone(), to.clone());
+        tokio::task::spawn_blocking(move || bytes(&server, kind, &repo, to.as_deref()))
             .await
             .map_err(|e| e.to_string())?
             .map_err(|e| format!("{e:#}"))?
@@ -103,6 +118,7 @@ async fn begin(server: &Arc<Server>, kind: MoveKind, repo: String) -> Result<(),
         *state = Some(ModelMove {
             kind,
             repo: repo.clone(),
+            archive: archive_name.clone(),
             running: true,
             started_at: epoch(),
             finished_at: None,
@@ -134,8 +150,14 @@ async fn begin(server: &Arc<Server>, kind: MoveKind, repo: String) -> Result<(),
                 };
                 Ok(match kind {
                     MoveKind::Archive => {
-                        let r =
-                            archive::archive_apply(&e.db, &e.store, &e.dirs, &repo, &mut on_file)?;
+                        let r = archive::archive_apply(
+                            &e.db,
+                            &e.store,
+                            &e.dirs,
+                            &repo,
+                            archive_name.as_deref(),
+                            &mut on_file,
+                        )?;
                         (r.files, r.freed, r.keep.len() as u64)
                     }
                     MoveKind::Restore => {
@@ -181,6 +203,7 @@ mod tests {
         ModelMove {
             kind: MoveKind::Archive,
             repo: repo.into(),
+            archive: None,
             running,
             started_at: 0,
             finished_at: None,

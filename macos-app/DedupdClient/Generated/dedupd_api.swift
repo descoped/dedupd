@@ -908,15 +908,74 @@ public func FfiConverterTypeAppUsage_lower(_ value: AppUsage) -> RustBuffer {
 
 
 /**
+ * One archive in a request to change the list: its name (empty for the
+ * disk's name) and the folder picked for it.
+ */
+public struct ArchiveEntry: Equatable, Hashable {
+    public var name: String
+    public var path: String
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, path: String) {
+        self.name = name
+        self.path = path
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ArchiveEntry: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeArchiveEntry: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ArchiveEntry {
+        return
+            try ArchiveEntry(
+                name: FfiConverterString.read(from: &buf), 
+                path: FfiConverterString.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ArchiveEntry, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeArchiveEntry_lift(_ buf: RustBuffer) throws -> ArchiveEntry {
+    return try FfiConverterTypeArchiveEntry.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeArchiveEntry_lower(_ value: ArchiveEntry) -> RustBuffer {
+    return FfiConverterTypeArchiveEntry.lower(value)
+}
+
+
+/**
  * What archiving a model would do: take it out of every app, then remove
  * its files from the internal disk once the archive disk has a good copy.
  */
 public struct ArchivePlan: Equatable, Hashable {
     public var repo: String
     /**
-     * The archive folder.
+     * The archive's folder and its name.
      */
     public var archive: String
+    public var archiveName: String
     public var deactivate: [DeactivateStep]
     /**
      * Stored files that would leave the internal disk, and their size.
@@ -934,8 +993,8 @@ public struct ArchivePlan: Equatable, Hashable {
     // declare one manually.
     public init(repo: String, 
         /**
-         * The archive folder.
-         */archive: String, deactivate: [DeactivateStep], 
+         * The archive's folder and its name.
+         */archive: String, archiveName: String, deactivate: [DeactivateStep], 
         /**
          * Stored files that would leave the internal disk, and their size.
          */files: UInt64, bytes: UInt64, 
@@ -944,6 +1003,7 @@ public struct ArchivePlan: Equatable, Hashable {
          */copyFiles: UInt64, copyBytes: UInt64, keep: [KeptStored]) {
         self.repo = repo
         self.archive = archive
+        self.archiveName = archiveName
         self.deactivate = deactivate
         self.files = files
         self.bytes = bytes
@@ -970,6 +1030,7 @@ public struct FfiConverterTypeArchivePlan: FfiConverterRustBuffer {
             try ArchivePlan(
                 repo: FfiConverterString.read(from: &buf), 
                 archive: FfiConverterString.read(from: &buf), 
+                archiveName: FfiConverterString.read(from: &buf), 
                 deactivate: FfiConverterSequenceTypeDeactivateStep.read(from: &buf), 
                 files: FfiConverterUInt64.read(from: &buf), 
                 bytes: FfiConverterUInt64.read(from: &buf), 
@@ -982,6 +1043,7 @@ public struct FfiConverterTypeArchivePlan: FfiConverterRustBuffer {
     public static func write(_ value: ArchivePlan, into buf: inout [UInt8]) {
         FfiConverterString.write(value.repo, into: &buf)
         FfiConverterString.write(value.archive, into: &buf)
+        FfiConverterString.write(value.archiveName, into: &buf)
         FfiConverterSequenceTypeDeactivateStep.write(value.deactivate, into: &buf)
         FfiConverterUInt64.write(value.files, into: &buf)
         FfiConverterUInt64.write(value.bytes, into: &buf)
@@ -1004,6 +1066,95 @@ public func FfiConverterTypeArchivePlan_lift(_ buf: RustBuffer) throws -> Archiv
 #endif
 public func FfiConverterTypeArchivePlan_lower(_ value: ArchivePlan) -> RustBuffer {
     return FfiConverterTypeArchivePlan.lower(value)
+}
+
+
+/**
+ * One archive (a cold location) as the settings show it.
+ */
+public struct ArchiveSetting: Equatable, Hashable {
+    public var name: String
+    public var path: String
+    /**
+     * It gets a copy of every stored file (the backup).
+     */
+    public var backup: Bool
+    /**
+     * Its disk is attached.
+     */
+    public var attached: Bool
+    /**
+     * It is on the same disk as the store, so it is no protection against
+     * losing that disk.
+     */
+    public var sameDiskAsStore: Bool
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, path: String, 
+        /**
+         * It gets a copy of every stored file (the backup).
+         */backup: Bool, 
+        /**
+         * Its disk is attached.
+         */attached: Bool, 
+        /**
+         * It is on the same disk as the store, so it is no protection against
+         * losing that disk.
+         */sameDiskAsStore: Bool) {
+        self.name = name
+        self.path = path
+        self.backup = backup
+        self.attached = attached
+        self.sameDiskAsStore = sameDiskAsStore
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension ArchiveSetting: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeArchiveSetting: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> ArchiveSetting {
+        return
+            try ArchiveSetting(
+                name: FfiConverterString.read(from: &buf), 
+                path: FfiConverterString.read(from: &buf), 
+                backup: FfiConverterBool.read(from: &buf), 
+                attached: FfiConverterBool.read(from: &buf), 
+                sameDiskAsStore: FfiConverterBool.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: ArchiveSetting, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterBool.write(value.backup, into: &buf)
+        FfiConverterBool.write(value.attached, into: &buf)
+        FfiConverterBool.write(value.sameDiskAsStore, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeArchiveSetting_lift(_ buf: RustBuffer) throws -> ArchiveSetting {
+    return try FfiConverterTypeArchiveSetting.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeArchiveSetting_lower(_ value: ArchiveSetting) -> RustBuffer {
+    return FfiConverterTypeArchiveSetting.lower(value)
 }
 
 
@@ -1295,7 +1446,14 @@ public struct DaemonSettings: Equatable, Hashable {
     public var path: String
     public var listen: String
     public var hfEndpoint: String
+    /**
+     * The backup archive's folder (`archive` in the file).
+     */
     public var archive: String?
+    /**
+     * Every archive, the backup archive first.
+     */
+    public var archives: [ArchiveSetting]
     public var bionicModels: String
     public var ollamaModels: String
     public var hfCache: String
@@ -1312,7 +1470,13 @@ public struct DaemonSettings: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(path: String, listen: String, hfEndpoint: String, archive: String?, bionicModels: String, ollamaModels: String, hfCache: String, reclaim: Bool, setEnv: Bool, verifyDays: UInt64, scanInterval: UInt64, maxConnections: UInt64, speedLimit: UInt64, 
+    public init(path: String, listen: String, hfEndpoint: String, 
+        /**
+         * The backup archive's folder (`archive` in the file).
+         */archive: String?, 
+        /**
+         * Every archive, the backup archive first.
+         */archives: [ArchiveSetting], bionicModels: String, ollamaModels: String, hfCache: String, reclaim: Bool, setEnv: Bool, verifyDays: UInt64, scanInterval: UInt64, maxConnections: UInt64, speedLimit: UInt64, 
         /**
          * The running daemon still uses older settings.
          */restartNeeded: Bool) {
@@ -1320,6 +1484,7 @@ public struct DaemonSettings: Equatable, Hashable {
         self.listen = listen
         self.hfEndpoint = hfEndpoint
         self.archive = archive
+        self.archives = archives
         self.bionicModels = bionicModels
         self.ollamaModels = ollamaModels
         self.hfCache = hfCache
@@ -1352,6 +1517,7 @@ public struct FfiConverterTypeDaemonSettings: FfiConverterRustBuffer {
                 listen: FfiConverterString.read(from: &buf), 
                 hfEndpoint: FfiConverterString.read(from: &buf), 
                 archive: FfiConverterOptionString.read(from: &buf), 
+                archives: FfiConverterSequenceTypeArchiveSetting.read(from: &buf), 
                 bionicModels: FfiConverterString.read(from: &buf), 
                 ollamaModels: FfiConverterString.read(from: &buf), 
                 hfCache: FfiConverterString.read(from: &buf), 
@@ -1370,6 +1536,7 @@ public struct FfiConverterTypeDaemonSettings: FfiConverterRustBuffer {
         FfiConverterString.write(value.listen, into: &buf)
         FfiConverterString.write(value.hfEndpoint, into: &buf)
         FfiConverterOptionString.write(value.archive, into: &buf)
+        FfiConverterSequenceTypeArchiveSetting.write(value.archives, into: &buf)
         FfiConverterString.write(value.bionicModels, into: &buf)
         FfiConverterString.write(value.ollamaModels, into: &buf)
         FfiConverterString.write(value.hfCache, into: &buf)
@@ -1407,10 +1574,14 @@ public struct DaemonStatus: Equatable, Hashable {
     public var home: String
     public var endpoint: String
     /**
-     * The archive folder, when one is configured.
+     * The backup archive's folder, when one is configured.
      */
     public var archivePath: String?
     public var archiveAttached: Bool
+    /**
+     * Every archive, the backup archive first.
+     */
+    public var archives: [ArchiveSetting]
     public var storeFiles: UInt64
     public var storeBytes: UInt64
     /**
@@ -1430,8 +1601,11 @@ public struct DaemonStatus: Equatable, Hashable {
     // declare one manually.
     public init(version: String, home: String, endpoint: String, 
         /**
-         * The archive folder, when one is configured.
-         */archivePath: String?, archiveAttached: Bool, storeFiles: UInt64, storeBytes: UInt64, 
+         * The backup archive's folder, when one is configured.
+         */archivePath: String?, archiveAttached: Bool, 
+        /**
+         * Every archive, the backup archive first.
+         */archives: [ArchiveSetting], storeFiles: UInt64, storeBytes: UInt64, 
         /**
          * Bytes of app files that share disk blocks with the store.
          */sharedBytes: UInt64, 
@@ -1443,6 +1617,7 @@ public struct DaemonStatus: Equatable, Hashable {
         self.endpoint = endpoint
         self.archivePath = archivePath
         self.archiveAttached = archiveAttached
+        self.archives = archives
         self.storeFiles = storeFiles
         self.storeBytes = storeBytes
         self.sharedBytes = sharedBytes
@@ -1474,6 +1649,7 @@ public struct FfiConverterTypeDaemonStatus: FfiConverterRustBuffer {
                 endpoint: FfiConverterString.read(from: &buf), 
                 archivePath: FfiConverterOptionString.read(from: &buf), 
                 archiveAttached: FfiConverterBool.read(from: &buf), 
+                archives: FfiConverterSequenceTypeArchiveSetting.read(from: &buf), 
                 storeFiles: FfiConverterUInt64.read(from: &buf), 
                 storeBytes: FfiConverterUInt64.read(from: &buf), 
                 sharedBytes: FfiConverterUInt64.read(from: &buf), 
@@ -1491,6 +1667,7 @@ public struct FfiConverterTypeDaemonStatus: FfiConverterRustBuffer {
         FfiConverterString.write(value.endpoint, into: &buf)
         FfiConverterOptionString.write(value.archivePath, into: &buf)
         FfiConverterBool.write(value.archiveAttached, into: &buf)
+        FfiConverterSequenceTypeArchiveSetting.write(value.archives, into: &buf)
         FfiConverterUInt64.write(value.storeFiles, into: &buf)
         FfiConverterUInt64.write(value.storeBytes, into: &buf)
         FfiConverterUInt64.write(value.sharedBytes, into: &buf)
@@ -3126,6 +3303,15 @@ public struct Location: Equatable, Hashable {
      * The app, for an app's folder.
      */
     public var app: ModelApp?
+    /**
+     * The archive's name, for an archive.
+     */
+    public var name: String?
+    /**
+     * For an archive: it is the backup archive, which gets a copy of
+     * every stored file.
+     */
+    public var backup: Bool
     public var path: String
     /**
      * The folder is there. For the archive: the disk is attached.
@@ -3144,7 +3330,14 @@ public struct Location: Equatable, Hashable {
     public init(kind: LocationKind, 
         /**
          * The app, for an app's folder.
-         */app: ModelApp?, path: String, 
+         */app: ModelApp?, 
+        /**
+         * The archive's name, for an archive.
+         */name: String?, 
+        /**
+         * For an archive: it is the backup archive, which gets a copy of
+         * every stored file.
+         */backup: Bool, path: String, 
         /**
          * The folder is there. For the archive: the disk is attached.
          */present: Bool, files: UInt64, bytes: UInt64, 
@@ -3153,6 +3346,8 @@ public struct Location: Equatable, Hashable {
          */sharedBytes: UInt64, models: UInt64) {
         self.kind = kind
         self.app = app
+        self.name = name
+        self.backup = backup
         self.path = path
         self.present = present
         self.files = files
@@ -3179,6 +3374,8 @@ public struct FfiConverterTypeLocation: FfiConverterRustBuffer {
             try Location(
                 kind: FfiConverterTypeLocationKind.read(from: &buf), 
                 app: FfiConverterOptionTypeModelApp.read(from: &buf), 
+                name: FfiConverterOptionString.read(from: &buf), 
+                backup: FfiConverterBool.read(from: &buf), 
                 path: FfiConverterString.read(from: &buf), 
                 present: FfiConverterBool.read(from: &buf), 
                 files: FfiConverterUInt64.read(from: &buf), 
@@ -3191,6 +3388,8 @@ public struct FfiConverterTypeLocation: FfiConverterRustBuffer {
     public static func write(_ value: Location, into buf: inout [UInt8]) {
         FfiConverterTypeLocationKind.write(value.kind, into: &buf)
         FfiConverterOptionTypeModelApp.write(value.app, into: &buf)
+        FfiConverterOptionString.write(value.name, into: &buf)
+        FfiConverterBool.write(value.backup, into: &buf)
         FfiConverterString.write(value.path, into: &buf)
         FfiConverterBool.write(value.present, into: &buf)
         FfiConverterUInt64.write(value.files, into: &buf)
@@ -3227,7 +3426,10 @@ public struct Locations: Equatable, Hashable {
     public var volumeTotal: UInt64
     public var volumeFree: UInt64
     public var store: Location
-    public var archive: Location?
+    /**
+     * Every archive, the backup archive first.
+     */
+    public var archives: [Location]
     public var apps: [Location]
 
     // Default memberwise initializers are never public by default, so we
@@ -3235,11 +3437,14 @@ public struct Locations: Equatable, Hashable {
     public init(
         /**
          * The volume the store and the app folders are on.
-         */volumeTotal: UInt64, volumeFree: UInt64, store: Location, archive: Location?, apps: [Location]) {
+         */volumeTotal: UInt64, volumeFree: UInt64, store: Location, 
+        /**
+         * Every archive, the backup archive first.
+         */archives: [Location], apps: [Location]) {
         self.volumeTotal = volumeTotal
         self.volumeFree = volumeFree
         self.store = store
-        self.archive = archive
+        self.archives = archives
         self.apps = apps
     }
 
@@ -3262,7 +3467,7 @@ public struct FfiConverterTypeLocations: FfiConverterRustBuffer {
                 volumeTotal: FfiConverterUInt64.read(from: &buf), 
                 volumeFree: FfiConverterUInt64.read(from: &buf), 
                 store: FfiConverterTypeLocation.read(from: &buf), 
-                archive: FfiConverterOptionTypeLocation.read(from: &buf), 
+                archives: FfiConverterSequenceTypeLocation.read(from: &buf), 
                 apps: FfiConverterSequenceTypeLocation.read(from: &buf)
         )
     }
@@ -3271,7 +3476,7 @@ public struct FfiConverterTypeLocations: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.volumeTotal, into: &buf)
         FfiConverterUInt64.write(value.volumeFree, into: &buf)
         FfiConverterTypeLocation.write(value.store, into: &buf)
-        FfiConverterOptionTypeLocation.write(value.archive, into: &buf)
+        FfiConverterSequenceTypeLocation.write(value.archives, into: &buf)
         FfiConverterSequenceTypeLocation.write(value.apps, into: &buf)
     }
 }
@@ -3362,19 +3567,29 @@ public struct ModelDetail: Equatable, Hashable {
      */
     public var infoJson: String?
     public var readme: String?
+    /**
+     * The names of the attached archives that hold every file of the
+     * model.
+     */
+    public var archives: [String]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
     public init(model: LibraryModel, revisions: [Revision], placements: [Placement], variants: [Variant], 
         /**
          * The provider's own description of the newest revision, as it sent it.
-         */infoJson: String?, readme: String?) {
+         */infoJson: String?, readme: String?, 
+        /**
+         * The names of the attached archives that hold every file of the
+         * model.
+         */archives: [String]) {
         self.model = model
         self.revisions = revisions
         self.placements = placements
         self.variants = variants
         self.infoJson = infoJson
         self.readme = readme
+        self.archives = archives
     }
 
     
@@ -3398,7 +3613,8 @@ public struct FfiConverterTypeModelDetail: FfiConverterRustBuffer {
                 placements: FfiConverterSequenceTypePlacement.read(from: &buf), 
                 variants: FfiConverterSequenceTypeVariant.read(from: &buf), 
                 infoJson: FfiConverterOptionString.read(from: &buf), 
-                readme: FfiConverterOptionString.read(from: &buf)
+                readme: FfiConverterOptionString.read(from: &buf), 
+                archives: FfiConverterSequenceString.read(from: &buf)
         )
     }
 
@@ -3409,6 +3625,7 @@ public struct FfiConverterTypeModelDetail: FfiConverterRustBuffer {
         FfiConverterSequenceTypeVariant.write(value.variants, into: &buf)
         FfiConverterOptionString.write(value.infoJson, into: &buf)
         FfiConverterOptionString.write(value.readme, into: &buf)
+        FfiConverterSequenceString.write(value.archives, into: &buf)
     }
 }
 
@@ -3588,6 +3805,10 @@ public func FfiConverterTypeModelMeta_lower(_ value: ModelMeta) -> RustBuffer {
 public struct ModelMove: Equatable, Hashable {
     public var kind: MoveKind
     public var repo: String
+    /**
+     * For an archive: the name of the archive it goes to.
+     */
+    public var archive: String?
     public var running: Bool
     /**
      * Seconds since the epoch.
@@ -3614,7 +3835,10 @@ public struct ModelMove: Equatable, Hashable {
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(kind: MoveKind, repo: String, running: Bool, 
+    public init(kind: MoveKind, repo: String, 
+        /**
+         * For an archive: the name of the archive it goes to.
+         */archive: String?, running: Bool, 
         /**
          * Seconds since the epoch.
          */startedAt: Int64, finishedAt: Int64?, 
@@ -3632,6 +3856,7 @@ public struct ModelMove: Equatable, Hashable {
          */kept: UInt64, error: String?) {
         self.kind = kind
         self.repo = repo
+        self.archive = archive
         self.running = running
         self.startedAt = startedAt
         self.finishedAt = finishedAt
@@ -3660,6 +3885,7 @@ public struct FfiConverterTypeModelMove: FfiConverterRustBuffer {
             try ModelMove(
                 kind: FfiConverterTypeMoveKind.read(from: &buf), 
                 repo: FfiConverterString.read(from: &buf), 
+                archive: FfiConverterOptionString.read(from: &buf), 
                 running: FfiConverterBool.read(from: &buf), 
                 startedAt: FfiConverterInt64.read(from: &buf), 
                 finishedAt: FfiConverterOptionInt64.read(from: &buf), 
@@ -3674,6 +3900,7 @@ public struct FfiConverterTypeModelMove: FfiConverterRustBuffer {
     public static func write(_ value: ModelMove, into buf: inout [UInt8]) {
         FfiConverterTypeMoveKind.write(value.kind, into: &buf)
         FfiConverterString.write(value.repo, into: &buf)
+        FfiConverterOptionString.write(value.archive, into: &buf)
         FfiConverterBool.write(value.running, into: &buf)
         FfiConverterInt64.write(value.startedAt, into: &buf)
         FfiConverterOptionInt64.write(value.finishedAt, into: &buf)
@@ -4243,9 +4470,11 @@ public func FfiConverterTypeRepository_lower(_ value: Repository) -> RustBuffer 
 public struct RestorePlan: Equatable, Hashable {
     public var repo: String
     /**
-     * The archive folder.
+     * The folder of the first archive files come from, and the names of
+     * every archive they come from.
      */
     public var archive: String
+    public var archives: [String]
     public var files: UInt64
     public var bytes: UInt64
     /**
@@ -4261,8 +4490,9 @@ public struct RestorePlan: Equatable, Hashable {
     // declare one manually.
     public init(repo: String, 
         /**
-         * The archive folder.
-         */archive: String, files: UInt64, bytes: UInt64, 
+         * The folder of the first archive files come from, and the names of
+         * every archive they come from.
+         */archive: String, archives: [String], files: UInt64, bytes: UInt64, 
         /**
          * Free space on the internal disk.
          */free: UInt64, 
@@ -4271,6 +4501,7 @@ public struct RestorePlan: Equatable, Hashable {
          */missing: UInt64) {
         self.repo = repo
         self.archive = archive
+        self.archives = archives
         self.files = files
         self.bytes = bytes
         self.free = free
@@ -4295,6 +4526,7 @@ public struct FfiConverterTypeRestorePlan: FfiConverterRustBuffer {
             try RestorePlan(
                 repo: FfiConverterString.read(from: &buf), 
                 archive: FfiConverterString.read(from: &buf), 
+                archives: FfiConverterSequenceString.read(from: &buf), 
                 files: FfiConverterUInt64.read(from: &buf), 
                 bytes: FfiConverterUInt64.read(from: &buf), 
                 free: FfiConverterUInt64.read(from: &buf), 
@@ -4305,6 +4537,7 @@ public struct FfiConverterTypeRestorePlan: FfiConverterRustBuffer {
     public static func write(_ value: RestorePlan, into buf: inout [UInt8]) {
         FfiConverterString.write(value.repo, into: &buf)
         FfiConverterString.write(value.archive, into: &buf)
+        FfiConverterSequenceString.write(value.archives, into: &buf)
         FfiConverterUInt64.write(value.files, into: &buf)
         FfiConverterUInt64.write(value.bytes, into: &buf)
         FfiConverterUInt64.write(value.free, into: &buf)
@@ -7364,30 +7597,6 @@ fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
-fileprivate struct FfiConverterOptionTypeLocation: FfiConverterRustBuffer {
-    typealias SwiftType = Location?
-
-    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
-        guard let value = value else {
-            writeInt(&buf, Int8(0))
-            return
-        }
-        writeInt(&buf, Int8(1))
-        FfiConverterTypeLocation.write(value, into: &buf)
-    }
-
-    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
-        switch try readInt(&buf) as Int8 {
-        case 0: return nil
-        case 1: return try FfiConverterTypeLocation.read(from: &buf)
-        default: throw UniffiInternalError.unexpectedOptionalTag
-        }
-    }
-}
-
-#if swift(>=5.8)
-@_documentation(visibility: private)
-#endif
 fileprivate struct FfiConverterOptionTypeModelMove: FfiConverterRustBuffer {
     typealias SwiftType = ModelMove?
 
@@ -7527,6 +7736,31 @@ fileprivate struct FfiConverterSequenceTypeAppUsage: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeAppUsage.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeArchiveSetting: FfiConverterRustBuffer {
+    typealias SwiftType = [ArchiveSetting]
+
+    public static func write(_ value: [ArchiveSetting], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeArchiveSetting.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ArchiveSetting] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ArchiveSetting]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeArchiveSetting.read(from: &buf))
         }
         return seq
     }

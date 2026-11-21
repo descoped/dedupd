@@ -258,15 +258,21 @@ final class LibraryStore {
     /// The daemon moves one model at a time.
     var isMoving: Bool { daemon.moving?.running == true }
 
-    /// Ask what archiving the selected model would do.
-    func planArchive() async {
+    /// The archives a model can go to now: the attached ones, the backup
+    /// archive first.
+    var archiveChoices: [ArchiveSetting] { (daemon.status?.archives ?? []).filter(\.attached) }
+
+    /// Ask what archiving the selected model would do, to the archive named
+    /// `to` (nil: the backup archive, or else the first attached one).
+    func planArchive(to name: String? = nil) async {
         guard let model = selected else {
             return
         }
+        let target = name ?? archiveChoices.first(where: \.backup)?.name ?? archiveChoices.first?.name
         let plan = await daemon.attempt { client, address in
-            try await client.archivePlan(model.repo, at: address)
+            try await client.archivePlan(model.repo, to: target, at: address)
         }
-        if selected?.repo == model.repo {
+        if selected?.repo == model.repo, let plan {
             archiving = plan
         }
     }
@@ -278,7 +284,9 @@ final class LibraryStore {
             return
         }
         archiving = nil
-        await daemon.attempt { client, address in try await client.archive(plan.repo, at: address) }
+        await daemon.attempt { client, address in
+            try await client.archive(plan.repo, to: plan.archiveName, at: address)
+        }
     }
 
     /// Copy the selected model back from the archive disk.

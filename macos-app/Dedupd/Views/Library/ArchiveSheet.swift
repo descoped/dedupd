@@ -6,11 +6,33 @@ struct ArchiveSheet: View {
     let plan: ArchivePlan
 
     @Environment(LibraryStore.self) private var library
+    /// The archive the owner picked, while the plan for it is asked for.
+    /// Archive waits until the plan on screen is that archive's.
+    @State private var picked: String?
+
+    private var isReplanning: Bool { picked.map { $0 != plan.archiveName } ?? false }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(verbatim: "Archive \(plan.repo)?")
                 .font(.headline)
+            if library.archiveChoices.count > 1 {
+                Picker("Archive to", selection: Binding(
+                    get: { picked ?? plan.archiveName },
+                    set: { name in
+                        picked = name
+                        Task { await library.planArchive(to: name) }
+                    }
+                )) {
+                    ForEach(library.archiveChoices) { archive in
+                        Text(verbatim: archive.backup ? "\(archive.name) (backup)" : archive.name)
+                            .tag(archive.name)
+                    }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                .accessibilityIdentifier("archive-to")
+            }
             if plan.isEmpty {
                 Text("Nothing would change: no app has the model, and none of its files on the internal disk can go.")
                     .foregroundStyle(.secondary)
@@ -62,7 +84,7 @@ struct ArchiveSheet: View {
                 Button("Archive", role: .destructive) {
                     Task { await library.applyArchive() }
                 }
-                .disabled(plan.isEmpty)
+                .disabled(plan.isEmpty || isReplanning)
                 .accessibilityIdentifier("confirm-archive")
             }
         }

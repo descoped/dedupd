@@ -13,7 +13,7 @@ struct CleanUpCard: View {
             note: "Nothing is deleted by itself. This lists stored files that no model in the library and no app uses any more."
         ) {
             Toggle(
-                "Also list files that can be moved off this Mac: the archive disk has them and no app uses them",
+                "Also list files that can be moved off this Mac: the backup archive has them and no app uses them",
                 isOn: $storage.includeOffload
             )
             .onChange(of: storage.includeOffload) {
@@ -55,7 +55,7 @@ struct CleanUpCard: View {
                     }
                     if !plan.offload.isEmpty {
                         Text(
-                            "\(ByteFormat.files(UInt64(plan.offload.count))) that are also on the archive disk: "
+                            "\(ByteFormat.files(UInt64(plan.offload.count))) that are also in the backup archive: "
                                 + ByteFormat.string(plan.offloadBytes)
                         )
                     }
@@ -87,7 +87,7 @@ private struct CleanUpSheet: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 4) {
                     group("Used by nothing", plan.orphans)
-                    group("Also on the archive disk", plan.offload)
+                    group("Also in the backup archive", plan.offload)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(8)
@@ -194,12 +194,12 @@ struct StoreCheckCard: View {
                 .font(.callout)
                 .foregroundStyle(.secondary)
             if check.onlyInArchive > 0 {
-                Text("\(ByteFormat.files(check.onlyInArchive)) are on the archive disk only and are copied back when needed.")
+                Text("\(ByteFormat.files(check.onlyInArchive)) are in an archive only and are copied back when needed.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
             if check.archiveAway > 0 {
-                Text("\(ByteFormat.files(check.archiveAway)) are not on this Mac and were not looked for: the archive disk is away.")
+                Text("\(ByteFormat.files(check.archiveAway)) are not on this Mac and were not looked for: their archive's disk is away.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }

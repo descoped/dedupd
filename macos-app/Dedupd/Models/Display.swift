@@ -189,12 +189,12 @@ extension [Variant] {
 extension Job: @retroactive Identifiable {}
 
 extension Location: @retroactive Identifiable {
-    public var id: String { app?.name ?? (kind == .store ? "store" : "archive") }
+    public var id: String { app?.name ?? (kind == .store ? "store" : "archive-\(name ?? path)") }
 
     var title: String {
         switch kind {
         case .store: "Store"
-        case .archive: "Archive"
+        case .archive: name ?? "Archive"
         case .app: app?.title ?? "App"
         }
     }
@@ -262,7 +262,7 @@ extension ScanResult {
             parts.append("freed \(ByteFormat.string(reclaimedBytes)) by sharing \(ByteFormat.files(reclaimed))")
         }
         if archived > 0 {
-            parts.append("backed up \(ByteFormat.files(archived)) to the archive disk")
+            parts.append("backed up \(ByteFormat.files(archived)) to the backup archive")
         }
         if forgotten > 0 {
             parts.append("forgot \(ByteFormat.files(forgotten)) no longer there")

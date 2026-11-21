@@ -31,7 +31,7 @@ extension Revision {
 extension RevisionFile {
     /// Where the file is, and which apps have it.
     var note: String {
-        let place = stored ? "stored" : (archived ? "on the archive disk only" : "not downloaded")
+        let place = stored ? "stored" : (archived ? "in an archive only" : "not downloaded")
         let apps = apps.map(\.shortTitle)
         return apps.isEmpty ? place : "\(place) · in \(ListFormatter.localizedString(byJoining: apps))"
     }
@@ -107,7 +107,7 @@ extension Variant {
             return "stored; \(ByteFormat.string(missingBytes)) of small files are fetched when it is activated"
         }
         if archived {
-            return "on the archive disk"
+            return "in an archive"
         }
         return storedBytes == 0 ? "not on this Mac" : "\(ByteFormat.string(storedBytes)) stored"
     }

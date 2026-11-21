@@ -70,9 +70,12 @@ pub struct DaemonStatus {
     pub version: String,
     pub home: String,
     pub endpoint: String,
-    /// The archive folder, when one is configured.
+    /// The backup archive's folder, when one is configured.
     pub archive_path: Option<String>,
     pub archive_attached: bool,
+    /// Every archive, the backup archive first.
+    #[serde(default)]
+    pub archives: Vec<ArchiveSetting>,
     pub store_files: u64,
     pub store_bytes: u64,
     /// Bytes of app files that share disk blocks with the store.
@@ -129,6 +132,42 @@ pub struct StoreCheck {
     pub error: Option<String>,
 }
 
+/// One archive (a cold location) as the settings show it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct ArchiveSetting {
+    pub name: String,
+    pub path: String,
+    /// It gets a copy of every stored file (the backup).
+    pub backup: bool,
+    /// Its disk is attached.
+    pub attached: bool,
+    /// It is on the same disk as the store, so it is no protection against
+    /// losing that disk.
+    pub same_disk_as_store: bool,
+}
+
+/// One archive in a request to change the list: its name (empty for the
+/// disk's name) and the folder picked for it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct ArchiveEntry {
+    pub name: String,
+    pub path: String,
+}
+
+/// The request body of `PUT config/archives`: the whole list of archives,
+/// and the folder of the one that is the backup, if any. A picked folder
+/// becomes the `dedupd` folder in it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ArchivesBody {
+    pub archives: Vec<ArchiveEntry>,
+    #[serde(default)]
+    pub backup: Option<String>,
+}
+
 /// The settings in the daemon's config file, defaults filled in.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
@@ -136,7 +175,11 @@ pub struct DaemonSettings {
     pub path: String,
     pub listen: String,
     pub hf_endpoint: String,
+    /// The backup archive's folder (`archive` in the file).
     pub archive: Option<String>,
+    /// Every archive, the backup archive first.
+    #[serde(default)]
+    pub archives: Vec<ArchiveSetting>,
     pub bionic_models: String,
     pub ollama_models: String,
     pub hf_cache: String,

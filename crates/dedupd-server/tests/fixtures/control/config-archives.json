@@ -1,0 +1,32 @@
+{
+  "archive": "/Users/example/trunk/dedupd",
+  "archives": [
+    {
+      "attached": true,
+      "backup": true,
+      "name": "trunk",
+      "path": "/Users/example/trunk/dedupd",
+      "same_disk_as_store": true
+    },
+    {
+      "attached": true,
+      "backup": false,
+      "name": "Drawer",
+      "path": "/Users/example/drawer/dedupd",
+      "same_disk_as_store": true
+    }
+  ],
+  "bionic_models": "/Users/example/apps/lmstudio/models",
+  "hf_cache": "/Users/example/apps/huggingface/hub",
+  "hf_endpoint": "https://huggingface.co",
+  "listen": "127.0.0.1:8642",
+  "max_connections": 8,
+  "ollama_models": "/Users/example/apps/ollama/models",
+  "path": "/Users/example/home/config.toml",
+  "reclaim": true,
+  "restart_needed": false,
+  "scan_interval": 300,
+  "set_env": false,
+  "speed_limit": 0,
+  "verify_days": 7
+}

@@ -1,5 +1,5 @@
 use crate::clone::{clone_file, same_volume};
-use crate::paths::Home;
+use crate::paths::{Archive, Home};
 use anyhow::{Context, Result, bail};
 use std::fs;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -9,9 +9,10 @@ use std::path::{Path, PathBuf};
 /// read-only once inside.
 pub struct Store {
     home: Home,
-    /// A second copy of the store on another disk. Files missing here are
-    /// brought back from it on demand.
-    archive: Option<Home>,
+    /// The archives (cold locations), the backup archive first. Files
+    /// missing here are brought back from any of them on demand. Changed
+    /// while the daemon runs, when the owner adds or removes one.
+    archives: std::sync::RwLock<Vec<Archive>>,
     /// One restore from the archive at a time, on purpose: the archive is
     /// one external disk, and two copies read from it at once are slower
     /// than one after the other. A request for a small file therefore
@@ -75,17 +76,49 @@ impl Store {
             .with_context(|| format!("creating {}", home.tmp_dir().display()))?;
         Ok(Self {
             home: home.clone(),
-            archive: None,
+            archives: std::sync::RwLock::new(Vec::new()),
             restoring: std::sync::Mutex::new(()),
             copying: std::sync::Mutex::new(()),
         })
     }
 
-    /// Use `archive` as the second copy. It may be on a disk that is not
-    /// always attached; it is only looked at when a file is needed.
-    pub fn with_archive(mut self, archive: Option<Home>) -> Self {
-        self.archive = archive;
+    /// Use `archive` as the backup archive, named after its disk. It may be
+    /// on a disk that is not always attached; it is only looked at when a
+    /// file is needed.
+    pub fn with_archive(self, archive: Option<Home>) -> Self {
+        self.set_archives(
+            archive
+                .into_iter()
+                .map(|home| Archive {
+                    name: crate::paths::default_archive_name(home.root()),
+                    home,
+                    backup: true,
+                })
+                .collect(),
+        );
         self
+    }
+
+    /// Use these archives from now on (the backup archive first, as
+    /// `Config::archive_list` gives them).
+    pub fn set_archives(&self, archives: Vec<Archive>) {
+        *self.archives.write().unwrap_or_else(|e| e.into_inner()) = archives;
+    }
+
+    /// Every archive, the backup archive first; their disks may be detached.
+    pub fn archives(&self) -> Vec<Archive> {
+        self.archives
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    /// The archives whose disks are attached, the backup archive first.
+    pub fn attached_archives(&self) -> Vec<Archive> {
+        self.archives()
+            .into_iter()
+            .filter(|a| a.home.attached())
+            .collect()
     }
 
     /// The turn to copy a file to the archive disk; held while one is
@@ -99,10 +132,20 @@ impl Store {
         &self.home
     }
 
-    /// The home on the archive disk, when one is configured; its disk
+    /// Whether an attached archive has the file. Asks for the list of
+    /// archives on each call; a loop over many files takes
+    /// `attached_archives` once and asks `in_any`.
+    pub fn in_an_archive(&self, sha256: &str) -> bool {
+        in_any(&self.attached_archives(), sha256)
+    }
+
+    /// The home of the backup archive, when one is configured; its disk
     /// may be detached.
-    pub fn archive(&self) -> Option<&Home> {
-        self.archive.as_ref()
+    pub fn archive(&self) -> Option<Home> {
+        self.archives()
+            .into_iter()
+            .find(|a| a.backup)
+            .map(|a| a.home)
     }
 
     /// Bytes free on the volume the store is on.
@@ -154,29 +197,42 @@ impl Store {
         Ok(Added::Stored)
     }
 
-    /// Make sure the file is in the local store, copying it back from the
-    /// archive disk if that is the only place it is. Returns false when
-    /// neither has it.
+    /// Make sure the file is in the local store, copying it back from an
+    /// attached archive if that is the only place it is (the backup archive
+    /// first; a damaged copy is passed over for the next archive). Returns
+    /// false when none has it.
     pub fn ensure_local(&self, sha256: &str) -> Result<bool> {
         if self.contains(sha256) {
             return Ok(true);
         }
-        let Some(archive) = &self.archive else {
-            return Ok(false);
-        };
-        let src = archive.blob_path(sha256);
-        if !src.is_file() {
-            return Ok(false);
+        let mut damaged = None;
+        for archive in self.attached_archives() {
+            let src = archive.home.blob_path(sha256);
+            if !src.is_file() {
+                continue;
+            }
+            match self.copy_back(&src, sha256) {
+                Ok(()) => return Ok(true),
+                Err(e) => damaged = Some(e),
+            }
         }
+        match damaged {
+            Some(e) => Err(e),
+            None => Ok(false),
+        }
+    }
+
+    /// Copy one file back from an archive, hashing it as it is written.
+    fn copy_back(&self, src: &Path, sha256: &str) -> Result<()> {
         let _restoring = self.restoring.lock().unwrap_or_else(|e| e.into_inner());
         if self.contains(sha256) {
             // Another caller restored it while this one waited.
-            return Ok(true);
+            return Ok(());
         }
         let tmp = self.tmp_path(&format!("{sha256}.restore.{}", std::process::id()));
         let _ = fs::remove_file(&tmp);
         let result = (|| -> Result<()> {
-            let copied = crate::hash::copy_hashing(&src, &tmp)
+            let copied = crate::hash::copy_hashing(src, &tmp)
                 .with_context(|| format!("copying {} back from the archive", src.display()))?;
             if copied != sha256 {
                 bail!(
@@ -192,7 +248,7 @@ impl Store {
         if result.is_err() {
             let _ = fs::remove_file(&tmp);
         }
-        result.map(|()| true)
+        result
     }
 
     /// Remove the half-made copies a process that stopped part of the way
@@ -206,12 +262,7 @@ impl Store {
     pub fn clear_leftovers(&self) -> usize {
         let quiet_for = std::time::Duration::from_secs(600);
         let mut dirs = vec![self.home.tmp_dir()];
-        dirs.extend(
-            self.archive
-                .as_ref()
-                .filter(|a| a.attached())
-                .map(Home::tmp_dir),
-        );
+        dirs.extend(self.attached_archives().iter().map(|a| a.home.tmp_dir()));
         let mut removed = 0;
         for entry in dirs
             .iter()
@@ -334,6 +385,11 @@ impl Store {
         }
         Ok(Added::Stored)
     }
+}
+
+/// Whether one of `archives` has the file.
+pub fn in_any(archives: &[Archive], sha256: &str) -> bool {
+    archives.iter().any(|a| a.home.blob_path(sha256).is_file())
 }
 
 /// A temp file named as a copy on its way into the store or the archive:

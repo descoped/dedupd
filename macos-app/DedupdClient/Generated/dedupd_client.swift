@@ -1157,6 +1157,30 @@ public func FfiConverterTypeClientError_lower(_ value: ClientError) -> RustBuffe
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterOptionString: FfiConverterRustBuffer {
+    typealias SwiftType = String?
+
+    public static func write(_ value: SwiftType, into buf: inout [UInt8]) {
+        guard let value = value else {
+            writeInt(&buf, Int8(0))
+            return
+        }
+        writeInt(&buf, Int8(1))
+        FfiConverterString.write(value, into: &buf)
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> SwiftType {
+        switch try readInt(&buf) as Int8 {
+        case 0: return nil
+        case 1: return try FfiConverterString.read(from: &buf)
+        default: throw UniffiInternalError.unexpectedOptionalTag
+        }
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterOptionTypeModelMove: FfiConverterRustBuffer {
     typealias SwiftType = ModelMove?
 
@@ -1280,6 +1304,31 @@ fileprivate struct FfiConverterSequenceTypeAppInfo: FfiConverterRustBuffer {
 #if swift(>=5.8)
 @_documentation(visibility: private)
 #endif
+fileprivate struct FfiConverterSequenceTypeArchiveEntry: FfiConverterRustBuffer {
+    typealias SwiftType = [ArchiveEntry]
+
+    public static func write(_ value: [ArchiveEntry], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeArchiveEntry.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [ArchiveEntry] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [ArchiveEntry]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeArchiveEntry.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
 fileprivate struct FfiConverterSequenceTypeLibraryModel: FfiConverterRustBuffer {
     typealias SwiftType = [LibraryModel]
 
@@ -1390,15 +1439,17 @@ public func apps(address: String)throws  -> [AppInfo]  {
 })
 }
 /**
- * Archive `repo`: out of every app and off the internal disk, once the
- * archive disk holds a good copy of every file. Returns at once; the event
- * stream tells how it goes (`moving`).
+ * Archive `repo` to the archive named `to` (without it, the backup
+ * archive or the only one): out of every app and off the internal disk,
+ * once the archive holds a good copy of every file. Returns at once; the
+ * event stream tells how it goes (`moving`).
  */
-public func archiveModel(address: String, repo: String)throws   {try rustCallWithError(FfiConverterTypeClientError_lift) {
+public func archiveModel(address: String, repo: String, to: String?)throws   {try rustCallWithError(FfiConverterTypeClientError_lift) {
         uniffiCallStatus in
     uniffi_dedupd_client_fn_func_archive_model(
         FfiConverterString.lower(address),
-        FfiConverterString.lower(repo),uniffiCallStatus
+        FfiConverterString.lower(repo),
+        FfiConverterOptionString.lower(to),uniffiCallStatus
     )
 }
 }
@@ -1407,12 +1458,13 @@ public func archiveModel(address: String, repo: String)throws   {try rustCallWit
  * much leaves the internal disk. Nothing is changed. Refused when the
  * archive disk is not attached.
  */
-public func archivePlan(address: String, repo: String)throws  -> ArchivePlan  {
+public func archivePlan(address: String, repo: String, to: String?)throws  -> ArchivePlan  {
     return try  FfiConverterTypeArchivePlan_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
         uniffiCallStatus in
     uniffi_dedupd_client_fn_func_archive_plan(
         FfiConverterString.lower(address),
-        FfiConverterString.lower(repo),uniffiCallStatus
+        FfiConverterString.lower(repo),
+        FfiConverterOptionString.lower(to),uniffiCallStatus
     )
 })
 }
@@ -1723,6 +1775,21 @@ public func search(address: String, query: SearchQuery)throws  -> SearchPage  {
 })
 }
 /**
+ * Set the list of archives: every one, and the folder of the backup
+ * archive (or none). It takes effect at once. Refused, with nothing
+ * changed, when two have one name or one folder.
+ */
+public func setArchives(address: String, archives: [ArchiveEntry], backup: String?)throws  -> DaemonSettings  {
+    return try  FfiConverterTypeDaemonSettings_lift(try rustCallWithError(FfiConverterTypeClientError_lift) {
+        uniffiCallStatus in
+    uniffi_dedupd_client_fn_func_set_archives(
+        FfiConverterString.lower(address),
+        FfiConverterSequenceTypeArchiveEntry.lower(archives),
+        FfiConverterOptionString.lower(backup),uniffiCallStatus
+    )
+})
+}
+/**
  * Mark `repo` (`org/repo`) as a favorite, or no longer.
  */
 public func setFavorite(address: String, repo: String, favorite: Bool)throws  -> Favorites  {
@@ -1859,10 +1926,10 @@ private let initializationResult: InitializationResult = {
     if (uniffi_dedupd_client_checksum_func_apps() != 4438) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_func_archive_model() != 58074) {
+    if (uniffi_dedupd_client_checksum_func_archive_model() != 29083) {
         return InitializationResult.apiChecksumMismatch
     }
-    if (uniffi_dedupd_client_checksum_func_archive_plan() != 4403) {
+    if (uniffi_dedupd_client_checksum_func_archive_plan() != 36345) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_check_upstream() != 35364) {
@@ -1935,6 +2002,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_search() != 1763) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_dedupd_client_checksum_func_set_archives() != 1060) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_dedupd_client_checksum_func_set_favorite() != 53814) {

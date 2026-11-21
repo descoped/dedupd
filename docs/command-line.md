@@ -44,22 +44,22 @@ The apps are named `bionic`, `ollama` and `hf` (the Hugging Face cache; `mlx` an
 |---|---|
 | `dedupd status` | What the store holds and which app files it covers. `--json` for scripts. |
 | `dedupd apps` | How each app can be given a model. With `org/repo`: each app's answer for that stored model. |
-| `dedupd verify` | Hash every stored file and compare it with its name. `--archive` checks the copies on the archive disk. A file that is not on this Mac while the archive disk is away is reported as not looked for, not as missing. |
+| `dedupd verify` | Hash every stored file and compare it with its name. `--archive` checks the copies in the backup archive. A file that is not on this Mac while its archive's disk is away is reported as not looked for, not as missing. |
 
-## The archive disk
+## Archives
 
 | Command | What it does |
 |---|---|
-| `dedupd backup [dir]` | Copy the store and the database to the archive disk. |
-| `dedupd archive <repo>` | Move one model to the archive disk only: out of every app and off the internal disk. Lists what would happen; `--apply` does it. |
-| `dedupd restore <repo>` | Copy an archived model back. |
+| `dedupd backup [dir]` | Copy the store and the database to the backup archive. |
+| `dedupd archive <repo> [--to <name>]` | Move one model to an archive: out of every app and off the internal disk. Without `--to`, the backup archive, or the only archive there is. Lists what would happen; `--apply` does it. |
+| `dedupd restore <repo>` | Copy an archived model back from any attached archive that holds it. |
 
 ## Cleaning up
 
 | Command | What it does |
 |---|---|
 | `dedupd forget <repo>` | Say what dropping a model from the library would drop; `--apply` drops its records, so `gc` can remove its files. Refused while an app holds the model. |
-| `dedupd gc` | Show stored files nothing refers to; `--apply` removes them. `--offload` also lists local copies of files that are on the archive disk and in no app, each with the model and path it is kept under where a kept model lists it. |
+| `dedupd gc` | Show stored files nothing refers to; `--apply` removes them, here and in every archive (while an archive's disk is away, their records stay so a later `gc` removes the copies there). `--offload` also lists local copies of files that are in the backup archive and in no app, each with the model and path it is kept under where a kept model lists it. |
 
 ## The daemon
 
@@ -106,8 +106,15 @@ ollama pull --insecure 127.0.0.1:8642/org/repo:Q4_K_M
 `~/.dedupd/config.toml`. Every line is optional; the app's Daemon screen edits the same file.
 
 ```toml
-# A folder on another disk for the second copy of every stored file.
+# The backup archive: a folder on another disk that gets a copy of every stored file.
 archive = "/Volumes/Archive/dedupd"
+
+# More archives, each with a name. They hold only the models archived to them.
+# The backup archive may be listed too, which gives it its name. The app's Storage
+# screen edits this list, and the daemon uses a change at once.
+[[archives]]
+name = "Drawer"
+path = "/Volumes/Drawer/dedupd"
 
 # The address the daemon listens on. It must be an address of this Mac itself
 # (127.0.0.1, [::1] or localhost); any other is refused.

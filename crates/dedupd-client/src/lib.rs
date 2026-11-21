@@ -9,8 +9,8 @@ pub mod events;
 use dedupd_api::activity::{ActivityEntry, ActivityList};
 use dedupd_api::app::{App, AppInfo, AppList};
 use dedupd_api::daemon::{
-    DEFAULT_ADDRESS, DaemonSettings, DaemonStatus, Failure, LogTail, ScanResult, SettingChange,
-    Started, StoreCheck,
+    ArchiveEntry, ArchivesBody, DEFAULT_ADDRESS, DaemonSettings, DaemonStatus, Failure, LogTail,
+    ScanResult, SettingChange, Started, StoreCheck,
 };
 use dedupd_api::favorites::{FavoriteBody, Favorites};
 use dedupd_api::hub::{HubModel, SearchPage, SearchQuery};
@@ -404,24 +404,41 @@ pub fn unplace(
 /// much leaves the internal disk. Nothing is changed. Refused when the
 /// archive disk is not attached.
 #[uniffi::export]
-pub fn archive_plan(address: String, repo: String) -> Result<ArchivePlan, ClientError> {
-    let body = MoveBody { repo, apply: false };
+pub fn archive_plan(
+    address: String,
+    repo: String,
+    to: Option<String>,
+) -> Result<ArchivePlan, ClientError> {
+    let body = MoveBody {
+        repo,
+        to,
+        apply: false,
+    };
     post(&address, "archive", &body, PATIENT)
 }
 
-/// Archive `repo`: out of every app and off the internal disk, once the
-/// archive disk holds a good copy of every file. Returns at once; the event
-/// stream tells how it goes (`moving`).
+/// Archive `repo` to the archive named `to` (without it, the backup
+/// archive or the only one): out of every app and off the internal disk,
+/// once the archive holds a good copy of every file. Returns at once; the
+/// event stream tells how it goes (`moving`).
 #[uniffi::export]
-pub fn archive_model(address: String, repo: String) -> Result<(), ClientError> {
-    let body = MoveBody { repo, apply: true };
+pub fn archive_model(address: String, repo: String, to: Option<String>) -> Result<(), ClientError> {
+    let body = MoveBody {
+        repo,
+        to,
+        apply: true,
+    };
     post::<Started>(&address, "archive", &body, PATIENT).map(|_| ())
 }
 
 /// What restoring `repo` would copy back from the archive disk.
 #[uniffi::export]
 pub fn restore_plan(address: String, repo: String) -> Result<RestorePlan, ClientError> {
-    let body = MoveBody { repo, apply: false };
+    let body = MoveBody {
+        repo,
+        to: None,
+        apply: false,
+    };
     post(&address, "restore", &body, PATIENT)
 }
 
@@ -429,7 +446,11 @@ pub fn restore_plan(address: String, repo: String) -> Result<RestorePlan, Client
 /// stream tells how it goes (`moving`). The model is put into no app.
 #[uniffi::export]
 pub fn restore_model(address: String, repo: String) -> Result<(), ClientError> {
-    let body = MoveBody { repo, apply: true };
+    let body = MoveBody {
+        repo,
+        to: None,
+        apply: true,
+    };
     post::<Started>(&address, "restore", &body, PATIENT).map(|_| ())
 }
 
@@ -488,6 +509,22 @@ pub fn update_settings(
     let body: BTreeMap<_, _> = changes.into_iter().map(|c| (c.key, c.value)).collect();
     let sent = agent(Some(QUICK))
         .put(url(&address, "config")?)
+        .send_json(&body);
+    finish(&address, sent)
+}
+
+/// Set the list of archives: every one, and the folder of the backup
+/// archive (or none). It takes effect at once. Refused, with nothing
+/// changed, when two have one name or one folder.
+#[uniffi::export]
+pub fn set_archives(
+    address: String,
+    archives: Vec<ArchiveEntry>,
+    backup: Option<String>,
+) -> Result<DaemonSettings, ClientError> {
+    let body = ArchivesBody { archives, backup };
+    let sent = agent(Some(QUICK))
+        .put(url(&address, "config/archives")?)
         .send_json(&body);
     finish(&address, sent)
 }

@@ -7,8 +7,6 @@ import Foundation
 struct SettingsDraft: Equatable, Sendable {
     var listen: String
     var endpoint: String
-    /// The archive folder; empty for none.
-    var archive: String
     var bionic: String
     var ollama: String
     var hfCache: String
@@ -23,7 +21,6 @@ struct SettingsDraft: Equatable, Sendable {
     init(_ settings: DaemonSettings) {
         listen = settings.listen
         endpoint = settings.hfEndpoint
-        archive = settings.archive ?? ""
         bionic = settings.bionicModels
         ollama = settings.ollamaModels
         hfCache = settings.hfCache
@@ -57,7 +54,6 @@ struct SettingsDraft: Equatable, Sendable {
         }
         text(.listen, listen, original.listen)
         text(.hfEndpoint, endpoint, original.endpoint, emptyUnsets: true)
-        text(.archive, archive, original.archive, emptyUnsets: true)
         text(.bionicModels, bionic, original.bionic, emptyUnsets: true)
         text(.ollamaModels, ollama, original.ollama, emptyUnsets: true)
         text(.hfCache, hfCache, original.hfCache, emptyUnsets: true)

@@ -1,6 +1,6 @@
 ---
 title: "How it works"
-description: "The architecture of dedupd: requirements, the content-addressed store, clones, placement into each app and the archive disk."
+description: "The architecture of dedupd: requirements, the content-addressed store, clones, placement into each app and the archives."
 group: Guide
 order: 1
 ---
@@ -103,18 +103,22 @@ gets it through the daemon only while the source can confirm that the client has
 Every file is verified against its sha256 at download. The complete store is re-hashed on a schedule, every 7
 days by default (`verify_days`).
 
-## The archive disk
+## Archives
 
-With `archive` set in `config.toml` to a directory on another disk, dedupd maintains a second copy of every stored
-file there. This backup is updated at download and adoption, and whenever the disk is attached. A file missing from
-the store is restored from the archive on demand.
+An archive is a folder on another disk (an external SSD, a removable disk, a network volume) that holds copies of
+models. No application loads from an archive. There can be several, each with a name; the default name is the
+disk's. Each archive has the layout of a home folder, database included, so `dedupd --home <archive folder> status`
+reads it on any Mac.
 
-Archiving a single model is an explicit operation. dedupd reads every copy on the archive disk in full and
-rewrites any that is missing or damaged. Only then is the model deactivated in the applications and removed from
-the internal disk. Restore copies the files back; activating an archived model restores what the application
-needs.
+One archive can be the backup archive: it receives a copy of every stored file, at download and adoption and
+whenever its disk is attached. The other archives receive only the models archived to them.
 
-All other functions operate with the archive disk detached.
+Archiving a single model is an explicit operation, and the owner chooses the archive. dedupd reads every copy in
+that archive in full and rewrites any that is missing or damaged. Only then is the model deactivated in the
+applications and removed from the internal disk. Restore copies the files back from any attached archive that holds
+them; activating an archived model restores what the application needs.
+
+All other functions operate with the archives' disks detached.
 
 ## Terminology
 
@@ -124,8 +128,8 @@ All other functions operate with the archive disk detached.
 | deactivate | Remove it from an application; the stored copy remains |
 | adopt | Take a model an application already holds into the store |
 | reclaim | Replace an application's duplicate copy with a clone |
-| backup | The second copy on the archive disk |
-| archive | Move one model off the internal disk; the archive disk holds the only copy |
+| backup | The copy of every stored file in the backup archive |
+| archive | Move one model off the internal disk to an archive the owner chooses |
 | restore | Copy an archived model back |
 | forget | Remove a model from the library, so that `gc` can remove its files |
 

@@ -1,7 +1,8 @@
 # Storage locations: stores and archives
 
 Internal developer notes. This folder is not part of the documentation site (the site reads `docs/` only).
-Status: **design agreed in outline with the owner on 2026-11-21; not built.** Open points are listed at the end.
+Status: **design agreed in outline with the owner on 2026-11-21.** Phase 1 (several archives) is built; phases 2 and 3
+are not. Open points are listed at the end.
 
 Three tiers, confirmed by the owner on 2026-11-21:
 

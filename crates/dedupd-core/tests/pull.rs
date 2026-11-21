@@ -431,6 +431,97 @@ async fn links_and_manifests_stay_with_the_files_that_stay() {
     assert_eq!(blobs(), 3);
 }
 
+/// Two archives and no backup: an archive goes where the owner says, and a
+/// restore finds the files there.
+#[tokio::test]
+async fn a_model_is_archived_to_the_archive_named_and_restored_from_it() {
+    let up = upstream().await;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(dir.path().join("home"));
+    let apps = dir.path().join("apps");
+    let e = engine(&home, &up.server.uri(), &apps, None);
+    pull::pull(&e, &request(&App::ALL, false), &Arc::default())
+        .await
+        .unwrap();
+    let drawer = Home::new(dir.path().join("drawer/dedupd"));
+    let nas = Home::new(dir.path().join("nas/dedupd"));
+    fs::create_dir_all(dir.path().join("drawer")).unwrap();
+    let named = |name: &str, home: &Home| dedupd_core::paths::Archive {
+        name: name.into(),
+        home: home.clone(),
+        backup: false,
+    };
+    e.store
+        .set_archives(vec![named("Drawer", &drawer), named("NAS", &nas)]);
+
+    // Two archives and no backup: the owner says which.
+    let unsaid = archive::archive_plan(&e.db, &e.store, &e.dirs, REPO, None).unwrap_err();
+    assert!(unsaid.to_string().contains("Drawer, NAS"), "{unsaid}");
+    // The NAS is not attached (its parent folder is not there).
+    let away = archive::archive_plan(&e.db, &e.store, &e.dirs, REPO, Some("NAS")).unwrap_err();
+    assert!(away.to_string().contains("not attached"), "{away}");
+    let unknown = archive::archive_plan(&e.db, &e.store, &e.dirs, REPO, Some("Attic")).unwrap_err();
+    assert!(
+        unknown.to_string().contains("no archive named Attic"),
+        "{unknown}"
+    );
+
+    let plan = archive::archive_plan(&e.db, &e.store, &e.dirs, REPO, Some("drawer")).unwrap();
+    assert_eq!(plan.archive_name, "Drawer");
+    let report =
+        archive::archive_apply(&e.db, &e.store, &e.dirs, REPO, Some("drawer"), &mut |_| {})
+            .unwrap();
+    assert_eq!(report.archive, "Drawer");
+    assert!(report.files > 0 && report.database_copy_failed.is_none());
+    // The archive can be read on its own.
+    assert!(drawer.db_path().is_file());
+    for blob in &plan.remove {
+        assert!(drawer.blob_path(&blob.sha256).is_file());
+        assert!(!e.store.contains(&blob.sha256));
+    }
+    let installed = Installed::detect(&e.dirs);
+    let detail = library::model(&e.db, &e.store, REPO, &installed)
+        .unwrap()
+        .unwrap();
+    assert_eq!(detail.archives, ["Drawer"]);
+    let places = library::locations(&e.db, &e.store, &e.dirs)
+        .unwrap()
+        .archives;
+    assert_eq!(
+        places
+            .iter()
+            .map(|p| (p.name.as_deref(), p.present))
+            .collect::<Vec<_>>(),
+        [(Some("Drawer"), true), (Some("NAS"), false)]
+    );
+    let last = dedupd_core::activity::recent(&home, 1);
+    assert!(
+        last[0].text.starts_with("Archived to Drawer: "),
+        "{}",
+        last[0].text
+    );
+
+    // The drawer is unplugged, as a cold archive mostly is: a check of the
+    // store counts the model's files as not looked for, never as missing.
+    fs::rename(dir.path().join("drawer"), dir.path().join("drawer-away")).unwrap();
+    let check = dedupd_core::maintain::verify(&e.db, &e.store, false, 1).unwrap();
+    assert!(check.missing.is_empty(), "{:?}", check.missing);
+    assert_eq!(check.archive_away, plan.remove.len());
+    fs::rename(dir.path().join("drawer-away"), dir.path().join("drawer")).unwrap();
+
+    let restore_plan = archive::restore_plan(&e.db, &e.store, REPO).unwrap();
+    assert_eq!(restore_plan.archives, ["Drawer"]);
+    archive::restore(&e.db, &e.store, REPO, &mut |_| {}).unwrap();
+    for blob in &plan.remove {
+        assert!(e.store.contains(&blob.sha256));
+    }
+
+    // With the disk away, a restore names the archives.
+    e.store.set_archives(vec![named("NAS", &nas)]);
+    let none = archive::restore_plan(&e.db, &e.store, REPO).unwrap_err();
+    assert!(none.to_string().contains("(NAS)"), "{none}");
+}
+
 #[tokio::test]
 async fn a_model_is_archived_and_restored() {
     let up = upstream().await;
@@ -451,7 +542,7 @@ async fn a_model_is_archived_and_restored() {
             .model
             .archived_at
     };
-    let plan_of = || archive::archive_plan(&e.db, &e.store, &e.dirs, REPO);
+    let plan_of = || archive::archive_plan(&e.db, &e.store, &e.dirs, REPO, None);
 
     // Without the disk, and for a model dedupd does not have, nothing is planned.
     let refused = plan_of().unwrap_err().to_string();
@@ -460,14 +551,16 @@ async fn a_model_is_archived_and_restored() {
     let on_archive = |e: &dedupd_core::engine::Engine| {
         let place = library::locations(&e.db, &e.store, &e.dirs)
             .unwrap()
-            .archive
+            .archives
+            .into_iter()
+            .next()
             .unwrap();
         (place.present, place.files, place.bytes, place.models)
     };
     assert_eq!(on_archive(&e), (false, 0, 0, 0));
     fs::create_dir_all(&trunk).unwrap();
     assert_eq!(on_archive(&e), (true, 0, 0, 0));
-    assert!(archive::archive_plan(&e.db, &e.store, &e.dirs, "org/Nope").is_err());
+    assert!(archive::archive_plan(&e.db, &e.store, &e.dirs, "org/Nope", None).is_err());
 
     // The weights, the config, and the two small layers Ollama needs.
     let all: Vec<String> = [&up.weights, &up.config]
@@ -503,7 +596,8 @@ async fn a_model_is_archived_and_restored() {
 
     let mut checked = 0;
     let report =
-        archive::archive_apply(&e.db, &e.store, &e.dirs, REPO, &mut |n| checked += n).unwrap();
+        archive::archive_apply(&e.db, &e.store, &e.dirs, REPO, None, &mut |n| checked += n)
+            .unwrap();
     assert_eq!((report.files, report.copied), (4, 1));
     assert_eq!((report.freed, checked), (plan.bytes, plan.bytes));
     assert_eq!(report.deactivated.len(), 3);
@@ -601,14 +695,15 @@ async fn a_model_is_archived_and_restored() {
     let job = serde_json::json!({ "repo": REPO }).to_string();
     let id = e.db().insert_download("paused").unwrap();
     e.db().save_download(id, "paused", &job).unwrap();
-    let refused = archive::archive_apply(&e.db, &e.store, &e.dirs, REPO, &mut |_| {}).unwrap_err();
+    let refused =
+        archive::archive_apply(&e.db, &e.store, &e.dirs, REPO, None, &mut |_| {}).unwrap_err();
     assert!(
         format!("{refused:#}").contains("not finished"),
         "{refused:#}"
     );
     assert!(archived_at(&e).is_none());
     e.db().save_download(id, "cancelled", &job).unwrap();
-    let report = archive::archive_apply(&e.db, &e.store, &e.dirs, REPO, &mut |_| {}).unwrap();
+    let report = archive::archive_apply(&e.db, &e.store, &e.dirs, REPO, None, &mut |_| {}).unwrap();
     let mut kept: Vec<(&str, &str)> = report
         .keep
         .iter()

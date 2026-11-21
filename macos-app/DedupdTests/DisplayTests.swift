@@ -91,7 +91,7 @@ struct DisplayTests {
         model.apps = []
         model.archivedAt = 1_794_000_000
         #expect(model.health == .archived)
-        #expect(model.storedText == "4 files, 105.46 MB, on the archive disk only")
+        #expect(model.storedText == "4 files, 105.46 MB, in an archive only")
         model.upstream = .gone
         #expect(model.health == .goneUpstream, "that the provider lost the model matters more")
     }
@@ -99,7 +99,7 @@ struct DisplayTests {
     @Test("Archiving is described step by step before it is done")
     func archivePlan() {
         var plan = ArchivePlan(
-            repo: "org/Repo", archive: "/Volumes/Archive/dedupd",
+            repo: "org/Repo", archive: "/Volumes/Drawer/dedupd", archiveName: "Drawer",
             deactivate: [
                 DeactivateStep(app: .bionic, files: 13, bytes: 16_080_000_000, keep: []),
                 DeactivateStep(app: .ollama, files: 5, bytes: 16_100_000_000, keep: []),
@@ -108,14 +108,14 @@ struct DisplayTests {
         )
         #expect(plan.appList == "Bionic and Ollama")
         #expect(plan.steps == [
-            "Every copy on the archive disk is read in full and checked. Nothing is removed unless all are good.",
+            "Every copy in Drawer is read in full and checked. Nothing is removed unless all are good.",
             "The model is taken out of Bionic and Ollama.",
-            "13 files, 16.08 GB, are removed from the internal disk. "
-                + "The copy in /Volumes/Archive/dedupd stays, and Restore brings the model back.",
+            "13 files, 16.08 GB, are removed from this Mac. "
+                + "The copy in Drawer (/Volumes/Drawer/dedupd) stays, and Restore brings the model back.",
         ])
         plan.copyFiles = 2
         plan.copyBytes = 1_200_000_000
-        #expect(plan.steps.first == "2 files, 1.20 GB, are copied to the archive disk first, because it does not have them yet.")
+        #expect(plan.steps.first == "2 files, 1.20 GB, are copied to Drawer first, because it does not have them yet.")
         #expect(!plan.isEmpty)
         plan.deactivate = []
         plan.files = 0
@@ -125,11 +125,11 @@ struct DisplayTests {
     @Test("A model on its way to the archive disk or back says how far it is")
     func modelMove() {
         var move = ModelMove(
-            kind: .archive, repo: "org/Repo", running: true, startedAt: 1, finishedAt: nil,
+            kind: .archive, repo: "org/Repo", archive: "Drawer", running: true, startedAt: 1, finishedAt: nil,
             bytesTotal: 16_000_000_000, bytesDone: 4_000_000_000, files: 0, kept: 0, error: nil
         )
         #expect(move.fraction == 0.25)
-        #expect(move.statusText == "Archiving: 4.00 GB of 16.00 GB checked on the archive disk")
+        #expect(move.statusText == "Archiving to Drawer: 4.00 GB of 16.00 GB checked there")
         move.kind = .restore
         #expect(move.statusText == "Restoring: 4.00 GB of 16.00 GB copied back")
         move.running = false
@@ -144,14 +144,19 @@ struct DisplayTests {
     @Test("Archive and Restore say why they cannot be used")
     func archiveHelp() {
         var status = FixtureData.status()
-        #expect(ArchiveWords.archiveHelp(status).hasSuffix("The copy on /Volumes/Archive/dedupd stays."))
-        #expect(ArchiveWords.restoreHelp(status) == "Copy the model back from /Volumes/Archive/dedupd. Activate it in an app afterwards.")
-        status.archiveAttached = false
-        #expect(ArchiveWords.archiveHelp(status) == "The archive disk is not attached (/Volumes/Archive/dedupd)")
-        #expect(ArchiveWords.restoreHelp(status) == "The archive disk is not attached")
-        status.archivePath = nil
-        #expect(ArchiveWords.archiveHelp(status) == "Set an archive folder on the Daemon screen first")
-        #expect(ArchiveWords.archiveHelp(nil) == "Set an archive folder on the Daemon screen first")
+        #expect(ArchiveWords.canMove(status))
+        #expect(ArchiveWords.archiveHelp(status).hasSuffix("You choose the archive; its copy stays."))
+        // One disk away: the other archive still serves.
+        status.archives[0].attached = false
+        #expect(ArchiveWords.canMove(status))
+        status.archives[1].attached = false
+        #expect(!ArchiveWords.canMove(status))
+        #expect(ArchiveWords.archiveHelp(status) == "No archive's disk is attached (Archive and Drawer)")
+        #expect(ArchiveWords.restoreHelp(status) == "No archive's disk is attached (Archive and Drawer)")
+        status.archives = []
+        #expect(ArchiveWords.archiveHelp(status) == "Add an archive on the Storage screen first")
+        #expect(ArchiveWords.archiveHelp(nil) == "Add an archive on the Storage screen first")
+        #expect(ArchiveWords.restoreHelp(status) == "No archive is set")
     }
 
     @Test("A model's state against Hugging Face")
@@ -290,12 +295,12 @@ struct DisplayTests {
         var draft = original
         draft.maxConnections = 4
         draft.speedLimit = 2.5
-        draft.archive = ""
+        draft.hfCache = ""
         draft.reclaim = false
         draft.listen = " 127.0.0.1:9000 "
         #expect(draft.changes(from: original) == [
             SettingChange(key: .listen, value: .text(value: "127.0.0.1:9000")),
-            SettingChange(key: .archive, value: .unset),
+            SettingChange(key: .hfCache, value: .unset),
             SettingChange(key: .reclaim, value: .flag(value: false)),
             SettingChange(key: .maxConnections, value: .number(value: 4)),
             SettingChange(key: .speedLimit, value: .number(value: 2_500_000)),
