@@ -6,9 +6,10 @@
 DEVELOPMENT_TEAM = 4348AJW8CG
 
 // The public half of the key that signs every release for the updater
-// (Sparkle's EdDSA key). Not a secret. Empty until the owner has made the key
-// with Sparkle's generate_keys; the app then offers no update checks.
-SPARKLE_PUBLIC_KEY =
+// (Sparkle's EdDSA key). Not a secret. Its private half is in the owner's
+// keychain (made with Sparkle's generate_keys, 2026-11-21); while this is empty
+// the app offers no update checks.
+SPARKLE_PUBLIC_KEY = EgXhrAg8jNX+t1mkb0Va3rJJwjnPhjROlJIdlIATxtM=
 
 // Developer overrides — imports Local.xcconfig if it exists.
 // Local.xcconfig is gitignored; copy Local.xcconfig.example to create it.
