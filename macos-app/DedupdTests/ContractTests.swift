@@ -106,7 +106,7 @@ struct ContractTests {
         #expect(entries.map(\.action) == [.archive, .activate, .activate])
         #expect(entries.map(\.app) == [nil, .huggingFace, .bionic])
         #expect(entries.allSatisfy { $0.ok })
-        #expect(entries[0].text == "Moved to the archive disk: 2 files, 300.01 KB freed on this Mac")
+        #expect(entries[0].text == "Archived to trunk: 2 files, 300.01 KB freed on this Mac")
         #expect(entries[0].id > entries[1].id)
     }
 
@@ -168,12 +168,12 @@ struct ContractTests {
         let address = server.address
         let back = try await Self.blocking { try DedupdClient.restorePlan(address: address, repo: "org/Repo-GGUF") }
         #expect(back == RestorePlan(
-            repo: "org/Repo-GGUF", archive: "/Users/example/trunk/dedupd", files: 2, bytes: 300_008,
+            repo: "org/Repo-GGUF", archive: "/Users/example/trunk/dedupd", archives: ["trunk"], files: 2, bytes: 300_008,
             free: 400_000_000_000, missing: 0
         ))
         let move = try await Self.blocking { try DedupdClient.modelMove(address: address) }
         #expect(move == ModelMove(
-            kind: .archive, repo: "org/Repo-GGUF", running: false, startedAt: 1_700_000_000,
+            kind: .archive, repo: "org/Repo-GGUF", archive: "trunk", running: false, startedAt: 1_700_000_000,
             finishedAt: 1_700_000_000, bytesTotal: 300_008, bytesDone: 300_008, files: 2, kept: 0, error: nil
         ))
     }

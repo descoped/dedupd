@@ -11,6 +11,20 @@ struct ArchiveSheet: View {
         VStack(alignment: .leading, spacing: 12) {
             Text(verbatim: "Archive \(plan.repo)?")
                 .font(.headline)
+            if library.archiveChoices.count > 1 {
+                Picker("Archive to", selection: Binding(
+                    get: { plan.archiveName },
+                    set: { name in Task { await library.planArchive(to: name) } }
+                )) {
+                    ForEach(library.archiveChoices) { archive in
+                        Text(verbatim: archive.backup ? "\(archive.name) (backup)" : archive.name)
+                            .tag(archive.name)
+                    }
+                }
+                .pickerStyle(.menu)
+                .fixedSize()
+                .accessibilityIdentifier("archive-to")
+            }
             if plan.isEmpty {
                 Text("Nothing would change: no app has the model, and none of its files on the internal disk can go.")
                     .foregroundStyle(.secondary)

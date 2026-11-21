@@ -36,6 +36,18 @@ final class StorageStore {
     @ObservationIgnored private var generation = 0
     @ObservationIgnored private var planGeneration = 0
 
+    /// What the archive extension needs of the daemon.
+    var daemonStatus: DaemonStatus? { daemon.status }
+    var daemonClient: any DaemonClient { daemon.client }
+    var daemonAddress: String { daemon.address }
+
+    /// After the archive list changed: the status carries the list, and
+    /// the places count what each archive holds.
+    func refreshAfterArchives() async {
+        await daemon.refreshStatus()
+        await reload()
+    }
+
     init(daemon: DaemonStore) {
         self.daemon = daemon
         daemon.whenAddressChanges { [weak self] in self?.forgetDaemon() }

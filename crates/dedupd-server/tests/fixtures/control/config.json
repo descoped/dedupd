@@ -1,5 +1,6 @@
 {
   "archive": null,
+  "archives": [],
   "bionic_models": "/Users/example/apps/lmstudio/models",
   "hf_cache": "/Users/example/apps/huggingface/hub",
   "hf_endpoint": "https://huggingface.co",

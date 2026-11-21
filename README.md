@@ -26,8 +26,8 @@ with a command line and a macOS app.
   and fetches what it does not have.
 - **App profiles.** For each app, dedupd knows which formats it takes, by which method and at what cost in disk
   space, and states this before a model is activated.
-- **An archive disk.** Every stored file is also copied to a second disk. A single model can be archived off the
-  internal disk and restored later.
+- **Archives.** Copies of models on other disks, each with a name. One archive can receive a copy of every stored
+  file. A single model can be archived off the internal disk to the archive chosen, and restored later.
 - **Explicit removal only.** Cleaning up, deactivating and archiving list what they would remove and act only on
   confirmation.
 
@@ -81,7 +81,7 @@ just app-run                          # build the app and start it in the menu b
 
 ## Documentation
 
-- [How it works](docs/how-it-works.md): architecture, requirements, the store, clones, placement, the archive disk.
+- [How it works](docs/how-it-works.md): architecture, requirements, the store, clones, placement, the archives.
 - [The macOS app](docs/app.md): the screens, with pictures.
 - [The command line](docs/command-line.md): command reference and settings.
 - [Apps and formats](docs/apps.md): compatibility per application and format, cost in disk space, limitations.

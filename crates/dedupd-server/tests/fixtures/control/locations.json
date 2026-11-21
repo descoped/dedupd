@@ -2,42 +2,50 @@
   "apps": [
     {
       "app": "bionic",
+      "backup": false,
       "bytes": 300008,
       "files": 2,
       "kind": "app",
       "models": 1,
+      "name": null,
       "path": "/Users/example/apps/lmstudio/models",
       "present": true,
       "shared_bytes": 300008
     },
     {
       "app": "ollama",
+      "backup": false,
       "bytes": 0,
       "files": 0,
       "kind": "app",
       "models": 0,
+      "name": null,
       "path": "/Users/example/apps/ollama/models",
       "present": false,
       "shared_bytes": 0
     },
     {
       "app": "hf",
+      "backup": false,
       "bytes": 300008,
       "files": 2,
       "kind": "app",
       "models": 1,
+      "name": null,
       "path": "/Users/example/apps/huggingface/hub",
       "present": true,
       "shared_bytes": 300008
     }
   ],
-  "archive": null,
+  "archives": [],
   "store": {
     "app": null,
+    "backup": false,
     "bytes": 300008,
     "files": 2,
     "kind": "store",
     "models": 1,
+    "name": null,
     "path": "/Users/example/home/store",
     "present": true,
     "shared_bytes": 0

@@ -127,13 +127,20 @@ pub fn cmd_deactivate(o: &Opened, repo: &str, apps: Vec<App>, apply: bool) -> Re
 /// command working beside it cannot. Follows the move to its end and
 /// returns it; `None` when no daemon answers for this home, and the
 /// command then does the work itself.
-fn moved_by_daemon(o: &Opened, repo: &str, kind: MoveKind) -> Result<Option<ModelMove>> {
+fn moved_by_daemon(
+    o: &Opened,
+    repo: &str,
+    kind: MoveKind,
+    to: Option<&str>,
+) -> Result<Option<ModelMove>> {
     let Some(address) = crate::daemon_here(o) else {
         return Ok(None);
     };
     eprintln!("The dedupd daemon is running; it does the work.");
     match kind {
-        MoveKind::Archive => dedupd_client::archive_model(address.clone(), repo.to_string())?,
+        MoveKind::Archive => {
+            dedupd_client::archive_model(address.clone(), repo.to_string(), to.map(str::to_string))?
+        }
         MoveKind::Restore => dedupd_client::restore_model(address.clone(), repo.to_string())?,
     }
     let mut said = String::new();
@@ -158,11 +165,14 @@ fn moved_by_daemon(o: &Opened, repo: &str, kind: MoveKind) -> Result<Option<Mode
     }
 }
 
-pub fn cmd_archive(o: &Opened, repo: &str, apply: bool) -> Result<()> {
+pub fn cmd_archive(o: &Opened, repo: &str, to: Option<&str>, apply: bool) -> Result<()> {
     let e = &o.engine;
-    let plan = archive::archive_plan(&e.db, &e.store, &e.dirs, repo)?;
+    let plan = archive::archive_plan(&e.db, &e.store, &e.dirs, repo, to)?;
     if !apply {
-        println!("Archiving {repo} to {} would:", plan.archive);
+        println!(
+            "Archiving {repo} to the archive {} ({}) would:",
+            plan.archive_name, plan.archive
+        );
         if plan.deactivate.is_empty() {
             println!("Take it out of no app: it is in none.");
         }
@@ -193,7 +203,7 @@ pub fn cmd_archive(o: &Opened, repo: &str, apply: bool) -> Result<()> {
         return Ok(());
     }
     let started = Instant::now();
-    if let Some(done) = moved_by_daemon(o, repo, MoveKind::Archive)? {
+    if let Some(done) = moved_by_daemon(o, repo, MoveKind::Archive, Some(&plan.archive_name))? {
         println!(
             "Archived {repo} in {:.0?}: {} files left the internal disk{}.",
             started.elapsed(),
@@ -207,8 +217,14 @@ pub fn cmd_archive(o: &Opened, repo: &str, apply: bool) -> Result<()> {
         return Ok(());
     }
     let mut said = Progress::new("checked", plan.bytes);
-    let report =
-        archive::archive_apply(&e.db, &e.store, &e.dirs, repo, &mut |size| said.add(size))?;
+    let report = archive::archive_apply(
+        &e.db,
+        &e.store,
+        &e.dirs,
+        repo,
+        Some(&plan.archive_name),
+        &mut |size| said.add(size),
+    )?;
     for (app, files) in &report.deactivated {
         println!("{app}: removed {files} files.");
     }
@@ -249,7 +265,7 @@ pub fn cmd_restore(o: &Opened, repo: &str) -> Result<()> {
         plan.archive
     );
     let started = Instant::now();
-    if let Some(done) = moved_by_daemon(o, repo, MoveKind::Restore)? {
+    if let Some(done) = moved_by_daemon(o, repo, MoveKind::Restore, None)? {
         println!(
             "Restored {repo} in {:.0?}: {} files. It is in no app yet; `dedupd activate <model> --for <apps>` puts it into one.",
             started.elapsed(),

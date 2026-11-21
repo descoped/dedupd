@@ -75,6 +75,10 @@ impl MoveKind {
 #[serde(deny_unknown_fields)]
 pub struct MoveBody {
     pub repo: String,
+    /// For an archive: the name of the archive to move it to. Without it,
+    /// the backup archive, or the only archive there is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to: Option<String>,
     /// Do it. Without it the answer only says what would happen.
     #[serde(default)]
     pub apply: bool,
@@ -87,6 +91,9 @@ pub struct MoveBody {
 pub struct ModelMove {
     pub kind: MoveKind,
     pub repo: String,
+    /// For an archive: the name of the archive it goes to.
+    #[serde(default)]
+    pub archive: Option<String>,
     pub running: bool,
     /// Seconds since the epoch.
     pub started_at: i64,
@@ -130,8 +137,9 @@ pub struct KeptStored {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct ArchivePlan {
     pub repo: String,
-    /// The archive folder.
+    /// The archive's folder and its name.
     pub archive: String,
+    pub archive_name: String,
     pub deactivate: Vec<DeactivateStep>,
     /// Stored files that would leave the internal disk, and their size.
     pub files: u64,
@@ -147,8 +155,10 @@ pub struct ArchivePlan {
 #[cfg_attr(feature = "ffi", derive(uniffi::Record))]
 pub struct RestorePlan {
     pub repo: String,
-    /// The archive folder.
+    /// The folder of the first archive files come from, and the names of
+    /// every archive they come from.
     pub archive: String,
+    pub archives: Vec<String>,
     pub files: u64,
     pub bytes: u64,
     /// Free space on the internal disk.

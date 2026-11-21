@@ -98,6 +98,9 @@ private struct LibraryOverview: View {
                 if model.revisions > 1 { FactRow("Revisions kept", "\(model.revisions)") }
                 if let fetched = model.fetchedAt { FactRow("Added", TimeFormat.full(TimeFormat.date(epoch: fetched))) }
                 if let archived = model.archivedAt { FactRow("Archived", TimeFormat.full(TimeFormat.date(epoch: archived))) }
+                if let held = detail?.archives, !held.isEmpty {
+                    FactRow("Copies in", ListFormatter.localizedString(byJoining: held))
+                }
                 if let checked = model.checkedAt { FactRow("Last checked", TimeFormat.relative(TimeFormat.date(epoch: checked))) }
                 if !model.ollamaTags.isEmpty { FactRow("Ollama tags", model.ollamaTags.joined(separator: ", ")) }
             }
@@ -154,14 +157,14 @@ private struct LibraryOverview: View {
                 Button("Restore") {
                     Task { await library.restore() }
                 }
-                .disabled(library.isMoving || daemon.status?.archiveAttached != true)
+                .disabled(library.isMoving || !ArchiveWords.canMove(daemon.status))
                 .help(ArchiveWords.restoreHelp(daemon.status))
                 .accessibilityIdentifier("restore-model")
             } else {
                 Button("Archive…") {
                     Task { await library.planArchive() }
                 }
-                .disabled(library.isMoving || daemon.status?.archiveAttached != true)
+                .disabled(library.isMoving || !ArchiveWords.canMove(daemon.status))
                 .help(ArchiveWords.archiveHelp(daemon.status))
                 .accessibilityIdentifier("archive-model")
             }

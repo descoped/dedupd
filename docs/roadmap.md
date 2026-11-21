@@ -24,7 +24,7 @@ and has no dates. A platform, an app or a model source is called supported only 
 | Downloads | A durable queue with pause, resume and retry, paced by what the source allows. Every file is verified against its sha256 |
 | Front ends | The Hugging Face Hub API and the Ollama registry API on a local port, answered from the store, also when the source is unreachable |
 | App profiles | The rules for each app as data: which formats it takes, by which method, at what cost in disk space, and with which versions of the app this was tested |
-| Archive disk | A second copy of every stored file on another disk; archive and restore for one model |
+| Archives | Several named archives on other disks; one can receive a copy of every stored file; archive one model to the archive chosen, and restore it |
 | Interfaces | The `dedupd` command, a control API, and a macOS app |
 | Distribution | A notarised disk image of the app, which carries the command and the daemon |
 
@@ -32,10 +32,11 @@ and has no dates. A platform, an app or a model source is called supported only 
 
 | Order | Item | Summary |
 |---|---|---|
-| 1 | Catalogue | Families, editions and placements, so that the right edition is chosen for each app and machine |
-| 2 | ModelScope | A second model source |
-| 3 | Linux | The daemon and the command line on Linux, for machines with NVIDIA GPUs |
-| 4 | More apps | Further app profiles, one at a time |
+| 1 | Several stores | A store on each APFS volume that holds app folders, for example an external SSD for Ollama beside the internal disk for Bionic. A model is activated only in apps on the volume of the store that holds it; restore asks which store |
+| 2 | Catalogue | Families, editions and placements, so that the right edition is chosen for each app and machine |
+| 3 | ModelScope | A second model source |
+| 4 | Linux | The daemon and the command line on Linux, for machines with NVIDIA GPUs |
+| 5 | More apps | Further app profiles, one at a time |
 
 Each item is usable on its own.
 
@@ -101,7 +102,7 @@ File system support:
 | ext4 | Not supported. ext4 does not provide file cloning |
 
 ext4 is the default of the Ubuntu installer. On such a system the models require a dedicated Btrfs or XFS volume
-that holds the dedupd store and the apps' model directories. The archive disk is exempt: it holds plain copies and
+that holds the dedupd store and the apps' model directories. The archives are exempt: they hold plain copies and
 can use any file system.
 
 ### Implementation
@@ -132,8 +133,8 @@ The intended operation on a Linux system:
    in the named apps.
 5. Tools that use the Hugging Face Hub API are pointed at the daemon with `HF_ENDPOINT`; Ollama can pull through
    the daemon's registry endpoint. Both are answered from the store.
-6. With an archive disk configured, every stored file is also copied there, and single models can be archived and
-   restored.
+6. With an archive configured, every stored file can be copied there, and single models can be archived to the
+   archive chosen and restored.
 
 ### Apps and model editions on NVIDIA hardware
 

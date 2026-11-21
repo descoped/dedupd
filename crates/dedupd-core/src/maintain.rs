@@ -174,11 +174,7 @@ pub fn verify(db: &Mutex<Db>, store: &Store, archive: bool, jobs: usize) -> Resu
                         let mut r = report.lock().expect("lock");
                         if archive && store.contains(&blob.sha256) {
                             r.not_backed_up += 1;
-                        } else if !archive
-                            && store
-                                .archive()
-                                .is_some_and(|a| a.blob_path(&blob.sha256).is_file())
-                        {
+                        } else if !archive && store.in_an_archive(&blob.sha256) {
                             r.only_in_archive += 1;
                         } else if !archive && store.archive().is_some_and(|a| !a.attached()) {
                             r.archive_away += 1;
@@ -490,7 +486,6 @@ pub fn unplace_plan(
         .into_iter()
         .filter(|p| p.repo == repo && p.app == app.as_str())
         .collect();
-    let archive = store.archive().filter(|a| a.attached());
     // Ollama keeps one file per layer, and models share layers.
     let (manifests, used_elsewhere) = match app {
         App::Ollama => ollama_use(dirs, repo)?,
@@ -507,10 +502,7 @@ pub fn unplace_plan(
             Ok(_) if used_elsewhere.contains(p.derived_sha256.as_ref().unwrap_or(&p.sha256)) => {
                 Some(Kept::UsedByAnotherModel)
             }
-            Ok(_)
-                if !store.contains(&p.sha256)
-                    && !archive.is_some_and(|a| a.blob_path(&p.sha256).is_file()) =>
-            {
+            Ok(_) if !store.contains(&p.sha256) && !store.in_an_archive(&p.sha256) => {
                 Some(Kept::NoStoredCopy)
             }
             Ok(_) => None,

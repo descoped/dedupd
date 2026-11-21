@@ -67,14 +67,14 @@ pub fn partly_deactivated(app: App, removed: usize, left: usize) -> String {
 }
 
 pub const ARCHIVED: &str = "Moved to the archive disk";
-pub const RESTORED: &str = "Brought back from the archive disk";
+pub const RESTORED: &str = "Restored";
 
-/// What an archive did: the files that left the internal disk, the space
-/// that freed, and the stored files that stayed because something else
-/// uses them.
-pub fn archived(files: u64, freed: u64, kept: usize) -> String {
+/// What an archive did: the archive it went to, the files that left the
+/// internal disk, the space that freed, and the stored files that stayed
+/// because something else uses them.
+pub fn archived(archive: &str, files: u64, freed: u64, kept: usize) -> String {
     let mut text = format!(
-        "{ARCHIVED}: {}, {} freed on this Mac",
+        "Archived to {archive}: {}, {} freed on this Mac",
         count(files, "file"),
         crate::human(freed)
     );
@@ -400,18 +400,15 @@ mod tests {
     #[test]
     fn an_archive_and_a_restore_say_what_they_moved() {
         assert_eq!(
-            archived(12, 6_860_000_000, 0),
-            "Moved to the archive disk: 12 files, 6.86 GB freed on this Mac"
+            archived("Drawer", 12, 6_860_000_000, 0),
+            "Archived to Drawer: 12 files, 6.86 GB freed on this Mac"
         );
         assert_eq!(
-            archived(1, 2_000, 1),
-            "Moved to the archive disk: 1 file, 2.00 KB freed on this Mac; \
+            archived("Drawer", 1, 2_000, 1),
+            "Archived to Drawer: 1 file, 2.00 KB freed on this Mac; \
              1 file stayed, because another model or an app uses it"
         );
-        assert_eq!(
-            restored(3, 1_500_000),
-            "Brought back from the archive disk: 3 files, 1.50 MB"
-        );
+        assert_eq!(restored(3, 1_500_000), "Restored: 3 files, 1.50 MB");
     }
 
     #[test]

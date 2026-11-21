@@ -56,13 +56,15 @@ extension FixtureDaemonClient {
         return plan
     }
 
-    func archivePlan(_ repo: String, at address: String) async throws -> ArchivePlan {
+    func archivePlan(_ repo: String, to name: String?, at address: String) async throws -> ArchivePlan {
         try await answering(address)
         let model = try held(repo)
+        let chosen = try FixtureData.archiveTo(name, in: archives)
         let left = leaving(model)
         return ArchivePlan(
             repo: repo,
-            archive: FixtureData.archiveFolder,
+            archive: chosen.path,
+            archiveName: chosen.name,
             deactivate: model.apps.map { DeactivateStep(app: $0.app, files: $0.files, bytes: $0.bytes, keep: []) },
             files: left.files,
             bytes: left.bytes,
@@ -74,16 +76,20 @@ extension FixtureDaemonClient {
 
     /// The canned daemon moves a model at once: out of every app and off
     /// the internal disk, with the daemon's own line in the history.
-    func archive(_ repo: String, at address: String) async throws {
+    func archive(_ repo: String, to name: String?, at address: String) async throws {
         try await answering(address)
         let model = try held(repo)
+        let chosen = try FixtureData.archiveTo(name, in: archives)
         try free(repo)
         let (files, bytes) = leaving(model)
         note(.init(
             action: .archive, repo: repo, app: nil, ok: true,
-            text: "Moved to the archive disk: \(FixtureData.counted(files)), \(ByteFormat.string(bytes)) freed on this Mac"
+            text: "Archived to \(chosen.name): \(FixtureData.counted(files)), \(ByteFormat.string(bytes)) freed on this Mac"
         ))
-        moved(kind: .archive, repo: repo, files: files, bytes: bytes)
+        if !chosen.backup {
+            archivedTo[repo] = chosen.name
+        }
+        moved(kind: .archive, repo: repo, archive: chosen.name, files: files, bytes: bytes)
         wholeAgain(repo)
         change(repo) { model in
             model.apps = []
@@ -129,16 +135,16 @@ extension FixtureDaemonClient {
         try free(repo)
         note(.init(
             action: .restore, repo: repo, app: nil, ok: true,
-            text: "Brought back from the archive disk: \(FixtureData.counted(model.storedFiles)), "
+            text: "Restored: \(FixtureData.counted(model.storedFiles)), "
                 + ByteFormat.string(model.storedBytes)
         ))
         moved(kind: .restore, repo: repo, files: model.storedFiles, bytes: model.storedBytes)
         change(repo) { $0.archivedAt = nil }
     }
 
-    func moved(kind: MoveKind, repo: String, files: UInt64, bytes: UInt64) {
+    func moved(kind: MoveKind, repo: String, archive: String? = nil, files: UInt64, bytes: UInt64) {
         moving = ModelMove(
-            kind: kind, repo: repo, running: false, startedAt: FixtureData.now, finishedAt: FixtureData.now,
+            kind: kind, repo: repo, archive: archive, running: false, startedAt: FixtureData.now, finishedAt: FixtureData.now,
             bytesTotal: bytes, bytesDone: bytes, files: files, kept: 0, error: nil
         )
     }

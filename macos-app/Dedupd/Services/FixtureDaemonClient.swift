@@ -33,6 +33,10 @@ actor FixtureDaemonClient: DaemonClient {
     var offloaded = false
     /// The last archive or restore, as the daemon would tell it.
     var moving: ModelMove?
+    /// The archives, and the archive each model was archived to (beside
+    /// the backup, which holds every model).
+    var archives = FixtureData.archives
+    var archivedTo: [String: String] = [:]
     var library: UInt64 = 1
     private var listeners: [UUID: AsyncStream<DaemonSignal>.Continuation] = [:]
 
@@ -150,7 +154,9 @@ actor FixtureDaemonClient: DaemonClient {
 
     func status(at address: String) async throws -> DaemonStatus {
         try await answering(address)
-        return FixtureData.status(jobs: jobs, library: models, cleaned: cleaned, offloaded: offloaded)
+        return FixtureData.status(
+            jobs: jobs, library: models, cleaned: cleaned, offloaded: offloaded, archives: archives
+        )
     }
 
     func scan(at address: String) async throws -> ScanResult {
@@ -191,12 +197,17 @@ actor FixtureDaemonClient: DaemonClient {
 
     func model(_ repo: String, at address: String) async throws -> ModelDetail {
         try await answering(address)
-        return FixtureData.detail(of: try held(repo), offloaded: offloaded)
+        return FixtureData.detail(
+            of: try held(repo), offloaded: offloaded,
+            archives: FixtureData.holders(of: repo, archives: archives, archivedTo: archivedTo)
+        )
     }
 
     func locations(at address: String) async throws -> Locations {
         try await answering(address)
-        return FixtureData.locations(of: models, cleaned: cleaned, offloaded: offloaded)
+        return FixtureData.locations(
+            of: models, cleaned: cleaned, offloaded: offloaded, archives: archives, archivedTo: archivedTo
+        )
     }
 
     // MARK: - Hugging Face
@@ -262,7 +273,16 @@ actor FixtureDaemonClient: DaemonClient {
 
     func settings(at address: String) async throws -> DaemonSettings {
         try await answering(address)
+        settings.archives = archives
+        settings.archive = archives.first(where: \.backup)?.path
         return settings
+    }
+
+    func setArchives(_ entries: [ArchiveEntry], backup: String?, at address: String) async throws -> DaemonSettings {
+        try await answering(address)
+        archives = try FixtureData.archives(from: entries, backup: backup, known: archives)
+        changed()
+        return try await settings(at: address)
     }
 
     func updateSettings(_ changes: [SettingChange], at address: String) async throws -> DaemonSettings {

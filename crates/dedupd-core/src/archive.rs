@@ -11,7 +11,7 @@ use crate::activity;
 use crate::db::{BlobRow, Db, lock};
 use crate::hash::{copy_hashing, hash_file};
 use crate::maintain::{self, UnplacePlan};
-use crate::paths::Home;
+use crate::paths::{Archive, Home};
 use crate::place::AppDirs;
 use crate::store::Store;
 use anyhow::{Context, Result, bail};
@@ -42,8 +42,8 @@ pub fn sync_if_attached(
     store: &Store,
     on_copy: &mut dyn FnMut(&str, u64),
 ) -> Option<Result<SyncReport>> {
-    let archive = store.archive().filter(|a| a.attached())?;
-    Some(sync(db, store, archive, on_copy))
+    let archive = store.archive().filter(Home::attached)?;
+    Some(sync(db, store, &archive, on_copy))
 }
 
 /// Copy every stored file the archive lacks, then a consistent copy of the
@@ -111,6 +111,13 @@ pub fn sync(
     {
         return Ok(report);
     }
+    copy_database(db, store, archive)?;
+    Ok(report)
+}
+
+/// Put a consistent copy of the database on the archive, so that
+/// `dedupd --home <archive>` reads what it holds without the home.
+fn copy_database(db: &Mutex<Db>, store: &Store, archive: &Home) -> Result<()> {
     // The database lock is held only while the copy is written to the
     // internal disk. Writing it to the archive disk, which may be slow or
     // go away part of the way, comes after, with the lock given back.
@@ -143,8 +150,7 @@ pub fn sync(
     if copied.is_err() {
         let _ = fs::remove_file(&tmp);
     }
-    copied?;
-    Ok(report)
+    copied
 }
 
 /// Copy one stored file to the archive, hashing it as it is written. A copy
@@ -183,26 +189,69 @@ fn copy_in(store: &Store, archive: &Home, sha256: &str, replace: bool) -> Result
     result
 }
 
-/// The store's archive folder, when one is set and its disk is attached.
-fn attached_archive(store: &Store) -> Result<&Home> {
-    let Some(archive) = store.archive() else {
-        bail!("no archive folder is set (`archive` in config.toml)");
+/// The archive a model goes to: the one named `to`, or with no name the
+/// backup archive, or the only archive there is. Its disk must be attached.
+pub fn archive_to(store: &Store, to: Option<&str>) -> Result<Archive> {
+    let all = store.archives();
+    let names = || {
+        all.iter()
+            .map(|a| a.name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     };
-    if !archive.attached() {
+    let chosen = match to {
+        Some(name) => all
+            .iter()
+            .find(|a| a.name.eq_ignore_ascii_case(name))
+            .cloned(),
+        None => all
+            .iter()
+            .find(|a| a.backup)
+            .or_else(|| all.first().filter(|_| all.len() == 1))
+            .cloned(),
+    };
+    let Some(archive) = chosen else {
+        match (to, all.is_empty()) {
+            (_, true) => bail!("no archive is set; add one under Settings, Storage"),
+            (Some(name), false) => bail!(
+                "there is no archive named {name}; the archives are {}",
+                names()
+            ),
+            (None, false) => bail!("say which archive to use: {}", names()),
+        }
+    };
+    if !archive.home.attached() {
         bail!(
-            "the archive disk is not attached ({} not found)",
-            archive.root().display()
+            "the disk of the archive {} is not attached ({} not found)",
+            archive.name,
+            archive.home.root().display()
         );
     }
     Ok(archive)
+}
+
+/// The names of the attached archives that hold every one of `blobs`.
+pub fn archives_holding(store: &Store, blobs: &[BlobRow]) -> Vec<String> {
+    store
+        .attached_archives()
+        .into_iter()
+        .filter(|a| {
+            !blobs.is_empty()
+                && blobs.iter().all(|b| {
+                    fs::metadata(a.home.blob_path(&b.sha256)).is_ok_and(|m| m.len() == b.size)
+                })
+        })
+        .map(|a| a.name)
+        .collect()
 }
 
 /// What archiving one model would do. Nothing happens until `archive_apply`.
 #[derive(Debug, Clone, Default)]
 pub struct ArchivePlan {
     pub repo: String,
-    /// The archive folder.
+    /// The archive's folder and name.
     pub archive: String,
+    pub archive_name: String,
     /// What taking the model out of each app that has it would do.
     pub deactivate: Vec<UnplacePlan>,
     /// Stored files that would leave the internal disk.
@@ -222,6 +271,7 @@ impl ArchivePlan {
         dedupd_api::moves::ArchivePlan {
             repo: self.repo.clone(),
             archive: self.archive.clone(),
+            archive_name: self.archive_name.clone(),
             deactivate: self
                 .deactivate
                 .iter()
@@ -241,21 +291,25 @@ impl ArchivePlan {
     }
 }
 
-/// Work out what archiving `repo` would do: take it out of every app, and
-/// remove its files from the internal disk, except those another model or an
-/// app still uses. Changes nothing.
+/// Work out what archiving `repo` to the archive `to` (see `archive_to`)
+/// would do: take it out of every app, and remove its files from the
+/// internal disk, except those another model or an app still uses. Changes
+/// nothing.
 pub fn archive_plan(
     db: &Mutex<Db>,
     store: &Store,
     dirs: &AppDirs,
     repo: &str,
+    to: Option<&str>,
 ) -> Result<ArchivePlan> {
-    let archive = attached_archive(store)?;
+    let chosen = archive_to(store, to)?;
+    let archive = &chosen.home;
     maintain::prune_placements(db)?;
     let id = lock(db).known_repo(repo)?;
     let mut plan = ArchivePlan {
         repo: repo.to_string(),
         archive: archive.root().to_string_lossy().into_owned(),
+        archive_name: chosen.name.clone(),
         ..Default::default()
     };
     let placements = lock(db).placements()?;
@@ -319,6 +373,8 @@ pub fn archive_plan(
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct ArchiveReport {
     pub repo: String,
+    /// The archive's name.
+    pub archive: String,
     /// Stored files removed from the internal disk, and their size.
     pub files: u64,
     pub freed: u64,
@@ -328,6 +384,9 @@ pub struct ArchiveReport {
     pub deactivated: Vec<(App, usize)>,
     /// Stored files left on the internal disk, and why.
     pub keep: Vec<KeptStored>,
+    /// Why the database could not be copied to the archive, when it could
+    /// not.
+    pub database_copy_failed: Option<String>,
 }
 
 /// Make sure the archive holds a good copy of a stored file: hash the copy
@@ -382,16 +441,24 @@ pub fn archive_apply(
     store: &Store,
     dirs: &AppDirs,
     repo: &str,
+    to: Option<&str>,
     on_file: &mut dyn FnMut(u64),
 ) -> Result<ArchiveReport> {
-    let done = archive_quietly(db, store, dirs, repo, on_file);
+    let done = archive_quietly(db, store, dirs, repo, to, on_file);
     activity::record_result(
         store.home(),
         ActivityAction::Archive,
         repo,
         None,
         &done,
-        |r| Some(activity::archived(r.files, r.freed, r.keep.len())),
+        |r| {
+            Some(activity::archived(
+                &r.archive,
+                r.files,
+                r.freed,
+                r.keep.len(),
+            ))
+        },
     );
     done
 }
@@ -401,16 +468,19 @@ fn archive_quietly(
     store: &Store,
     dirs: &AppDirs,
     repo: &str,
+    to: Option<&str>,
     on_file: &mut dyn FnMut(u64),
 ) -> Result<ArchiveReport> {
     if lock(db).has_unfinished_job(repo)? {
         bail!("{}", busy(repo));
     }
-    let plan = archive_plan(db, store, dirs, repo)?;
-    let archive = attached_archive(store)?;
+    let plan = archive_plan(db, store, dirs, repo, to)?;
+    let chosen = archive_to(store, Some(&plan.archive_name))?;
+    let archive = &chosen.home;
     let id = lock(db).known_repo(repo)?;
     let mut report = ArchiveReport {
         repo: plan.repo.clone(),
+        archive: chosen.name.clone(),
         ..Default::default()
     };
     let mut failed = Vec::new();
@@ -469,6 +539,12 @@ fn archive_quietly(
     if !marked {
         lock(db).set_archived(id, Some(crate::now()))?;
     }
+    // The archive gets the database too, so it can be read on its own
+    // (`dedupd --home <archive> status`). The model's files are safe
+    // already; a failure here is only told.
+    if let Err(e) = copy_database(db, store, archive) {
+        report.database_copy_failed = Some(format!("{e:#}"));
+    }
     Ok(report)
 }
 
@@ -476,8 +552,10 @@ fn archive_quietly(
 #[derive(Debug, Clone, Default, serde::Serialize)]
 pub struct RestorePlan {
     pub repo: String,
-    /// The archive folder.
+    /// The folder of the first archive files come from.
     pub archive: String,
+    /// The names of the archives files come from.
+    pub archives: Vec<String>,
     /// Files that would be copied back to the internal disk.
     pub copy: Vec<BlobRow>,
     pub bytes: u64,
@@ -493,6 +571,7 @@ impl RestorePlan {
         dedupd_api::moves::RestorePlan {
             repo: self.repo.clone(),
             archive: self.archive.clone(),
+            archives: self.archives.clone(),
             files: self.copy.len() as u64,
             bytes: self.bytes,
             free: self.free,
@@ -501,30 +580,55 @@ impl RestorePlan {
     }
 }
 
-/// Work out what restoring `repo` would copy back. Changes nothing.
+/// Work out what restoring `repo` would copy back, each file from an
+/// attached archive that holds it. Changes nothing. Refused when no archive
+/// is set, or when none of them is attached.
 pub fn restore_plan(db: &Mutex<Db>, store: &Store, repo: &str) -> Result<RestorePlan> {
-    let archive = attached_archive(store)?;
+    let all = store.archives();
+    if all.is_empty() {
+        bail!("no archive is set; add one under Settings, Storage");
+    }
+    let attached = store.attached_archives();
+    if attached.is_empty() {
+        let names: Vec<_> = all.iter().map(|a| a.name.as_str()).collect();
+        bail!(
+            "none of the archives is attached ({}); attach the disk that holds {repo}",
+            names.join(", ")
+        );
+    }
     let blobs = {
         let db = lock(db);
         db.repo_blobs(db.known_repo(repo)?)?
     };
     let mut plan = RestorePlan {
         repo: repo.to_string(),
-        archive: archive.root().to_string_lossy().into_owned(),
         free: store.free_bytes()?,
         ..Default::default()
     };
+    let mut used: Vec<&Archive> = Vec::new();
     for blob in blobs {
         if store.contains(&blob.sha256) {
             continue;
         }
-        if archive.blob_path(&blob.sha256).is_file() {
-            plan.bytes += blob.size;
-            plan.copy.push(blob);
-        } else {
-            plan.missing.push(blob);
+        match attached
+            .iter()
+            .find(|a| a.home.blob_path(&blob.sha256).is_file())
+        {
+            Some(a) => {
+                if !used.iter().any(|u| u.name == a.name) {
+                    used.push(a);
+                }
+                plan.bytes += blob.size;
+                plan.copy.push(blob);
+            }
+            None => plan.missing.push(blob),
         }
     }
+    plan.archives = used.iter().map(|a| a.name.clone()).collect();
+    plan.archive = used
+        .first()
+        .map(|a| a.home.root().to_string_lossy().into_owned())
+        .unwrap_or_default();
     Ok(plan)
 }
 
@@ -598,7 +702,7 @@ fn restore_quietly(
     for blob in &plan.copy {
         if !store.ensure_local(&blob.sha256)? {
             bail!(
-                "{} is gone from the archive disk",
+                "{} is gone from the archives",
                 blob.sha256.get(..12).unwrap_or(&blob.sha256)
             );
         }

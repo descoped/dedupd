@@ -1889,18 +1889,18 @@ async fn a_model_is_archived_and_restored_through_the_daemon() {
             }
         };
         // A model the daemon does not have is refused before anything starts.
-        let unknown = client::archive_model(a.clone(), "org/Nope".into());
+        let unknown = client::archive_model(a.clone(), "org/Nope".into(), None);
         assert!(matches!(unknown, Err(client::ClientError::Failed { .. })));
         assert_eq!(client::model_move(a.clone())?, None);
 
-        let plan = client::archive_plan(a.clone(), REPO.into())?;
+        let plan = client::archive_plan(a.clone(), REPO.into(), None)?;
         let apps: Vec<App> = plan.deactivate.iter().map(|d| d.app).collect();
         assert_eq!(apps, [App::Bionic, App::Hf]);
         assert_eq!((plan.files, plan.bytes), (2, 300_008));
         assert!(plan.archive.ends_with("trunk/dedupd"));
         assert!(plan.keep.is_empty());
 
-        client::archive_model(a.clone(), REPO.into())?;
+        client::archive_model(a.clone(), REPO.into(), None)?;
         let state = wait(MoveKind::Archive)?;
         assert_eq!(state.error, None);
         assert_eq!((state.files, state.bytes_done, state.kept), (2, 300_008, 0));
@@ -2079,7 +2079,35 @@ async fn control_api_answers_match_the_recorded_ones() {
     for (i, entry) in entries.iter_mut().enumerate() {
         entry["id"] = json!(1_700_000_000_000i64 + (count - i) as i64);
     }
+    // A second archive beside the backup, added through the daemon: it
+    // takes effect at once, without a restart.
+    let backup = with_disk
+        ._dir
+        .path()
+        .join("trunk/dedupd")
+        .to_string_lossy()
+        .into_owned();
+    let drawer = with_disk._dir.path().join("drawer");
+    std::fs::create_dir_all(&drawer).unwrap();
+    let list = json!({
+        "archives": [
+            {"name": "", "path": backup},
+            {"name": "Drawer", "path": drawer.to_string_lossy()},
+        ],
+        "backup": backup,
+    });
+    let (code, archives) = control(&with_disk, "PUT", "config/archives", Some(list)).await;
+    assert_eq!(code, 200, "{archives}");
+    assert_eq!(archives["restart_needed"], false);
+    assert_eq!(archives["archives"][1]["name"], "Drawer");
+    assert_eq!(archives["archives"][1]["backup"], false);
+    let (_, places) = control(&with_disk, "GET", "locations", None).await;
+    assert_eq!(places["archives"].as_array().unwrap().len(), 2);
+    let twice = json!({"archives": [{"name": "A", "path": backup}, {"name": "a", "path": drawer.to_string_lossy()}]});
+    let (code, refused) = control(&with_disk, "PUT", "config/archives", Some(twice)).await;
+    assert_eq!(code, 400, "{refused}");
     let (archive, moving, restore) = (on_disk(archive), on_disk(moving), on_disk(restore));
+    let archives = on_disk(archives);
     // A favorite, starred in dedupd; the test daemon has no token, so no
     // likes are read. The time gets a fixed value.
     let star = json!({"repo": REPO, "favorite": true});
@@ -2123,6 +2151,7 @@ async fn control_api_answers_match_the_recorded_ones() {
         ("model.json", model),
         ("locations.json", locations),
         ("config.json", config),
+        ("config-archives.json", archives),
         ("check.json", check),
         ("unplace.json", unplace),
         ("gc.json", gc),

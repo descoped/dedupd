@@ -1,6 +1,6 @@
 //! Settings read from `<home>/config.toml`. Every field is optional.
 
-use crate::paths::Home;
+use crate::paths::{Archive, Home, default_archive_name};
 use anyhow::{Context, Result};
 use dedupd_api::daemon::Setting;
 use serde::Deserialize;
@@ -13,8 +13,13 @@ pub const DEFAULT_LISTEN: &str = dedupd_api::daemon::DEFAULT_ADDRESS;
 #[serde(deny_unknown_fields)]
 pub struct Config {
     /// Folder on another disk that holds the second copy of the store, for
-    /// example `/Volumes/Archive/dedupd`.
+    /// example `/Volumes/Archive/dedupd`: the backup archive, which gets a
+    /// copy of every stored file.
     pub archive: Option<PathBuf>,
+    /// More archives (cold locations), each with a name. They hold only the
+    /// models the owner archives to them. The backup archive may be listed
+    /// here too, which gives it its name.
+    pub archives: Option<Vec<NamedArchive>>,
     /// Address the daemon listens on.
     pub listen: Option<String>,
     /// Hugging Face endpoint to fetch from.
@@ -38,6 +43,28 @@ pub struct Config {
     pub max_connections: Option<usize>,
     /// Bytes per second all downloads together may use; 0 is no limit.
     pub speed_limit: Option<u64>,
+}
+
+/// One archive in `config.toml` (`[[archives]]`).
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NamedArchive {
+    pub name: String,
+    pub path: PathBuf,
+}
+
+/// The folder dedupd uses on a folder the owner picked: the folder itself
+/// when it is named `dedupd` or already holds an archive, otherwise a
+/// `dedupd` folder inside it, so a disk's top folder is not filled.
+pub fn archive_folder_for(picked: &std::path::Path) -> PathBuf {
+    let is_archive = picked.file_name().is_some_and(|n| n == "dedupd")
+        || picked.join("store").is_dir()
+        || picked.join("dedupd.sqlite").is_file();
+    if is_archive {
+        picked.to_path_buf()
+    } else {
+        picked.join("dedupd")
+    }
 }
 
 /// Days between full checks of the store unless `verify_days` says otherwise.
@@ -80,6 +107,38 @@ impl Config {
     /// the file, comments included, stays as the owner wrote it. Nothing is
     /// written when the result would not be a valid config.
     pub fn update(home: &Home, changes: &BTreeMap<Setting, serde_json::Value>) -> Result<Self> {
+        Self::edit(home, |doc| {
+            for (setting, value) in changes {
+                let key = setting.as_str();
+                let item = match value {
+                    serde_json::Value::Null => None,
+                    serde_json::Value::Bool(b) => Some(toml_edit::value(*b)),
+                    serde_json::Value::String(s) => Some(toml_edit::value(s.as_str())),
+                    serde_json::Value::Number(n) => match n.as_i64() {
+                        Some(i) => Some(toml_edit::value(i)),
+                        None => anyhow::bail!("{key} must be a whole number"),
+                    },
+                    _ => anyhow::bail!("{key} cannot be a list or a table"),
+                };
+                match item {
+                    Some(item) => doc[key] = item,
+                    None => {
+                        doc.remove(key);
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Change the config file with `change`, under the config lock, and
+    /// read it again. The rest of the file, comments included, stays as the
+    /// owner wrote it; nothing is written when the result would not be a
+    /// valid config.
+    fn edit(
+        home: &Home,
+        change: impl FnOnce(&mut toml_edit::DocumentMut) -> Result<()>,
+    ) -> Result<Self> {
         let path = Self::path(home);
         std::fs::create_dir_all(home.root())?;
         // The daemon (a setting changed in the app) and the command line
@@ -100,25 +159,7 @@ impl Config {
         let mut doc: toml_edit::DocumentMut = text
             .parse()
             .with_context(|| format!("reading {}", path.display()))?;
-        for (setting, value) in changes {
-            let key = setting.as_str();
-            let item = match value {
-                serde_json::Value::Null => None,
-                serde_json::Value::Bool(b) => Some(toml_edit::value(*b)),
-                serde_json::Value::String(s) => Some(toml_edit::value(s.as_str())),
-                serde_json::Value::Number(n) => match n.as_i64() {
-                    Some(i) => Some(toml_edit::value(i)),
-                    None => anyhow::bail!("{key} must be a whole number"),
-                },
-                _ => anyhow::bail!("{key} cannot be a list or a table"),
-            };
-            match item {
-                Some(item) => doc[key] = item,
-                None => {
-                    doc.remove(key);
-                }
-            }
-        }
+        change(&mut doc)?;
         let text = doc.to_string();
         let config: Self = toml::from_str(&text).context("the settings are not valid")?;
         if !is_loopback(config.listen()) {
@@ -173,6 +214,110 @@ impl Config {
 
     pub fn archive_home(&self) -> Option<Home> {
         self.archive.clone().map(Home::new)
+    }
+
+    /// Every archive: the backup archive first, then the others in the
+    /// order the file lists them. The backup archive is named by its entry
+    /// in `archives` when it has one, otherwise after its disk.
+    pub fn archive_list(&self) -> Vec<Archive> {
+        let listed = self.archives.clone().unwrap_or_default();
+        let mut out = Vec::new();
+        if let Some(path) = &self.archive {
+            let name = listed
+                .iter()
+                .find(|a| &a.path == path)
+                .map(|a| a.name.clone())
+                .unwrap_or_else(|| default_archive_name(path));
+            out.push(Archive {
+                name,
+                home: Home::new(path),
+                backup: true,
+            });
+        }
+        for a in listed {
+            if self.archive.as_ref() != Some(&a.path) {
+                out.push(Archive {
+                    name: a.name,
+                    home: Home::new(&a.path),
+                    backup: false,
+                });
+            }
+        }
+        out
+    }
+
+    /// Write the list of archives: every one as `[[archives]]`, and the
+    /// backup archive (by its folder) as `archive`, or none. A picked
+    /// folder becomes the `dedupd` folder in it (`archive_folder_for`), and
+    /// a missing name becomes the disk's. Refused, with nothing written,
+    /// when a name or a folder is there twice, a folder is not a full path,
+    /// or the backup is not one of the list.
+    pub fn set_archives(
+        home: &Home,
+        archives: &[NamedArchive],
+        backup: Option<&std::path::Path>,
+    ) -> Result<Self> {
+        let mut list: Vec<NamedArchive> = Vec::new();
+        for a in archives {
+            if !a.path.is_absolute() {
+                anyhow::bail!(
+                    "an archive's folder must be a full path, not {}",
+                    a.path.display()
+                );
+            }
+            let path = archive_folder_for(&a.path);
+            let name = match a.name.trim() {
+                "" => default_archive_name(&path),
+                name => name.to_string(),
+            };
+            if list.iter().any(|b| b.name.eq_ignore_ascii_case(&name)) {
+                anyhow::bail!("two archives are named {name}; give each its own name");
+            }
+            if list.iter().any(|b| b.path == path) {
+                anyhow::bail!("{} is listed twice", path.display());
+            }
+            if path.starts_with(home.root()) || home.root().starts_with(&path) {
+                anyhow::bail!(
+                    "{} is dedupd's own folder; an archive must be a folder of its own",
+                    path.display()
+                );
+            }
+            list.push(NamedArchive { name, path });
+        }
+        let backup = match backup {
+            None => None,
+            Some(b) => {
+                let b = archive_folder_for(b);
+                if !list.iter().any(|a| a.path == b) {
+                    anyhow::bail!(
+                        "the backup archive {} is not one of the archives",
+                        b.display()
+                    );
+                }
+                Some(b)
+            }
+        };
+        Self::edit(home, |doc| {
+            match &backup {
+                Some(b) => doc["archive"] = toml_edit::value(b.to_string_lossy().as_ref()),
+                None => {
+                    doc.remove("archive");
+                }
+            }
+            if list.is_empty() {
+                doc.remove("archives");
+            } else {
+                let mut tables = toml_edit::ArrayOfTables::new();
+                for a in &list {
+                    let mut t = toml_edit::Table::new();
+                    t["name"] = toml_edit::value(a.name.as_str());
+                    t["path"] = toml_edit::value(a.path.to_string_lossy().as_ref());
+                    tables.push(t);
+                }
+                doc["archives"] = toml_edit::Item::ArrayOfTables(tables);
+            }
+            Ok(())
+        })
     }
 }
 
@@ -236,6 +381,78 @@ mod tests {
         let bad = BTreeMap::from([(Setting::MaxConnections, serde_json::json!("many"))]);
         assert!(Config::update(&home, &bad).is_err());
         assert_eq!(Config::load(&home).unwrap().max_connections, Some(4));
+    }
+
+    #[test]
+    fn archives_are_named_and_kept_in_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        std::fs::create_dir_all(home.root()).unwrap();
+        std::fs::write(Config::path(&home), "# mine\nverify_days = 30\n").unwrap();
+        let drawer = std::path::PathBuf::from("/Volumes/Drawer");
+        let nas = dir.path().join("nas");
+        std::fs::create_dir_all(nas.join("store")).unwrap();
+        let list = [
+            NamedArchive {
+                name: String::new(),
+                path: drawer.clone(),
+            },
+            NamedArchive {
+                name: "NAS".into(),
+                path: nas.clone(),
+            },
+        ];
+        let config = Config::set_archives(&home, &list, Some(&drawer)).unwrap();
+        let archives = config.archive_list();
+        // A disk's top folder gets a dedupd folder, named after the disk; a
+        // folder that holds an archive already is used as it is.
+        assert_eq!(
+            archives
+                .iter()
+                .map(|a| (a.name.as_str(), a.home.root().to_path_buf(), a.backup))
+                .collect::<Vec<_>>(),
+            [
+                ("Drawer", drawer.join("dedupd"), true),
+                ("NAS", nas.clone(), false)
+            ]
+        );
+        assert_eq!(config.archive, Some(drawer.join("dedupd")));
+        let text = std::fs::read_to_string(Config::path(&home)).unwrap();
+        assert!(text.starts_with("# mine\nverify_days = 30\n"), "{text}");
+
+        // Refused, and the file stays: one name twice, a backup not listed,
+        // a folder that is not a full path, dedupd's own folder.
+        let twice = [
+            NamedArchive {
+                name: "A".into(),
+                path: drawer.clone(),
+            },
+            NamedArchive {
+                name: "a".into(),
+                path: nas.clone(),
+            },
+        ];
+        assert!(Config::set_archives(&home, &twice, None).is_err());
+        assert!(Config::set_archives(&home, &list[1..], Some(&drawer)).is_err());
+        let relative = [NamedArchive {
+            name: "X".into(),
+            path: "here".into(),
+        }];
+        assert!(Config::set_archives(&home, &relative, None).is_err());
+        let own = [NamedArchive {
+            name: "X".into(),
+            path: home.root().join("old"),
+        }];
+        assert!(Config::set_archives(&home, &own, None).is_err());
+        assert_eq!(std::fs::read_to_string(Config::path(&home)).unwrap(), text);
+
+        // No archives: both keys go.
+        let none = Config::set_archives(&home, &[], None).unwrap();
+        assert!(none.archive_list().is_empty());
+        assert_eq!(
+            std::fs::read_to_string(Config::path(&home)).unwrap(),
+            "# mine\nverify_days = 30\n"
+        );
     }
 
     /// What `dedupd install --env` does: a `set_env = false` line, or a

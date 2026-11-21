@@ -8,6 +8,7 @@
   ],
   "archive_attached": false,
   "archive_path": null,
+  "archives": [],
   "daemon": {
     "checking": false,
     "executable": "/Users/example/bin/dedupd",

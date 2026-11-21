@@ -13,7 +13,10 @@ extension FixtureData {
     /// store by what it holds, each app by its own files, and the archive
     /// disk by what it holds: the backup has every file the daemon knows,
     /// also of an archived model, and so every model whole.
-    static func locations(of library: [LibraryModel], cleaned: Bool, offloaded: Bool = false) -> Locations {
+    static func locations(
+        of library: [LibraryModel], cleaned: Bool, offloaded: Bool = false, archives: [ArchiveSetting] = archives,
+        archivedTo: [String: String] = [:]
+    ) -> Locations {
         let store = stored(of: library, cleaned: cleaned, offloaded: offloaded)
         let backup = (
             files: library.map(\.storedFiles).reduce(0, +) + (cleaned ? 0 : orphanFiles),
@@ -23,18 +26,34 @@ extension FixtureData {
             volumeTotal: 994_660_000_000,
             volumeFree: 412_300_000_000,
             store: Location(
-                kind: .store, app: nil, path: "/Users/example/.dedupd/store", present: true, files: store.files,
-                bytes: store.bytes, sharedBytes: 0, models: UInt64(library.count)
+                kind: .store, app: nil, name: nil, backup: false, path: "/Users/example/.dedupd/store", present: true,
+                files: store.files, bytes: store.bytes, sharedBytes: 0, models: UInt64(library.count)
             ),
-            archive: Location(
-                kind: .archive, app: nil, path: archiveFolder, present: true, files: backup.files,
-                bytes: backup.bytes, sharedBytes: 0, models: UInt64(library.count)
-            ),
+            archives: archives.map { archive in
+                // The backup has every file; another archive, the models
+                // archived to it. A disk that is away counts as nothing.
+                let held = archive.backup
+                    ? library
+                    : library.filter { archivedTo[$0.repo] == archive.name }
+                let counted = !archive.attached
+                    ? (files: UInt64(0), bytes: UInt64(0), models: UInt64(0))
+                    : archive.backup
+                    ? (files: backup.files, bytes: backup.bytes, models: UInt64(library.count))
+                    : (
+                        files: held.map(\.storedFiles).reduce(0, +), bytes: held.map(\.storedBytes).reduce(0, +),
+                        models: UInt64(held.count)
+                    )
+                return Location(
+                    kind: .archive, app: nil, name: archive.name, backup: archive.backup, path: archive.path,
+                    present: archive.attached, files: counted.files, bytes: counted.bytes, sharedBytes: 0,
+                    models: counted.models
+                )
+            },
             apps: ModelApp.allCases.map { app in
                 let held = usage(of: app, in: library)
                 return Location(
-                    kind: .app, app: app, path: folder(of: app), present: true, files: held.files, bytes: held.bytes,
-                    sharedBytes: held.bytes, models: held.models
+                    kind: .app, app: app, name: nil, backup: false, path: folder(of: app), present: true,
+                    files: held.files, bytes: held.bytes, sharedBytes: held.bytes, models: held.models
                 )
             }
         )

@@ -88,6 +88,9 @@ enum Command {
     Archive {
         /// The repository, as org/repo
         repo: String,
+        /// The archive to move it to, by its name [default: the backup archive, or the only one]
+        #[arg(long, value_name = "NAME")]
+        to: Option<String>,
         /// Do it. Without this, it only lists what would happen
         #[arg(long)]
         apply: bool,
@@ -234,7 +237,11 @@ pub fn open(home: Option<PathBuf>, endpoint: Option<String>) -> Result<Opened> {
     let token = Token::from_environment();
     let governor = Governor::new(config.max_connections(), config.speed_limit());
     let engine = Engine {
-        store: Store::open(&home)?.with_archive(config.archive_home()),
+        store: {
+            let store = Store::open(&home)?;
+            store.set_archives(config.archive_list());
+            store
+        },
         db: Mutex::new(Db::open(&home.db_path())?),
         hub: HubClient::new(endpoint.clone(), None)?
             .with_token(token.clone())
@@ -704,7 +711,9 @@ async fn main() -> Result<()> {
         Command::Deactivate { repo, apps, apply } => {
             lifecycle::cmd_deactivate(&o, &repo, apps, apply)
         }
-        Command::Archive { repo, apply } => lifecycle::cmd_archive(&o, &repo, apply),
+        Command::Archive { repo, to, apply } => {
+            lifecycle::cmd_archive(&o, &repo, to.as_deref(), apply)
+        }
         Command::Restore { repo } => lifecycle::cmd_restore(&o, &repo),
         Command::Adopt {
             apps,

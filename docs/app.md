@@ -19,7 +19,7 @@ The pictures on this page were taken with sample data.
 ## The menu bar panel
 
 The menu bar icon opens a panel with the daemon's state, the downloads in progress, the size of the store, how
-much of it the apps share, and whether the archive disk is attached.
+much of it the apps share, and how many archives are attached.
 
 <img src="images/menu-panel.png" alt="The menu bar panel with a download in flight, three figures and a field for a model's address" width="340">
 
@@ -90,19 +90,27 @@ list, which is kept in `~/.dedupd/activity.jsonl`.
 
 ## Storage
 
-Where the files are, and how much space sharing saves. The archive disk's row counts the files it holds and the
-models it holds every file of; while the disk is away it shows none. Clean up lists stored files that are no longer referenced
+Where the files are, and how much space sharing saves.
+
+The Archives card lists each archive: its name, its folder, whether its disk is attached and what it holds. **Add
+Archive…** asks for a disk or a folder (dedupd keeps its files in a folder named `dedupd` there) and a name, by
+default the disk's. The first archive can be made the backup archive, which gets a copy of every download. Each
+archive's menu, also on a right-click, renames it, makes it the backup archive, shows it in the Finder or removes it.
+Removing an archive deletes nothing on its disk. A change takes effect at once. An archive on the same disk as the
+store is marked as such: it does not protect against losing that disk. Clean up lists stored files that are no longer referenced
 and removes them only after the list has been confirmed. Check the store reads every stored file and compares it with its sha256.
-A file that is only on the archive disk is counted as such; while that disk is away it is counted as not looked for,
-not as missing.
+A file that is only in an archive is counted as such; while its disk is away it is counted as not looked for, not
+as missing.
 
 ![The Storage screen](images/storage.png)
 
 ## Archiving a model
 
-With an archive disk set, a model can be moved off the internal disk. The app says what will happen before it
-does anything, and nothing is removed unless every copy on the archive disk has been verified. Restore brings the model
-back. While a model is being archived or restored, it cannot be activated or deactivated.
+With an archive set, a model can be moved off the internal disk. **Archive…** asks which archive, when there is more
+than one attached; the backup archive is offered first. The app says what will happen before it does anything, and
+nothing is removed unless every copy in that archive has been verified. The model's inspector names the archives that
+hold a copy of it. Restore brings the model back from any attached archive that holds it. While a model is being
+archived or restored, it cannot be activated or deactivated.
 
 ![The question the app asks before it archives a model](images/archive.png)
 

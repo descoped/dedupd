@@ -42,6 +42,7 @@ struct StorageView: View {
                     case let .ready(locations):
                         VolumeCard(locations: locations)
                         LocationsCard(locations: locations)
+                        ArchivesCard()
                     case let .failed(message):
                         FailureLabel(message: message)
                     case .idle, .loading:
@@ -146,13 +147,13 @@ private struct VolumeCard: View {
     }
 }
 
-/// The store, the archive and each app's folder: where it is and what it
-/// holds.
+/// The store and each app's folder: where it is and what it holds. The
+/// archives have a card of their own.
 private struct LocationsCard: View {
     let locations: Locations
 
     private var all: [Location] {
-        [locations.store] + (locations.archive.map { [$0] } ?? []) + locations.apps
+        [locations.store] + locations.apps
     }
 
     var body: some View {
@@ -172,11 +173,6 @@ private struct LocationsCard: View {
                 ForEach(all) { location in
                     LocationRow(location: location)
                 }
-            }
-            if locations.archive == nil {
-                Text("No archive disk is set. With one, every model has a second copy on another disk; set it under Daemon.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
             }
         }
     }

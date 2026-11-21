@@ -337,12 +337,12 @@ RustBuffer uniffi_dedupd_client_fn_func_apps(RustBuffer address, RustCallStatus 
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_MODEL
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_MODEL
-void uniffi_dedupd_client_fn_func_archive_model(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
+void uniffi_dedupd_client_fn_func_archive_model(RustBuffer address, RustBuffer repo, RustBuffer to, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_PLAN
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_ARCHIVE_PLAN
-RustBuffer uniffi_dedupd_client_fn_func_archive_plan(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_dedupd_client_fn_func_archive_plan(RustBuffer address, RustBuffer repo, RustBuffer to, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_CHECK_UPSTREAM
@@ -464,6 +464,11 @@ RustBuffer uniffi_dedupd_client_fn_func_scan(RustBuffer address, RustCallStatus 
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SEARCH
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SEARCH
 RustBuffer uniffi_dedupd_client_fn_func_search(RustBuffer address, RustBuffer query, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SET_ARCHIVES
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SET_ARCHIVES
+RustBuffer uniffi_dedupd_client_fn_func_set_archives(RustBuffer address, RustBuffer archives, RustBuffer backup, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SET_FAVORITE
@@ -942,6 +947,12 @@ uint16_t uniffi_dedupd_client_checksum_func_scan(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SEARCH
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SEARCH
 uint16_t uniffi_dedupd_client_checksum_func_search(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SET_ARCHIVES
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SET_ARCHIVES
+uint16_t uniffi_dedupd_client_checksum_func_set_archives(void
     
 );
 #endif

@@ -86,9 +86,9 @@ struct MenuPanel: View {
             )
             .accessibilityIdentifier("tile-shared")
             MenuTile(
-                title: "Archive",
-                value: status.archivePath == nil ? "None" : (status.archiveAttached ? "Attached" : "Detached"),
-                detail: status.archivePath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "no second copy"
+                title: "Archives",
+                value: ArchiveWords.tileValue(status.archives),
+                detail: ArchiveWords.tileDetail(status.archives)
             )
             .accessibilityIdentifier("tile-archive")
         }

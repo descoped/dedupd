@@ -148,6 +148,37 @@ pub(crate) fn process_is_alive(pid: u32) -> bool {
     rc == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
 }
 
+/// An archive as dedupd uses it: its name, its folder and whether it is the
+/// backup archive.
+#[derive(Debug, Clone)]
+pub struct Archive {
+    pub name: String,
+    pub home: Home,
+    pub backup: bool,
+}
+
+/// The name an archive gets when the owner gives none: the disk's name for
+/// a folder on an external disk (`/Volumes/Drawer/dedupd` is "Drawer"),
+/// otherwise the folder's own name, or its parent's when it is the `dedupd`
+/// folder dedupd made (`~/Backups/dedupd` is "Backups").
+pub fn default_archive_name(path: &Path) -> String {
+    let parts: Vec<_> = path.components().collect();
+    if let [std::path::Component::RootDir, a, b, ..] = parts.as_slice()
+        && a.as_os_str() == "Volumes"
+    {
+        return b.as_os_str().to_string_lossy().into_owned();
+    }
+    let named = if path.file_name().is_some_and(|n| n == "dedupd") {
+        path.parent().unwrap_or(path)
+    } else {
+        path
+    };
+    named
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Archive".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,5 +1,8 @@
 {
   "archive": "/Users/example/trunk/dedupd",
+  "archives": [
+    "trunk"
+  ],
   "bytes": 300008,
   "files": 2,
   "free": 400000000000,
