@@ -6,8 +6,7 @@ import { useEffect } from 'react'
 // The address the site is published at; nowhere else is a visit counted
 const DOMAIN = 'dedupd.com'
 
-// A relay on Descoped's own subdomain forwards each event to Plausible. Its name holds none of the words filter lists
-// match, so blockers that refuse Plausible's own address let it through.
+// Events go to Descoped's own relay, which forwards them to Plausible
 const ENDPOINT = 'https://e.descoped.io/e'
 
 let started = false
