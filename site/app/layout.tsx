@@ -73,9 +73,6 @@ export default async function RootLayout({
               <a href="https://github.com/descoped/dedupd/blob/main/LICENSE">MIT licence</a>
             </span>
             <span>
-              Visits are counted with <a href="https://plausible.io/data-policy">Plausible</a>, without cookies
-            </span>
-            <span>
               Built with <a href="https://krantho.com">Krantho</a>
             </span>
           </div>
