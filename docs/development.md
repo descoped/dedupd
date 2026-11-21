@@ -80,10 +80,29 @@ each module does.
 
 ## Releases
 
+One version number, `version` in the workspace `Cargo.toml`, is the daemon's and the app's; the app's version and
+build number are synced from it.
+
 `just app-release` makes the app's release: a Release build signed with Developer ID, notarised by Apple, in a
-disk image. It needs the maintainer's certificate and notary credential. `just app-package` does everything short
-of sending it to Apple, for checking. A release is tagged `v<version>` on the commit it was built from, and the
-disk image is attached to a GitHub release with its sha256 in the notes.
+disk image, and the signed update feed (`appcast.xml`) that installed copies read. It needs the maintainer's
+certificate, notary credential and update key. Before it builds anything it runs a last version check, which
+`just app-release-check` runs alone. It refuses a release when:
+
+- the version is not three numbers;
+- the version is not greater than the latest published release;
+- the tag already exists;
+- the working tree has changes, or the commit is not on `main`;
+- `macos-app/release-notes/<version>.md` is missing;
+- the app does not carry the update key.
+
+`just app-package` does everything short of sending it to Apple, for checking.
+
+`just app-publish` publishes what `app-release` made:
+
+1. It tags `v<version>` on the commit the release was built from and pushes the tag.
+2. It makes the GitHub release, with the disk image, the feed, the release notes and the image's sha256.
+
+From then on, installed copies offer the new version.
 
 ## Continuous integration
 
