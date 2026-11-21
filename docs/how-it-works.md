@@ -103,6 +103,16 @@ gets it through the daemon only while the source can confirm that the client has
 Every file is verified against its sha256 at download. The complete store is re-hashed on a schedule, every 7
 days by default (`verify_days`).
 
+## Stores
+
+A store is a content-addressed folder on one APFS volume; the applications on that volume are given clones of its
+files. The store in dedupd's home is always there. More can be added, at most one per volume, each with a name, for
+example on an external SSD that holds Ollama's models while Bionic's stay on the internal disk. A download goes to the
+store that serves every application it is for, otherwise to the store in dedupd's home. Activating a model in an
+application whose store lacks it copies the files into that store from another store or an archive first, with the
+size shown before. An application on a volume with no store cannot be given models. Removing a store from the list
+deletes nothing.
+
 ## Archives
 
 An archive is a folder on another disk (an external SSD, a removable disk, a network volume) that holds copies of
@@ -115,8 +125,9 @@ whenever its disk is attached. The other archives receive only the models archiv
 
 Archiving a single model is an explicit operation, and the owner chooses the archive. dedupd reads every copy in
 that archive in full and rewrites any that is missing or damaged. Only then is the model deactivated in the
-applications and removed from the internal disk. Restore copies the files back from any attached archive that holds
-them; activating an archived model restores what the application needs.
+applications and removed from every store. Restore copies the files into the store the owner chooses (the one in
+dedupd's home by default), from another store or any attached archive that holds them; activating an archived model
+restores what the application needs.
 
 All other functions operate with the archives' disks detached.
 
@@ -129,8 +140,9 @@ All other functions operate with the archives' disks detached.
 | adopt | Take a model an application already holds into the store |
 | reclaim | Replace an application's duplicate copy with a clone |
 | backup | The copy of every stored file in the backup archive |
-| archive | Move one model off the internal disk to an archive the owner chooses |
-| restore | Copy an archived model back |
+| store | A folder on one APFS volume whose files the applications on that volume are given as clones |
+| archive | Move one model out of every store to an archive the owner chooses |
+| restore | Copy an archived model back into a store the owner chooses |
 | forget | Remove a model from the library, so that `gc` can remove its files |
 
 ## Scope and guarantees

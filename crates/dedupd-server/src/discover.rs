@@ -351,9 +351,16 @@ async fn model(server: &Arc<Server>, repo: &str) -> Response {
         blocking(move || {
             let db = &engine.db;
             let installed = Installed::detect(&engine.dirs);
-            let variants =
-                library::local_variants(db, &engine.store, &repo, &files, &formats, &installed)?;
-            let detail = library::model(db, &engine.store, &repo, &installed)?;
+            let variants = library::local_variants(
+                db,
+                &engine.store,
+                &engine.dirs,
+                &repo,
+                &files,
+                &formats,
+                &installed,
+            )?;
+            let detail = library::model(db, &engine.store, &engine.dirs, &repo, &installed)?;
             Ok((variants, detail))
         })
         .await

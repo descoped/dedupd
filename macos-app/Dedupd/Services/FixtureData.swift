@@ -65,7 +65,7 @@ enum FixtureData {
     /// added up from the models, as the real daemon adds up its records.
     static func status(
         jobs: [Job] = [], library: [LibraryModel] = models, cleaned: Bool = false, offloaded: Bool = false,
-        archives: [ArchiveSetting] = archives
+        archives: [ArchiveSetting] = archives, stores: [StoreSetting] = stores
     ) -> DaemonStatus {
         let backup = archives.first(where: \.backup)
         let active = jobs.filter { $0.state.isActive }
@@ -84,6 +84,7 @@ enum FixtureData {
             archivePath: backup?.path,
             archiveAttached: backup?.attached ?? false,
             archives: archives,
+            stores: stores,
             storeFiles: store.files,
             storeBytes: store.bytes,
             // Every canned app file is a clone of the stored one.
@@ -373,7 +374,7 @@ extension FixtureData {
                 Variant(
                     kind: .gguf, format: judged.format, name: "Q4_K_M", spec: "\(model.repo):Q4_K_M", files: 4,
                     bytes: model.storedBytes, storedBytes: stored, weightsStored: here, usableBy: judged.usableBy,
-                    placedIn: model.appNames, decisions: judged.decisions
+                    placedIn: model.appNames, decisions: judged.decisions, copies: copies
                 ),
             ]
         }
@@ -381,7 +382,7 @@ extension FixtureData {
             Variant(
                 kind: .files, format: judged.format, name: "all files", spec: model.repo, files: model.storedFiles,
                 bytes: model.storedBytes, storedBytes: stored, weightsStored: here, usableBy: judged.usableBy,
-                placedIn: model.appNames, decisions: judged.decisions
+                placedIn: model.appNames, decisions: judged.decisions, copies: copies
             ),
         ]
     }
@@ -438,6 +439,7 @@ extension FixtureData {
         hfEndpoint: "https://huggingface.co",
         archive: "/Volumes/Archive/dedupd",
         archives: archives,
+        stores: stores,
         bionicModels: "/Users/example/.lmstudio/models",
         ollamaModels: "/Users/example/.ollama/models",
         hfCache: "/Users/example/.cache/huggingface/hub",

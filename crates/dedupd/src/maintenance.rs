@@ -122,7 +122,7 @@ pub fn cmd_forget(o: &Opened, repo: &str, apply: bool) -> Result<()> {
     if !apply {
         maintain::forget_check(&e.db, repo)?;
         let installed = dedupd_core::profile::Installed::detect(&e.dirs);
-        let kept = dedupd_core::library::model(&e.db, &e.store, repo, &installed)?;
+        let kept = dedupd_core::library::model(&e.db, &e.store, &e.dirs, repo, &installed)?;
         let revisions = kept.as_ref().map_or(0, |m| m.revisions.len());
         let files: usize = kept
             .iter()

@@ -1454,6 +1454,10 @@ public struct DaemonSettings: Equatable, Hashable {
      * Every archive, the backup archive first.
      */
     public var archives: [ArchiveSetting]
+    /**
+     * Every store, the one in dedupd's home first.
+     */
+    public var stores: [StoreSetting]
     public var bionicModels: String
     public var ollamaModels: String
     public var hfCache: String
@@ -1476,7 +1480,10 @@ public struct DaemonSettings: Equatable, Hashable {
          */archive: String?, 
         /**
          * Every archive, the backup archive first.
-         */archives: [ArchiveSetting], bionicModels: String, ollamaModels: String, hfCache: String, reclaim: Bool, setEnv: Bool, verifyDays: UInt64, scanInterval: UInt64, maxConnections: UInt64, speedLimit: UInt64, 
+         */archives: [ArchiveSetting], 
+        /**
+         * Every store, the one in dedupd's home first.
+         */stores: [StoreSetting], bionicModels: String, ollamaModels: String, hfCache: String, reclaim: Bool, setEnv: Bool, verifyDays: UInt64, scanInterval: UInt64, maxConnections: UInt64, speedLimit: UInt64, 
         /**
          * The running daemon still uses older settings.
          */restartNeeded: Bool) {
@@ -1485,6 +1492,7 @@ public struct DaemonSettings: Equatable, Hashable {
         self.hfEndpoint = hfEndpoint
         self.archive = archive
         self.archives = archives
+        self.stores = stores
         self.bionicModels = bionicModels
         self.ollamaModels = ollamaModels
         self.hfCache = hfCache
@@ -1518,6 +1526,7 @@ public struct FfiConverterTypeDaemonSettings: FfiConverterRustBuffer {
                 hfEndpoint: FfiConverterString.read(from: &buf), 
                 archive: FfiConverterOptionString.read(from: &buf), 
                 archives: FfiConverterSequenceTypeArchiveSetting.read(from: &buf), 
+                stores: FfiConverterSequenceTypeStoreSetting.read(from: &buf), 
                 bionicModels: FfiConverterString.read(from: &buf), 
                 ollamaModels: FfiConverterString.read(from: &buf), 
                 hfCache: FfiConverterString.read(from: &buf), 
@@ -1537,6 +1546,7 @@ public struct FfiConverterTypeDaemonSettings: FfiConverterRustBuffer {
         FfiConverterString.write(value.hfEndpoint, into: &buf)
         FfiConverterOptionString.write(value.archive, into: &buf)
         FfiConverterSequenceTypeArchiveSetting.write(value.archives, into: &buf)
+        FfiConverterSequenceTypeStoreSetting.write(value.stores, into: &buf)
         FfiConverterString.write(value.bionicModels, into: &buf)
         FfiConverterString.write(value.ollamaModels, into: &buf)
         FfiConverterString.write(value.hfCache, into: &buf)
@@ -1582,6 +1592,10 @@ public struct DaemonStatus: Equatable, Hashable {
      * Every archive, the backup archive first.
      */
     public var archives: [ArchiveSetting]
+    /**
+     * Every store, the one in dedupd's home first.
+     */
+    public var stores: [StoreSetting]
     public var storeFiles: UInt64
     public var storeBytes: UInt64
     /**
@@ -1605,7 +1619,10 @@ public struct DaemonStatus: Equatable, Hashable {
          */archivePath: String?, archiveAttached: Bool, 
         /**
          * Every archive, the backup archive first.
-         */archives: [ArchiveSetting], storeFiles: UInt64, storeBytes: UInt64, 
+         */archives: [ArchiveSetting], 
+        /**
+         * Every store, the one in dedupd's home first.
+         */stores: [StoreSetting], storeFiles: UInt64, storeBytes: UInt64, 
         /**
          * Bytes of app files that share disk blocks with the store.
          */sharedBytes: UInt64, 
@@ -1618,6 +1635,7 @@ public struct DaemonStatus: Equatable, Hashable {
         self.archivePath = archivePath
         self.archiveAttached = archiveAttached
         self.archives = archives
+        self.stores = stores
         self.storeFiles = storeFiles
         self.storeBytes = storeBytes
         self.sharedBytes = sharedBytes
@@ -1650,6 +1668,7 @@ public struct FfiConverterTypeDaemonStatus: FfiConverterRustBuffer {
                 archivePath: FfiConverterOptionString.read(from: &buf), 
                 archiveAttached: FfiConverterBool.read(from: &buf), 
                 archives: FfiConverterSequenceTypeArchiveSetting.read(from: &buf), 
+                stores: FfiConverterSequenceTypeStoreSetting.read(from: &buf), 
                 storeFiles: FfiConverterUInt64.read(from: &buf), 
                 storeBytes: FfiConverterUInt64.read(from: &buf), 
                 sharedBytes: FfiConverterUInt64.read(from: &buf), 
@@ -1668,6 +1687,7 @@ public struct FfiConverterTypeDaemonStatus: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.archivePath, into: &buf)
         FfiConverterBool.write(value.archiveAttached, into: &buf)
         FfiConverterSequenceTypeArchiveSetting.write(value.archives, into: &buf)
+        FfiConverterSequenceTypeStoreSetting.write(value.stores, into: &buf)
         FfiConverterUInt64.write(value.storeFiles, into: &buf)
         FfiConverterUInt64.write(value.storeBytes, into: &buf)
         FfiConverterUInt64.write(value.sharedBytes, into: &buf)
@@ -3427,6 +3447,10 @@ public struct Locations: Equatable, Hashable {
     public var volumeFree: UInt64
     public var store: Location
     /**
+     * The stores besides the one in dedupd's home.
+     */
+    public var stores: [Location]
+    /**
      * Every archive, the backup archive first.
      */
     public var archives: [Location]
@@ -3439,11 +3463,15 @@ public struct Locations: Equatable, Hashable {
          * The volume the store and the app folders are on.
          */volumeTotal: UInt64, volumeFree: UInt64, store: Location, 
         /**
+         * The stores besides the one in dedupd's home.
+         */stores: [Location], 
+        /**
          * Every archive, the backup archive first.
          */archives: [Location], apps: [Location]) {
         self.volumeTotal = volumeTotal
         self.volumeFree = volumeFree
         self.store = store
+        self.stores = stores
         self.archives = archives
         self.apps = apps
     }
@@ -3467,6 +3495,7 @@ public struct FfiConverterTypeLocations: FfiConverterRustBuffer {
                 volumeTotal: FfiConverterUInt64.read(from: &buf), 
                 volumeFree: FfiConverterUInt64.read(from: &buf), 
                 store: FfiConverterTypeLocation.read(from: &buf), 
+                stores: FfiConverterSequenceTypeLocation.read(from: &buf), 
                 archives: FfiConverterSequenceTypeLocation.read(from: &buf), 
                 apps: FfiConverterSequenceTypeLocation.read(from: &buf)
         )
@@ -3476,6 +3505,7 @@ public struct FfiConverterTypeLocations: FfiConverterRustBuffer {
         FfiConverterUInt64.write(value.volumeTotal, into: &buf)
         FfiConverterUInt64.write(value.volumeFree, into: &buf)
         FfiConverterTypeLocation.write(value.store, into: &buf)
+        FfiConverterSequenceTypeLocation.write(value.stores, into: &buf)
         FfiConverterSequenceTypeLocation.write(value.archives, into: &buf)
         FfiConverterSequenceTypeLocation.write(value.apps, into: &buf)
     }
@@ -3806,7 +3836,7 @@ public struct ModelMove: Equatable, Hashable {
     public var kind: MoveKind
     public var repo: String
     /**
-     * For an archive: the name of the archive it goes to.
+     * The archive it goes to, or the store it is restored into.
      */
     public var archive: String?
     public var running: Bool
@@ -3837,7 +3867,7 @@ public struct ModelMove: Equatable, Hashable {
     // declare one manually.
     public init(kind: MoveKind, repo: String, 
         /**
-         * For an archive: the name of the archive it goes to.
+         * The archive it goes to, or the store it is restored into.
          */archive: String?, running: Bool, 
         /**
          * Seconds since the epoch.
@@ -4475,6 +4505,10 @@ public struct RestorePlan: Equatable, Hashable {
      */
     public var archive: String
     public var archives: [String]
+    /**
+     * The store the files are copied into.
+     */
+    public var store: String
     public var files: UInt64
     public var bytes: UInt64
     /**
@@ -4492,7 +4526,10 @@ public struct RestorePlan: Equatable, Hashable {
         /**
          * The folder of the first archive files come from, and the names of
          * every archive they come from.
-         */archive: String, archives: [String], files: UInt64, bytes: UInt64, 
+         */archive: String, archives: [String], 
+        /**
+         * The store the files are copied into.
+         */store: String, files: UInt64, bytes: UInt64, 
         /**
          * Free space on the internal disk.
          */free: UInt64, 
@@ -4502,6 +4539,7 @@ public struct RestorePlan: Equatable, Hashable {
         self.repo = repo
         self.archive = archive
         self.archives = archives
+        self.store = store
         self.files = files
         self.bytes = bytes
         self.free = free
@@ -4527,6 +4565,7 @@ public struct FfiConverterTypeRestorePlan: FfiConverterRustBuffer {
                 repo: FfiConverterString.read(from: &buf), 
                 archive: FfiConverterString.read(from: &buf), 
                 archives: FfiConverterSequenceString.read(from: &buf), 
+                store: FfiConverterString.read(from: &buf), 
                 files: FfiConverterUInt64.read(from: &buf), 
                 bytes: FfiConverterUInt64.read(from: &buf), 
                 free: FfiConverterUInt64.read(from: &buf), 
@@ -4538,6 +4577,7 @@ public struct FfiConverterTypeRestorePlan: FfiConverterRustBuffer {
         FfiConverterString.write(value.repo, into: &buf)
         FfiConverterString.write(value.archive, into: &buf)
         FfiConverterSequenceString.write(value.archives, into: &buf)
+        FfiConverterString.write(value.store, into: &buf)
         FfiConverterUInt64.write(value.files, into: &buf)
         FfiConverterUInt64.write(value.bytes, into: &buf)
         FfiConverterUInt64.write(value.free, into: &buf)
@@ -5267,6 +5307,186 @@ public func FfiConverterTypeStoreCheck_lower(_ value: StoreCheck) -> RustBuffer 
 
 
 /**
+ * What activating a variant in one app copies first.
+ */
+public struct StoreCopy: Equatable, Hashable {
+    public var app: ModelApp
+    /**
+     * The store on the disk of the app's folder; none when that disk has
+     * no store, and the app cannot be given the model.
+     */
+    public var store: String?
+    /**
+     * The files another store on this Mac has and this one lacks.
+     */
+    public var files: UInt64
+    public var bytes: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(app: ModelApp, 
+        /**
+         * The store on the disk of the app's folder; none when that disk has
+         * no store, and the app cannot be given the model.
+         */store: String?, 
+        /**
+         * The files another store on this Mac has and this one lacks.
+         */files: UInt64, bytes: UInt64) {
+        self.app = app
+        self.store = store
+        self.files = files
+        self.bytes = bytes
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension StoreCopy: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStoreCopy: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StoreCopy {
+        return
+            try StoreCopy(
+                app: FfiConverterTypeModelApp.read(from: &buf), 
+                store: FfiConverterOptionString.read(from: &buf), 
+                files: FfiConverterUInt64.read(from: &buf), 
+                bytes: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: StoreCopy, into buf: inout [UInt8]) {
+        FfiConverterTypeModelApp.write(value.app, into: &buf)
+        FfiConverterOptionString.write(value.store, into: &buf)
+        FfiConverterUInt64.write(value.files, into: &buf)
+        FfiConverterUInt64.write(value.bytes, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStoreCopy_lift(_ buf: RustBuffer) throws -> StoreCopy {
+    return try FfiConverterTypeStoreCopy.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStoreCopy_lower(_ value: StoreCopy) -> RustBuffer {
+    return FfiConverterTypeStoreCopy.lower(value)
+}
+
+
+/**
+ * One store (a warm location) as the status and the settings show it.
+ */
+public struct StoreSetting: Equatable, Hashable {
+    public var name: String
+    public var path: String
+    /**
+     * The store in dedupd's own home, which cannot be removed.
+     */
+    public var primary: Bool
+    /**
+     * Its disk is attached.
+     */
+    public var attached: Bool
+    /**
+     * The apps whose folders are on its disk, which it serves.
+     */
+    public var apps: [ModelApp]
+    /**
+     * The size of its disk and the bytes free on it; 0 while it is away.
+     */
+    public var total: UInt64
+    public var free: UInt64
+
+    // Default memberwise initializers are never public by default, so we
+    // declare one manually.
+    public init(name: String, path: String, 
+        /**
+         * The store in dedupd's own home, which cannot be removed.
+         */primary: Bool, 
+        /**
+         * Its disk is attached.
+         */attached: Bool, 
+        /**
+         * The apps whose folders are on its disk, which it serves.
+         */apps: [ModelApp], 
+        /**
+         * The size of its disk and the bytes free on it; 0 while it is away.
+         */total: UInt64, free: UInt64) {
+        self.name = name
+        self.path = path
+        self.primary = primary
+        self.attached = attached
+        self.apps = apps
+        self.total = total
+        self.free = free
+    }
+
+    
+
+    
+}
+
+#if compiler(>=6)
+extension StoreSetting: Sendable {}
+#endif
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public struct FfiConverterTypeStoreSetting: FfiConverterRustBuffer {
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> StoreSetting {
+        return
+            try StoreSetting(
+                name: FfiConverterString.read(from: &buf), 
+                path: FfiConverterString.read(from: &buf), 
+                primary: FfiConverterBool.read(from: &buf), 
+                attached: FfiConverterBool.read(from: &buf), 
+                apps: FfiConverterSequenceTypeModelApp.read(from: &buf), 
+                total: FfiConverterUInt64.read(from: &buf), 
+                free: FfiConverterUInt64.read(from: &buf)
+        )
+    }
+
+    public static func write(_ value: StoreSetting, into buf: inout [UInt8]) {
+        FfiConverterString.write(value.name, into: &buf)
+        FfiConverterString.write(value.path, into: &buf)
+        FfiConverterBool.write(value.primary, into: &buf)
+        FfiConverterBool.write(value.attached, into: &buf)
+        FfiConverterSequenceTypeModelApp.write(value.apps, into: &buf)
+        FfiConverterUInt64.write(value.total, into: &buf)
+        FfiConverterUInt64.write(value.free, into: &buf)
+    }
+}
+
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStoreSetting_lift(_ buf: RustBuffer) throws -> StoreSetting {
+    return try FfiConverterTypeStoreSetting.lift(buf)
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+public func FfiConverterTypeStoreSetting_lower(_ value: StoreSetting) -> RustBuffer {
+    return FfiConverterTypeStoreSetting.lower(value)
+}
+
+
+/**
  * A stored file, by its content.
  */
 public struct StoredFile: Equatable, Hashable {
@@ -5606,6 +5826,11 @@ public struct Variant: Equatable, Hashable {
      * For every app: whether it can take this, how, at what cost, and why.
      */
     public var decisions: [Decision]
+    /**
+     * For every app: the store on the disk of its folder, and what of this
+     * variant that store lacks and Activate copies in from another store.
+     */
+    public var copies: [StoreCopy]
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
@@ -5629,7 +5854,11 @@ public struct Variant: Equatable, Hashable {
          */placedIn: [ModelApp], 
         /**
          * For every app: whether it can take this, how, at what cost, and why.
-         */decisions: [Decision]) {
+         */decisions: [Decision], 
+        /**
+         * For every app: the store on the disk of its folder, and what of this
+         * variant that store lacks and Activate copies in from another store.
+         */copies: [StoreCopy]) {
         self.kind = kind
         self.format = format
         self.name = name
@@ -5641,6 +5870,7 @@ public struct Variant: Equatable, Hashable {
         self.usableBy = usableBy
         self.placedIn = placedIn
         self.decisions = decisions
+        self.copies = copies
     }
 
     
@@ -5669,7 +5899,8 @@ public struct FfiConverterTypeVariant: FfiConverterRustBuffer {
                 weightsStored: FfiConverterBool.read(from: &buf), 
                 usableBy: FfiConverterSequenceTypeModelApp.read(from: &buf), 
                 placedIn: FfiConverterSequenceTypeModelApp.read(from: &buf), 
-                decisions: FfiConverterSequenceTypeDecision.read(from: &buf)
+                decisions: FfiConverterSequenceTypeDecision.read(from: &buf), 
+                copies: FfiConverterSequenceTypeStoreCopy.read(from: &buf)
         )
     }
 
@@ -5685,6 +5916,7 @@ public struct FfiConverterTypeVariant: FfiConverterRustBuffer {
         FfiConverterSequenceTypeModelApp.write(value.usableBy, into: &buf)
         FfiConverterSequenceTypeModelApp.write(value.placedIn, into: &buf)
         FfiConverterSequenceTypeDecision.write(value.decisions, into: &buf)
+        FfiConverterSequenceTypeStoreCopy.write(value.copies, into: &buf)
     }
 }
 
@@ -6469,7 +6701,7 @@ public func FfiConverterTypeJobState_lower(_ value: JobState) -> RustBuffer {
 public enum LocationKind: Equatable, Hashable, CaseIterable {
     
     /**
-     * The store on the internal disk.
+     * A store: the one in dedupd's home, or another on its own disk.
      */
     case store
     /**
@@ -8236,6 +8468,56 @@ fileprivate struct FfiConverterSequenceTypeSearchHit: FfiConverterRustBuffer {
         seq.reserveCapacity(Int(len))
         for _ in 0 ..< len {
             seq.append(try FfiConverterTypeSearchHit.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeStoreCopy: FfiConverterRustBuffer {
+    typealias SwiftType = [StoreCopy]
+
+    public static func write(_ value: [StoreCopy], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeStoreCopy.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [StoreCopy] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [StoreCopy]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeStoreCopy.read(from: &buf))
+        }
+        return seq
+    }
+}
+
+#if swift(>=5.8)
+@_documentation(visibility: private)
+#endif
+fileprivate struct FfiConverterSequenceTypeStoreSetting: FfiConverterRustBuffer {
+    typealias SwiftType = [StoreSetting]
+
+    public static func write(_ value: [StoreSetting], into buf: inout [UInt8]) {
+        let len = Int32(value.count)
+        writeInt(&buf, len)
+        for item in value {
+            FfiConverterTypeStoreSetting.write(item, into: &buf)
+        }
+    }
+
+    public static func read(from buf: inout (data: Data, offset: Data.Index)) throws -> [StoreSetting] {
+        let len: Int32 = try readInt(&buf)
+        var seq = [StoreSetting]()
+        seq.reserveCapacity(Int(len))
+        for _ in 0 ..< len {
+            seq.append(try FfiConverterTypeStoreSetting.read(from: &buf))
         }
         return seq
     }

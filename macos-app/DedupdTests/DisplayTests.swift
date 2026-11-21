@@ -191,7 +191,7 @@ struct DisplayTests {
         return Variant(
             kind: format == .gguf ? .gguf : .files, format: format, name: "v", spec: "a/b", files: 1, bytes: 10,
             storedBytes: storedBytes, weightsStored: weightsStored ?? (storedBytes >= 10), usableBy: judged.usableBy,
-            placedIn: placedIn, decisions: decisions
+            placedIn: placedIn, decisions: decisions, copies: []
         )
     }
 

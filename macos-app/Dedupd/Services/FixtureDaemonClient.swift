@@ -37,6 +37,8 @@ actor FixtureDaemonClient: DaemonClient {
     /// the backup, which holds every model).
     var archives = FixtureData.archives
     var archivedTo: [String: String] = [:]
+    /// The stores, the one in dedupd's home first.
+    var stores = FixtureData.stores
     var library: UInt64 = 1
     private var listeners: [UUID: AsyncStream<DaemonSignal>.Continuation] = [:]
 
@@ -155,7 +157,7 @@ actor FixtureDaemonClient: DaemonClient {
     func status(at address: String) async throws -> DaemonStatus {
         try await answering(address)
         return FixtureData.status(
-            jobs: jobs, library: models, cleaned: cleaned, offloaded: offloaded, archives: archives
+            jobs: jobs, library: models, cleaned: cleaned, offloaded: offloaded, archives: archives, stores: stores
         )
     }
 
@@ -206,7 +208,8 @@ actor FixtureDaemonClient: DaemonClient {
     func locations(at address: String) async throws -> Locations {
         try await answering(address)
         return FixtureData.locations(
-            of: models, cleaned: cleaned, offloaded: offloaded, archives: archives, archivedTo: archivedTo
+            of: models, cleaned: cleaned, offloaded: offloaded, archives: archives, archivedTo: archivedTo,
+            stores: stores
         )
     }
 
@@ -275,7 +278,18 @@ actor FixtureDaemonClient: DaemonClient {
         try await answering(address)
         settings.archives = archives
         settings.archive = archives.first(where: \.backup)?.path
+        settings.stores = stores
         return settings
+    }
+
+    func setStores(_ entries: [ArchiveEntry], at address: String) async throws -> DaemonSettings {
+        try await answering(address)
+        if moving?.running == true {
+            throw ClientError.Failed(message: "dedupd is working on a model; change the stores when that has finished")
+        }
+        stores = try FixtureData.stores(from: entries, known: stores)
+        changed()
+        return try await settings(at: address)
     }
 
     func setArchives(_ entries: [ArchiveEntry], backup: String?, at address: String) async throws -> DaemonSettings {

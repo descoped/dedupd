@@ -76,6 +76,9 @@ pub struct DaemonStatus {
     /// Every archive, the backup archive first.
     #[serde(default)]
     pub archives: Vec<ArchiveSetting>,
+    /// Every store, the one in dedupd's home first.
+    #[serde(default)]
+    pub stores: Vec<StoreSetting>,
     pub store_files: u64,
     pub store_bytes: u64,
     /// Bytes of app files that share disk blocks with the store.
@@ -147,6 +150,31 @@ pub struct ArchiveSetting {
     pub same_disk_as_store: bool,
 }
 
+/// One store (a warm location) as the status and the settings show it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ffi", derive(uniffi::Record))]
+pub struct StoreSetting {
+    pub name: String,
+    pub path: String,
+    /// The store in dedupd's own home, which cannot be removed.
+    pub primary: bool,
+    /// Its disk is attached.
+    pub attached: bool,
+    /// The apps whose folders are on its disk, which it serves.
+    pub apps: Vec<crate::app::App>,
+    /// The size of its disk and the bytes free on it; 0 while it is away.
+    pub total: u64,
+    pub free: u64,
+}
+
+/// The request body of `PUT config/stores`: the stores besides the one in
+/// dedupd's home. A picked folder becomes the `dedupd` folder in it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StoresBody {
+    pub stores: Vec<ArchiveEntry>,
+}
+
 /// One archive in a request to change the list: its name (empty for the
 /// disk's name) and the folder picked for it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -180,6 +208,9 @@ pub struct DaemonSettings {
     /// Every archive, the backup archive first.
     #[serde(default)]
     pub archives: Vec<ArchiveSetting>,
+    /// Every store, the one in dedupd's home first.
+    #[serde(default)]
+    pub stores: Vec<StoreSetting>,
     pub bionic_models: String,
     pub ollama_models: String,
     pub hf_cache: String,

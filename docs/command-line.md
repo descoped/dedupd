@@ -52,7 +52,7 @@ The apps are named `bionic`, `ollama` and `hf` (the Hugging Face cache; `mlx` an
 |---|---|
 | `dedupd backup [dir]` | Copy the store and the database to the backup archive. |
 | `dedupd archive <repo> [--to <name>]` | Move one model to an archive: out of every app and off the internal disk. Without `--to`, the backup archive, or the only archive there is. Lists what would happen; `--apply` does it. |
-| `dedupd restore <repo>` | Copy an archived model back from any attached archive that holds it. |
+| `dedupd restore <repo> [--to <name>]` | Copy an archived model back into the store named, from another store or any attached archive that holds it. Without `--to`, the store in dedupd's home. |
 
 ## Cleaning up
 
@@ -115,6 +115,13 @@ archive = "/Volumes/Archive/dedupd"
 [[archives]]
 name = "Drawer"
 path = "/Volumes/Drawer/dedupd"
+
+# More stores, each on an APFS disk of its own that holds app folders: the apps
+# whose folders are on that disk are given models from it. The store in dedupd's
+# home serves the internal disk. The app's Storage screen edits this list.
+[[stores]]
+name = "Envoy"
+path = "/Volumes/Envoy/dedupd"
 
 # The address the daemon listens on. It must be an address of this Mac itself
 # (127.0.0.1, [::1] or localhost); any other is refused.

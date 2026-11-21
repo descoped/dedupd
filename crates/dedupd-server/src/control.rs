@@ -9,8 +9,8 @@ use axum::body::{Body, Bytes};
 use axum::http::{Method, StatusCode, header};
 use axum::response::Response;
 use dedupd_api::activity::ActivityList;
-use dedupd_api::app::AppList;
-use dedupd_api::daemon::{ArchiveSetting, ArchivesBody};
+use dedupd_api::app::{App, AppList};
+use dedupd_api::daemon::{ArchiveSetting, ArchivesBody, StoreSetting, StoresBody};
 use dedupd_api::daemon::{
     DaemonEvent, DaemonInfo, DaemonSettings, DaemonStatus, LogTail, Setting, Started,
 };
@@ -80,6 +80,43 @@ fn archive_settings(server: &Server) -> Vec<ArchiveSetting> {
         .collect()
 }
 
+/// The stores the daemon uses now, the primary store first, each with the
+/// apps whose folders are on its disk and the room there.
+fn store_settings(server: &Server) -> Vec<StoreSetting> {
+    let engine = &server.engine;
+    engine
+        .store
+        .stores()
+        .into_iter()
+        .map(|s| {
+            let attached = s.primary || s.home.store_dir().is_dir();
+            let view = attached.then(|| engine.store.named(&s.name).ok()).flatten();
+            let (total, free) = view
+                .as_ref()
+                .and_then(|v| v.volume().ok())
+                .unwrap_or((0, 0));
+            let apps = App::ALL
+                .into_iter()
+                .filter(|app| {
+                    engine
+                        .store
+                        .for_folder(engine.dirs.models(*app))
+                        .is_ok_and(|v| v.root().home.root() == s.home.root())
+                })
+                .collect();
+            StoreSetting {
+                path: path_text(s.home.root()),
+                name: s.name,
+                primary: s.primary,
+                attached,
+                apps,
+                total,
+                free,
+            }
+        })
+        .collect()
+}
+
 fn status_answer(server: &Server) -> anyhow::Result<DaemonStatus> {
     let s = status::status(&server.engine.db(), &server.engine.store)?;
     let archive_home = server.engine.store.archive();
@@ -92,6 +129,7 @@ fn status_answer(server: &Server) -> anyhow::Result<DaemonStatus> {
         archive_path: archive_home.as_ref().map(|a| path_text(a.root())),
         archive_attached: archive_home.as_ref().is_some_and(Home::attached),
         archives: archive_settings(server),
+        stores: store_settings(server),
         store_files: s.store_files,
         store_bytes: s.store_bytes,
         shared_bytes: s.shared_bytes,
@@ -286,7 +324,12 @@ async fn move_model(server: &Arc<Server>, kind: MoveKind, body: MoveBody) -> Res
                 body.to.as_deref(),
             )?
             .answer()),
-            MoveKind::Restore => ok(archive::restore_plan(&e.db, &e.store, &body.repo)?.answer()),
+            MoveKind::Restore => {
+                ok(
+                    archive::restore_plan(&e.db, &e.store, &body.repo, body.to.as_deref())?
+                        .answer(),
+                )
+            }
         })
     })
     .await;
@@ -304,7 +347,7 @@ fn config_answer(server: &Server) -> anyhow::Result<DaemonSettings> {
     let fixed = |c: &Config| {
         let mut c = c.clone();
         (c.max_connections, c.speed_limit) = (None, None);
-        (c.archive, c.archives) = (None, None);
+        (c.archive, c.archives, c.stores) = (None, None, None);
         serde_json::to_value(c).unwrap_or_default()
     };
     Ok(DaemonSettings {
@@ -313,6 +356,7 @@ fn config_answer(server: &Server) -> anyhow::Result<DaemonSettings> {
         hf_endpoint: file.hf_endpoint().to_string(),
         archive: file.archive.as_deref().map(path_text),
         archives: archive_settings(server),
+        stores: store_settings(server),
         bionic_models: path_text(file.bionic_models.as_ref().unwrap_or(&dirs.bionic)),
         ollama_models: path_text(file.ollama_models.as_ref().unwrap_or(&dirs.ollama)),
         hf_cache: path_text(file.hf_cache.as_ref().unwrap_or(&dirs.hf_cache)),
@@ -444,7 +488,7 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                 let repo = repo.clone();
                 blocking(move || {
                     let installed = Installed::detect(&engine.dirs);
-                    library::model(&engine.db, &engine.store, &repo, &installed)
+                    library::model(&engine.db, &engine.store, &engine.dirs, &repo, &installed)
                 })
                 .await
             };
@@ -560,6 +604,52 @@ pub(crate) async fn handle(server: &Arc<Server>, call: &Call, rest: &[&str]) -> 
                     ok(settings)
                 }
                 // A value the setting does not take.
+                Ok(Err(e)) => error(StatusCode::BAD_REQUEST, format!("{e:#}")),
+                Err(e) => internal(format!("{e:#}")),
+            }
+        }
+        (&Method::PUT, ["config", "stores"]) => {
+            // A store that goes away under a move or a download would leave
+            // it half done.
+            if let Some(now) = server.moving.borrow().as_ref().filter(|m| m.running) {
+                return error(
+                    StatusCode::CONFLICT,
+                    format!(
+                        "dedupd is working on {} ({}); change the stores when that has finished",
+                        now.repo,
+                        now.kind.as_str()
+                    ),
+                );
+            }
+            let wanted: StoresBody = match body(call) {
+                Ok(b) => b,
+                Err(refused) => return *refused,
+            };
+            let told = server.clone();
+            let server = server.clone();
+            let written = blocking(move || {
+                let list: Vec<NamedArchive> = wanted
+                    .stores
+                    .iter()
+                    .map(|s| NamedArchive {
+                        name: s.name.clone(),
+                        path: s.path.clone().into(),
+                    })
+                    .collect();
+                let config = match Config::set_stores(&server.home, &list) {
+                    Ok(config) => config,
+                    Err(e) => return Ok(Err(e)),
+                };
+                // At once: the next placement, download and restore use them.
+                server.engine.store.set_stores(config.store_list());
+                config_answer(&server).map(Ok)
+            })
+            .await;
+            match written {
+                Ok(Ok(settings)) => {
+                    told.touch();
+                    ok(settings)
+                }
                 Ok(Err(e)) => error(StatusCode::BAD_REQUEST, format!("{e:#}")),
                 Err(e) => internal(format!("{e:#}")),
             }

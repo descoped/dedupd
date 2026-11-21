@@ -448,12 +448,12 @@ void uniffi_dedupd_client_fn_func_restart(RustBuffer address, RustCallStatus *_N
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTORE_MODEL
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTORE_MODEL
-void uniffi_dedupd_client_fn_func_restore_model(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
+void uniffi_dedupd_client_fn_func_restore_model(RustBuffer address, RustBuffer repo, RustBuffer into, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTORE_PLAN
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_RESTORE_PLAN
-RustBuffer uniffi_dedupd_client_fn_func_restore_plan(RustBuffer address, RustBuffer repo, RustCallStatus *_Nonnull out_status
+RustBuffer uniffi_dedupd_client_fn_func_restore_plan(RustBuffer address, RustBuffer repo, RustBuffer into, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SCAN
@@ -474,6 +474,11 @@ RustBuffer uniffi_dedupd_client_fn_func_set_archives(RustBuffer address, RustBuf
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SET_FAVORITE
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SET_FAVORITE
 RustBuffer uniffi_dedupd_client_fn_func_set_favorite(RustBuffer address, RustBuffer repo, int8_t favorite, RustCallStatus *_Nonnull out_status
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SET_STORES
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SET_STORES
+RustBuffer uniffi_dedupd_client_fn_func_set_stores(RustBuffer address, RustBuffer stores, RustCallStatus *_Nonnull out_status
 );
 #endif
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_FN_FUNC_SETTINGS
@@ -959,6 +964,12 @@ uint16_t uniffi_dedupd_client_checksum_func_set_archives(void
 #ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SET_FAVORITE
 #define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SET_FAVORITE
 uint16_t uniffi_dedupd_client_checksum_func_set_favorite(void
+    
+);
+#endif
+#ifndef UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SET_STORES
+#define UNIFFI_FFIDEF_UNIFFI_DEDUPD_CLIENT_CHECKSUM_FUNC_SET_STORES
+uint16_t uniffi_dedupd_client_checksum_func_set_stores(void
     
 );
 #endif

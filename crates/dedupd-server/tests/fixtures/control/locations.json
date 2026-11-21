@@ -50,6 +50,7 @@
     "present": true,
     "shared_bytes": 0
   },
+  "stores": [],
   "volume_free": 400000000000,
   "volume_total": 1000000000000
 }

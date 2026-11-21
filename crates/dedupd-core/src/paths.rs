@@ -179,6 +179,71 @@ pub fn default_archive_name(path: &Path) -> String {
         .unwrap_or_else(|| "Archive".to_string())
 }
 
+/// The nearest folder of `path` that is there: the path itself, or a
+/// folder above it.
+fn nearest_there(path: &Path) -> &Path {
+    let mut there = path;
+    while !there.exists() {
+        match there.parent() {
+            Some(parent) => there = parent,
+            None => break,
+        }
+    }
+    there
+}
+
+/// The id of the volume `path` is on (its nearest folder that is there),
+/// but never the root volume for a folder under `/Volumes` whose disk is
+/// away: that fails.
+pub fn volume_of(path: &Path) -> std::io::Result<u64> {
+    use std::os::unix::fs::MetadataExt;
+    let there = nearest_there(path);
+    if there == Path::new("/Volumes") || there == Path::new("/") && path.starts_with("/Volumes") {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("{} is not attached", path.display()),
+        ));
+    }
+    Ok(std::fs::metadata(there)?.dev())
+}
+
+/// Whether `path` (its nearest folder that is there) is on an APFS volume.
+pub fn is_apfs(path: &Path) -> std::io::Result<bool> {
+    use std::os::unix::ffi::OsStrExt;
+    let there = nearest_there(path);
+    let c = std::ffi::CString::new(there.as_os_str().as_bytes())?;
+    // SAFETY: `statfs` is plain data, and `c` is a valid C string that
+    // outlives the call.
+    let stat = unsafe {
+        let mut stat: libc::statfs = std::mem::zeroed();
+        if libc::statfs(c.as_ptr(), &mut stat) != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        stat
+    };
+    let name: Vec<u8> = stat
+        .f_fstypename
+        .iter()
+        .take_while(|c| **c != 0)
+        .map(|c| *c as u8)
+        .collect();
+    Ok(name == b"apfs")
+}
+
+/// A store (a warm location) as dedupd uses it: its name and its folder,
+/// which has the layout of a home folder (`store/`, `tmp/`). The primary
+/// store is the one in dedupd's own home; another store is on another APFS
+/// volume and serves the app folders on that volume.
+#[derive(Debug, Clone)]
+pub struct StoreRoot {
+    pub name: String,
+    pub home: Home,
+    pub primary: bool,
+}
+
+/// The name of the store in dedupd's own home.
+pub const PRIMARY_STORE: &str = "Internal";
+
 #[cfg(test)]
 mod tests {
     use super::*;

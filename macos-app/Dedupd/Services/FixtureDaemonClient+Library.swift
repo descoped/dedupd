@@ -126,7 +126,7 @@ extension FixtureDaemonClient {
     }
 
     /// Restoring copies the files back and puts the model into no app.
-    func restore(_ repo: String, at address: String) async throws {
+    func restore(_ repo: String, into store: String?, at address: String) async throws {
         try await answering(address)
         let model = try held(repo)
         guard model.isArchived else {
@@ -138,7 +138,11 @@ extension FixtureDaemonClient {
             text: "Restored: \(FixtureData.counted(model.storedFiles)), "
                 + ByteFormat.string(model.storedBytes)
         ))
-        moved(kind: .restore, repo: repo, files: model.storedFiles, bytes: model.storedBytes)
+        let target = store ?? FixtureData.primaryStore
+        guard stores.contains(where: { $0.name == target && $0.attached }) else {
+            throw ClientError.Failed(message: "no store is named \(target)")
+        }
+        moved(kind: .restore, repo: repo, archive: target, files: model.storedFiles, bytes: model.storedBytes)
         change(repo) { $0.archivedAt = nil }
     }
 

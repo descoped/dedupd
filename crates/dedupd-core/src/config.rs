@@ -1,6 +1,6 @@
 //! Settings read from `<home>/config.toml`. Every field is optional.
 
-use crate::paths::{Archive, Home, default_archive_name};
+use crate::paths::{Archive, Home, PRIMARY_STORE, StoreRoot, default_archive_name};
 use anyhow::{Context, Result};
 use dedupd_api::daemon::Setting;
 use serde::Deserialize;
@@ -20,6 +20,10 @@ pub struct Config {
     /// models the owner archives to them. The backup archive may be listed
     /// here too, which gives it its name.
     pub archives: Option<Vec<NamedArchive>>,
+    /// More stores (warm locations), each on an APFS volume of its own,
+    /// besides the one in dedupd's home. A store serves the app folders on
+    /// its volume.
+    pub stores: Option<Vec<NamedArchive>>,
     /// Address the daemon listens on.
     pub listen: Option<String>,
     /// Hugging Face endpoint to fetch from.
@@ -216,6 +220,103 @@ impl Config {
         self.archive.clone().map(Home::new)
     }
 
+    /// The stores besides the one in dedupd's home, in the order the file
+    /// lists them.
+    pub fn store_list(&self) -> Vec<StoreRoot> {
+        self.stores
+            .clone()
+            .unwrap_or_default()
+            .into_iter()
+            .map(|s| StoreRoot {
+                name: s.name,
+                home: Home::new(&s.path),
+                primary: false,
+            })
+            .collect()
+    }
+
+    /// Write the list of stores besides the one in dedupd's home. A picked
+    /// folder becomes the `dedupd` folder in it and a missing name the
+    /// disk's; a folder that is a store already stays as it is. A new store
+    /// must be on an attached APFS volume that has no store yet (the home's
+    /// included). Refused, with nothing written, when a name or a folder is
+    /// there twice, or a rule does not hold.
+    pub fn set_stores(home: &Home, stores: &[NamedArchive]) -> Result<Self> {
+        let known: Vec<PathBuf> = Self::load(home)?
+            .store_list()
+            .into_iter()
+            .map(|s| s.home.root().to_path_buf())
+            .collect();
+        let mut list: Vec<NamedArchive> = Vec::new();
+        let mut volumes: Vec<u64> = vec![crate::paths::volume_of(&home.store_dir())?];
+        for s in stores {
+            if !s.path.is_absolute() {
+                anyhow::bail!(
+                    "a store's folder must be a full path, not {}",
+                    s.path.display()
+                );
+            }
+            let is_known = known.iter().any(|k| k == &s.path);
+            let path = if is_known {
+                s.path.clone()
+            } else {
+                archive_folder_for(&s.path)
+            };
+            let name = match s.name.trim() {
+                "" => default_archive_name(&path),
+                name => name.to_string(),
+            };
+            if name.eq_ignore_ascii_case(PRIMARY_STORE)
+                || list.iter().any(|b| b.name.eq_ignore_ascii_case(&name))
+            {
+                anyhow::bail!("two stores are named {name}; give each its own name");
+            }
+            if list.iter().any(|b| b.path == path) {
+                anyhow::bail!("{} is listed twice", path.display());
+            }
+            if path.starts_with(home.root()) || home.root().starts_with(&path) {
+                anyhow::bail!(
+                    "{} is dedupd's own folder, which has its store already",
+                    path.display()
+                );
+            }
+            // A store already in use keeps its place while its disk is away.
+            if !is_known || Home::new(&path).attached() {
+                let volume = crate::paths::volume_of(&path)
+                    .with_context(|| format!("the disk of {} is not attached", path.display()))?;
+                if !crate::paths::is_apfs(&path)? {
+                    anyhow::bail!(
+                        "{} is not on an APFS volume; a store needs one, because apps get clones of its files",
+                        path.display()
+                    );
+                }
+                if volumes.contains(&volume) {
+                    anyhow::bail!(
+                        "the disk of {} has a store already; one store serves every app folder on a disk",
+                        path.display()
+                    );
+                }
+                volumes.push(volume);
+            }
+            list.push(NamedArchive { name, path });
+        }
+        Self::edit(home, |doc| {
+            if list.is_empty() {
+                doc.remove("stores");
+            } else {
+                let mut tables = toml_edit::ArrayOfTables::new();
+                for s in &list {
+                    let mut t = toml_edit::Table::new();
+                    t["name"] = toml_edit::value(s.name.as_str());
+                    t["path"] = toml_edit::value(s.path.to_string_lossy().as_ref());
+                    tables.push(t);
+                }
+                doc["stores"] = toml_edit::Item::ArrayOfTables(tables);
+            }
+            Ok(())
+        })
+    }
+
     /// Every archive: the backup archive first, then the others in the
     /// order the file lists them. The backup archive is named by its entry
     /// in `archives` when it has one, otherwise after its disk.
@@ -340,6 +441,48 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn a_store_is_refused_where_it_could_not_serve_its_own_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(dir.path().join("home"));
+        std::fs::create_dir_all(home.store_dir()).unwrap();
+        let entry = |name: &str, path: &Path| NamedArchive {
+            name: name.into(),
+            path: path.to_path_buf(),
+        };
+        // On the disk of dedupd's home, which has its store already.
+        let other = dir.path().join("elsewhere");
+        let refused = Config::set_stores(&home, &[entry("Other", &other)]).unwrap_err();
+        assert!(
+            refused.to_string().contains("has a store already"),
+            "{refused:#}"
+        );
+        // Inside the home, a relative folder, and the primary's name.
+        let inside = Config::set_stores(&home, &[entry("In", home.root())]).unwrap_err();
+        assert!(
+            inside.to_string().contains("dedupd's own folder"),
+            "{inside:#}"
+        );
+        let relative = Config::set_stores(&home, &[entry("R", Path::new("x"))]).unwrap_err();
+        assert!(relative.to_string().contains("full path"), "{relative:#}");
+        let named = Config::set_stores(&home, &[entry("internal", Path::new("/Volumes/Gone"))])
+            .unwrap_err();
+        assert!(named.to_string().contains("named"), "{named:#}");
+        // A disk that is not attached cannot be added.
+        let away = Config::set_stores(&home, &[entry("Gone", Path::new("/Volumes/dedupd-none"))])
+            .unwrap_err();
+        assert!(away.to_string().contains("not attached"), "{away:#}");
+        // Nothing was written; an empty list is accepted.
+        assert!(Config::load(&home).unwrap().stores.is_none());
+        assert!(
+            Config::set_stores(&home, &[])
+                .unwrap()
+                .store_list()
+                .is_empty()
+        );
+    }
 
     #[test]
     fn only_an_address_of_this_mac_itself_is_listened_on() {

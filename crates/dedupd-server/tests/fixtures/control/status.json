@@ -45,5 +45,20 @@
   "shared_bytes": 300008,
   "store_bytes": 300008,
   "store_files": 2,
+  "stores": [
+    {
+      "apps": [
+        "bionic",
+        "ollama",
+        "hf"
+      ],
+      "attached": true,
+      "free": 400000000000,
+      "name": "Internal",
+      "path": "/Users/example/home",
+      "primary": true,
+      "total": 1000000000000
+    }
+  ],
   "version": "0.0.0"
 }

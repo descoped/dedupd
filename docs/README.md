@@ -54,7 +54,8 @@ with a command line and a macOS app.
 
 - macOS 26 on Apple silicon.
 - A file system with copy-on-write file cloning. On macOS this is APFS.
-- The dedupd store and the applications' model directories on the same volume. A clone cannot span volumes.
+- A dedupd store on each volume that holds applications' model directories. A clone cannot span volumes; the
+  store in dedupd's home serves the internal disk, and a store can be added on another disk.
 
 dedupd does not substitute symbolic links, hard links or copies when cloning is unavailable.
 

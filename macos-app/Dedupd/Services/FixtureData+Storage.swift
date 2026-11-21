@@ -15,7 +15,7 @@ extension FixtureData {
     /// also of an archived model, and so every model whole.
     static func locations(
         of library: [LibraryModel], cleaned: Bool, offloaded: Bool = false, archives: [ArchiveSetting] = archives,
-        archivedTo: [String: String] = [:]
+        archivedTo: [String: String] = [:], stores: [StoreSetting] = stores
     ) -> Locations {
         let store = stored(of: library, cleaned: cleaned, offloaded: offloaded)
         let backup = (
@@ -29,6 +29,7 @@ extension FixtureData {
                 kind: .store, app: nil, name: nil, backup: false, path: "/Users/example/.dedupd/store", present: true,
                 files: store.files, bytes: store.bytes, sharedBytes: 0, models: UInt64(library.count)
             ),
+            stores: storeLocations(stores),
             archives: archives.map { archive in
                 // The backup has every file; another archive, the models
                 // archived to it. A disk that is away counts as nothing.

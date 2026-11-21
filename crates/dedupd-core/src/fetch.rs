@@ -340,11 +340,13 @@ impl Fetcher {
         let turn = InFlight::enter(&self.in_flight, key.clone());
         let _guard = turn.lock.lock().await;
 
+        // Any store on this Mac will do: placing copies it into the store
+        // the app needs, which is cheaper than another download.
         if let Expect::Sha256(h) = expect
-            && store.contains(h)
+            && let Some(path) = store.find(h)
         {
-            // One stat of a file on the internal disk.
-            let size = std::fs::metadata(store.blob_path(h))?.len();
+            // One stat of a stored file.
+            let size = std::fs::metadata(path)?.len();
             watch.bytes(size as i64);
             return Ok(Fetched {
                 sha256: h.clone(),

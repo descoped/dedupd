@@ -40,7 +40,7 @@ pub fn store_totals(db: &Db, store: &Store) -> Result<(u64, u64)> {
 pub fn store_totals_of(blobs: &[crate::db::BlobRow], store: &Store) -> (u64, u64) {
     let here: Vec<u64> = blobs
         .iter()
-        .filter(|b| store.contains(&b.sha256))
+        .filter(|b| store.contains_anywhere(&b.sha256))
         .map(|b| b.size)
         .collect();
     (here.len() as u64, here.iter().sum())

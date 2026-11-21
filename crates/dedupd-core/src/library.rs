@@ -15,7 +15,7 @@ use anyhow::Result;
 use dedupd_api::app::App;
 use dedupd_api::library::{
     LibraryModel, Location, LocationKind, Locations, ModelDetail, Revision, RevisionFile,
-    UpstreamCheck, UpstreamState, Variant, VariantKind,
+    StoreCopy, UpstreamCheck, UpstreamState, Variant, VariantKind,
 };
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -114,18 +114,32 @@ fn variant_rows(db: &Db, repo: &str, entries: &[TreeEntry]) -> Result<VariantRow
 pub fn local_variants(
     db: &Mutex<Db>,
     store: &Store,
+    dirs: &AppDirs,
     repo: &str,
     entries: &[TreeEntry],
     formats: &[String],
     installed: &Installed,
 ) -> Result<Vec<Variant>> {
     let rows = variant_rows(&crate::db::lock(db), repo, entries)?;
-    Ok(variants_of(&rows, store, repo, entries, formats, installed))
+    let serving = serving(store, dirs);
+    Ok(variants_of(
+        &rows, store, &serving, repo, entries, formats, installed,
+    ))
+}
+
+/// The store on the disk of each app's folder; none where that disk has
+/// no store.
+fn serving(store: &Store, dirs: &AppDirs) -> Vec<(App, Option<Store>)> {
+    App::ALL
+        .into_iter()
+        .map(|app| (app, store.for_folder(dirs.models(app)).ok()))
+        .collect()
 }
 
 fn variants_of(
     rows: &VariantRows,
     store: &Store,
+    serving: &[(App, Option<Store>)],
     repo: &str,
     entries: &[TreeEntry],
     formats: &[String],
@@ -160,24 +174,51 @@ fn variants_of(
                 .find(|e| e.path == "config.json")
                 .and_then(|e| sha_of(&e.path));
             let judged = profile::decide_for(store, installed, &refusals, ggufs, formats, config);
+            // What Activate copies first: the files another store has and
+            // the one on the app's disk lacks.
+            let copies = serving
+                .iter()
+                .map(|(app, there)| {
+                    let lacking: Vec<u64> = match there {
+                        None => Vec::new(),
+                        Some(there) => v
+                            .files
+                            .iter()
+                            .filter(|e| {
+                                sha_of(&e.path).is_some_and(|sha| {
+                                    !there.contains(sha) && store.contains_anywhere(sha)
+                                })
+                            })
+                            .map(|e| e.size)
+                            .collect(),
+                    };
+                    StoreCopy {
+                        app: *app,
+                        store: there.as_ref().map(|s| s.root().name.clone()),
+                        files: lacking.len() as u64,
+                        bytes: lacking.iter().sum(),
+                    }
+                })
+                .collect();
             Variant {
                 spec: spec_of(repo, &v),
                 usable_by: judged.ready(),
                 format: judged.format,
                 placed_in,
                 decisions: judged.decisions,
+                copies,
                 files: v.files.len() as u64,
                 bytes: v.bytes,
                 stored_bytes: v
                     .files
                     .iter()
-                    .filter(|e| sha_of(&e.path).is_some_and(|sha| store.contains(sha)))
+                    .filter(|e| sha_of(&e.path).is_some_and(|sha| store.contains_anywhere(sha)))
                     .map(|e| e.size)
                     .sum(),
                 weights_stored: !v.weights.is_empty()
                     && v.weights
                         .iter()
-                        .all(|w| sha_of(w).is_some_and(|sha| store.contains(sha))),
+                        .all(|w| sha_of(w).is_some_and(|sha| store.contains_anywhere(sha))),
                 kind: v.kind,
                 name: v.name,
             }
@@ -198,6 +239,7 @@ pub fn presence(db: &Db) -> Result<BTreeMap<String, Vec<App>>> {
 pub fn model(
     db: &Mutex<Db>,
     store: &Store,
+    dirs: &AppDirs,
     repo: &str,
     installed: &Installed,
 ) -> Result<Option<ModelDetail>> {
@@ -250,9 +292,12 @@ pub fn model(
     for (row, entries) in rows.iter().zip(&listed) {
         let mut files = Vec::with_capacity(entries.len());
         for (e, sha) in entries {
-            let stored = sha.as_deref().is_some_and(|s| store.contains(s));
+            let stored = sha.as_deref().is_some_and(|s| store.contains_anywhere(s));
             if readme.is_none() && stored && e.path.eq_ignore_ascii_case("README.md") {
-                readme = sha.as_deref().and_then(|s| read_text(&store.blob_path(s)));
+                readme = sha
+                    .as_deref()
+                    .and_then(|s| store.find(s))
+                    .and_then(|p| read_text(&p));
             }
             files.push(RevisionFile {
                 path: e.path.clone(),
@@ -289,9 +334,11 @@ pub fn model(
         .next()
         .map(|files| files.into_iter().map(|(e, _)| e).collect())
         .unwrap_or_default();
+    let serving = serving(store, dirs);
     let variants = variants_of(
         &variant_rows,
         store,
+        &serving,
         &name,
         &newest,
         &model.meta.formats,
@@ -365,8 +412,31 @@ pub fn locations(db: &Mutex<Db>, store: &Store, dirs: &AppDirs) -> Result<Locati
             totals,
         )
     };
-    let (files, bytes) = crate::status::store_totals_of(&blobs, store);
-    let (volume_total, volume_free) = store.volume()?;
+    // The primary store by what it holds itself; with no other store, that
+    // is everything dedupd stores on this Mac.
+    let primary = store.primary();
+    let (files, bytes, _) = on_archive(&primary.root().home, &blobs, &by_repo);
+    let (volume_total, volume_free) = primary.volume()?;
+    let stores: Vec<Location> = store
+        .stores()
+        .into_iter()
+        .filter(|s| !s.primary)
+        .map(|s| {
+            let (files, bytes, models) = on_archive(&s.home, &blobs, &by_repo);
+            Location {
+                kind: LocationKind::Store,
+                app: None,
+                name: Some(s.name),
+                backup: false,
+                path: s.home.store_dir().to_string_lossy().into_owned(),
+                present: s.home.store_dir().is_dir(),
+                files,
+                bytes,
+                shared_bytes: 0,
+                models,
+            }
+        })
+        .collect();
     let mut apps = Vec::new();
     for (app, totals) in App::ALL.into_iter().zip(app_totals) {
         let path = match app {
@@ -402,6 +472,7 @@ pub fn locations(db: &Mutex<Db>, store: &Store, dirs: &AppDirs) -> Result<Locati
             shared_bytes: 0,
             models: repos,
         },
+        stores,
         archives: store
             .archives()
             .into_iter()

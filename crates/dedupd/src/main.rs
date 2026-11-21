@@ -99,6 +99,9 @@ enum Command {
     Restore {
         /// The repository, as org/repo
         repo: String,
+        /// The store to copy it into, by its name [default: the store in dedupd's home]
+        #[arg(long, value_name = "NAME")]
+        to: Option<String>,
     },
     /// Bring models the apps already hold into the store, without changing the apps' files
     Adopt {
@@ -240,6 +243,7 @@ pub fn open(home: Option<PathBuf>, endpoint: Option<String>) -> Result<Opened> {
         store: {
             let store = Store::open(&home)?;
             store.set_archives(config.archive_list());
+            store.set_stores(config.store_list());
             store
         },
         db: Mutex::new(Db::open(&home.db_path())?),
@@ -588,6 +592,33 @@ fn cmd_status(o: &Opened, json: bool) -> Result<()> {
         "  {} of app files share these blocks instead of being copies",
         human(s.shared_bytes)
     );
+    for st in o.engine.store.stores().into_iter().filter(|s| !s.primary) {
+        let apps: Vec<&str> = App::ALL
+            .into_iter()
+            .filter(|app| {
+                o.engine
+                    .store
+                    .for_folder(o.engine.dirs.models(*app))
+                    .is_ok_and(|v| v.root().home.root() == st.home.root())
+            })
+            .map(App::as_str)
+            .collect();
+        println!(
+            "Store {}: {}{}{}",
+            st.name,
+            st.home.store_dir().display(),
+            if st.home.store_dir().is_dir() {
+                ""
+            } else {
+                " (disk not attached)"
+            },
+            if apps.is_empty() {
+                String::new()
+            } else {
+                format!(", serves {}", apps.join(", "))
+            }
+        );
+    }
     for a in o.engine.store.archives() {
         println!(
             "Archive {}{}: {}{}",
@@ -716,7 +747,7 @@ async fn main() -> Result<()> {
         Command::Archive { repo, to, apply } => {
             lifecycle::cmd_archive(&o, &repo, to.as_deref(), apply)
         }
-        Command::Restore { repo } => lifecycle::cmd_restore(&o, &repo),
+        Command::Restore { repo, to } => lifecycle::cmd_restore(&o, &repo, to.as_deref()),
         Command::Adopt {
             apps,
             models_dir,

@@ -17,14 +17,15 @@ and has no dates. A platform, an app or a model source is called supported only 
 
 | Area | What dedupd has |
 |---|---|
-| Platform | macOS 26 on Apple silicon. Requires APFS, with the store and the apps' model directories on one volume |
+| Platform | macOS 26 on Apple silicon. Requires APFS, with a store on each volume that holds the apps' model directories |
 | Apps | Ollama; Bionic and LM Studio; the Hugging Face cache, which serves `hf`, `huggingface_hub`, `mlx_lm` and llama.cpp |
 | Model source | Hugging Face |
 | Store | One file per content, named by its sha256, shared with the apps as clones. Existing models are adopted; duplicate copies are replaced by clones |
 | Downloads | A durable queue with pause, resume and retry, paced by what the source allows. Every file is verified against its sha256 |
 | Front ends | The Hugging Face Hub API and the Ollama registry API on a local port, answered from the store, also when the source is unreachable |
 | App profiles | The rules for each app as data: which formats it takes, by which method, at what cost in disk space, and with which versions of the app this was tested |
-| Archives | Several named archives on other disks; one can receive a copy of every stored file; archive one model to the archive chosen, and restore it |
+| Stores | A store on each APFS volume that holds app folders, for example an external SSD for Ollama beside the internal disk for Bionic. An app is given models from the store on its volume; Activate copies what that store lacks, after showing the size; a download goes to the store of the apps it is for |
+| Archives | Several named archives on other disks; one can receive a copy of every stored file; archive one model to the archive chosen, and restore it into the store chosen |
 | Interfaces | The `dedupd` command, a control API, and a macOS app |
 | Distribution | A notarised disk image of the app, which carries the command and the daemon |
 
@@ -32,11 +33,10 @@ and has no dates. A platform, an app or a model source is called supported only 
 
 | Order | Item | Summary |
 |---|---|---|
-| 1 | Several stores | A store on each APFS volume that holds app folders, for example an external SSD for Ollama beside the internal disk for Bionic. A model is activated only in apps on the volume of the store that holds it; restore asks which store |
-| 2 | Catalogue | Families, editions and placements, so that the right edition is chosen for each app and machine |
-| 3 | ModelScope | A second model source |
-| 4 | Linux | The daemon and the command line on Linux, for machines with NVIDIA GPUs |
-| 5 | More apps | Further app profiles, one at a time |
+| 1 | Catalogue | Families, editions and placements, so that the right edition is chosen for each app and machine |
+| 2 | ModelScope | A second model source |
+| 3 | Linux | The daemon and the command line on Linux, for machines with NVIDIA GPUs |
+| 4 | More apps | Further app profiles, one at a time |
 
 Each item is usable on its own.
 

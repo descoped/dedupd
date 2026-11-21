@@ -67,7 +67,9 @@ pub fn sync(
     let mut report = SyncReport::default();
     let blobs = lock(db).all_blobs()?;
     for blob in &blobs {
-        let src = store.blob_path(&blob.sha256);
+        let src = store
+            .find(&blob.sha256)
+            .unwrap_or_else(|| store.blob_path(&blob.sha256));
         let dst = archive.blob_path(&blob.sha256);
         let in_store = src.is_file();
         let in_archive = fs::metadata(&dst).ok();
@@ -157,7 +159,11 @@ fn copy_database(db: &Mutex<Db>, store: &Store, archive: &Home) -> Result<()> {
 /// that does not hash to its name is not kept. A copy of the right size
 /// that is already there is left alone, unless `replace` says it is bad.
 fn copy_in(store: &Store, archive: &Home, sha256: &str, replace: bool) -> Result<()> {
-    let (src, dst) = (store.blob_path(sha256), archive.blob_path(sha256));
+    // From whichever store on this Mac has it.
+    let src = store
+        .find(sha256)
+        .unwrap_or_else(|| store.blob_path(sha256));
+    let dst = archive.blob_path(sha256);
     let _one = store.copying_to_archive();
     // Another caller may have written it while this one waited.
     let same_size = |a: &std::path::Path, b: &std::path::Path| matches!((fs::metadata(a), fs::metadata(b)), (Ok(x), Ok(y)) if x.len() == y.len());
@@ -339,7 +345,7 @@ pub fn archive_plan(
     };
     let elsewhere: HashSet<&str> = elsewhere.iter().map(|b| b.sha256.as_str()).collect();
     for blob in blobs {
-        if !store.contains(&blob.sha256) {
+        if !store.contains_anywhere(&blob.sha256) {
             continue;
         }
         let why = if elsewhere.contains(blob.sha256.as_str()) {
@@ -531,8 +537,8 @@ fn archive_quietly(
             lock(db).set_archived(id, Some(crate::now()))?;
             marked = true;
         }
-        let path = store.blob_path(&blob.sha256);
-        fs::remove_file(&path).with_context(|| format!("removing {}", path.display()))?;
+        // Out of every store on this Mac.
+        store.remove_everywhere(&blob.sha256)?;
         report.files += 1;
         report.freed += blob.size;
     }
@@ -554,14 +560,16 @@ pub struct RestorePlan {
     pub repo: String,
     /// The folder of the first archive files come from.
     pub archive: String,
-    /// The names of the archives files come from.
+    /// The names of the archives (or other stores) files come from.
     pub archives: Vec<String>,
-    /// Files that would be copied back to the internal disk.
+    /// The store they are copied into.
+    pub store: String,
+    /// Files that would be copied back into that store.
     pub copy: Vec<BlobRow>,
     pub bytes: u64,
-    /// Free space on the internal disk.
+    /// Free space on that store's disk.
     pub free: u64,
-    /// Files that are neither on the internal disk nor on the archive disk.
+    /// Files that are in no store and no attached archive.
     pub missing: Vec<BlobRow>,
 }
 
@@ -572,6 +580,7 @@ impl RestorePlan {
             repo: self.repo.clone(),
             archive: self.archive.clone(),
             archives: self.archives.clone(),
+            store: self.store.clone(),
             files: self.copy.len() as u64,
             bytes: self.bytes,
             free: self.free,
@@ -583,40 +592,53 @@ impl RestorePlan {
 /// Work out what restoring `repo` would copy back, each file from an
 /// attached archive that holds it. Changes nothing. Refused when no archive
 /// is set, or when none of them is attached.
-pub fn restore_plan(db: &Mutex<Db>, store: &Store, repo: &str) -> Result<RestorePlan> {
-    let all = store.archives();
-    if all.is_empty() {
-        bail!("no archive is set; add one under Settings, Storage");
-    }
-    let attached = store.attached_archives();
-    if attached.is_empty() {
-        let names: Vec<_> = all.iter().map(|a| a.name.as_str()).collect();
-        bail!(
-            "none of the archives is attached ({}); attach the disk that holds {repo}",
-            names.join(", ")
-        );
-    }
+pub fn restore_plan(
+    db: &Mutex<Db>,
+    store: &Store,
+    repo: &str,
+    into: Option<&str>,
+) -> Result<RestorePlan> {
+    let store = &match into {
+        Some(name) => store.named(name)?,
+        None => store.primary(),
+    };
+    // Where a file comes from: another store on this Mac first (a copy
+    // between disks), then the attached archives.
+    let here = store.root().home.root().to_path_buf();
+    let mut sources: Vec<(String, Home)> = store
+        .attached_stores()
+        .into_iter()
+        .filter(|s| s.home.root() != here)
+        .map(|s| (s.name, s.home))
+        .collect();
+    sources.extend(
+        store
+            .attached_archives()
+            .into_iter()
+            .map(|a| (a.name, a.home)),
+    );
     let blobs = {
         let db = lock(db);
         db.repo_blobs(db.known_repo(repo)?)?
     };
     let mut plan = RestorePlan {
         repo: repo.to_string(),
+        store: store.root().name.clone(),
         free: store.free_bytes()?,
         ..Default::default()
     };
-    let mut used: Vec<&Archive> = Vec::new();
+    let mut used: Vec<&(String, Home)> = Vec::new();
     for blob in blobs {
         if store.contains(&blob.sha256) {
             continue;
         }
-        match attached
+        match sources
             .iter()
-            .find(|a| a.home.blob_path(&blob.sha256).is_file())
+            .find(|(_, home)| home.blob_path(&blob.sha256).is_file())
         {
-            Some(a) => {
-                if !used.iter().any(|u| u.name == a.name) {
-                    used.push(a);
+            Some(source) => {
+                if !used.iter().any(|u| u.0 == source.0) {
+                    used.push(source);
                 }
                 plan.bytes += blob.size;
                 plan.copy.push(blob);
@@ -624,10 +646,39 @@ pub fn restore_plan(db: &Mutex<Db>, store: &Store, repo: &str) -> Result<Restore
             None => plan.missing.push(blob),
         }
     }
-    plan.archives = used.iter().map(|a| a.name.clone()).collect();
+    // A model that is not archived, with every file in this store, has
+    // nothing to restore. One that is marked archived is let through: an
+    // archive that stopped part of the way is finished this way.
+    let archived = lock(db)
+        .repo_rows(Some(repo))?
+        .first()
+        .and_then(|r| r.archived_at)
+        .is_some();
+    if !archived && plan.copy.is_empty() && plan.missing.is_empty() {
+        bail!(
+            "{repo} is in the store {} already; there is nothing to restore",
+            plan.store
+        );
+    }
+    // Files that are nowhere in sight: say why, when it is an archive that
+    // is not there.
+    let all = store.archives();
+    if !plan.missing.is_empty() {
+        if all.is_empty() {
+            bail!("no archive is set; add one under Settings, Storage");
+        }
+        if store.attached_archives().is_empty() {
+            let names: Vec<_> = all.iter().map(|a| a.name.as_str()).collect();
+            bail!(
+                "none of the archives is attached ({}); attach the disk that holds {repo}",
+                names.join(", ")
+            );
+        }
+    }
+    plan.archives = used.iter().map(|u| u.0.clone()).collect();
     plan.archive = used
         .first()
-        .map(|a| a.home.root().to_string_lossy().into_owned())
+        .map(|u| u.1.root().to_string_lossy().into_owned())
         .unwrap_or_default();
     Ok(plan)
 }
@@ -648,9 +699,10 @@ pub fn restore(
     db: &Mutex<Db>,
     store: &Store,
     repo: &str,
+    into: Option<&str>,
     on_file: &mut dyn FnMut(u64),
 ) -> Result<RestoreReport> {
-    let done = restore_quietly(db, store, repo, on_file).and_then(|report| {
+    let done = restore_quietly(db, store, repo, into, on_file).and_then(|report| {
         // Files that are nowhere are a failure of the restore, whoever asked.
         match report.missing.len() {
             0 => Ok(report),
@@ -681,16 +733,19 @@ fn restore_quietly(
     db: &Mutex<Db>,
     store: &Store,
     repo: &str,
+    into: Option<&str>,
     on_file: &mut dyn FnMut(u64),
 ) -> Result<RestoreReport> {
     if lock(db).has_unfinished_job(repo)? {
         bail!("{}", busy(repo));
     }
-    let plan = restore_plan(db, store, repo)?;
+    let plan = restore_plan(db, store, repo, into)?;
+    let store = &store.named(&plan.store)?;
     if plan.bytes > plan.free {
         bail!(
-            "restoring {repo} needs {} bytes and the internal disk has {} free",
+            "restoring {repo} needs {} bytes and the disk of the store {} has {} free",
             plan.bytes,
+            plan.store,
             plan.free
         );
     }

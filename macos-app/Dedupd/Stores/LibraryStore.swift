@@ -289,12 +289,17 @@ final class LibraryStore {
         }
     }
 
-    /// Copy the selected model back from the archive disk.
-    func restore() async {
+    /// The stores a model can be restored into now: the attached ones, the
+    /// one in dedupd's home first.
+    var storeChoices: [StoreSetting] { (daemon.status?.stores ?? []).filter(\.attached) }
+
+    /// Copy the selected model back into the store named `store` (nil: the
+    /// one in dedupd's home).
+    func restore(into store: String? = nil) async {
         guard let model = selected else {
             return
         }
-        await daemon.attempt { client, address in try await client.restore(model.repo, at: address) }
+        await daemon.attempt { client, address in try await client.restore(model.repo, into: store, at: address) }
     }
 
     /// Drop the selected model from the records, so its stored files can be
