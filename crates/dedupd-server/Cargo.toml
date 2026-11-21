@@ -9,8 +9,8 @@ description = "The dedupd daemon's HTTP side: the Hugging Face Hub API, the Olla
 [dependencies]
 anyhow = "1"
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio", "json"] }
-dedupd-api = { version = "0.2.0", path = "../dedupd-api" }
-dedupd-core = { version = "0.2.0", path = "../dedupd-core" }
+dedupd-api = { version = "0.3.0", path = "../dedupd-api" }
+dedupd-core = { version = "0.3.0", path = "../dedupd-core" }
 futures-util = "0.3.34"
 hex = "0.4.3"
 http-body-util = "0.1"
