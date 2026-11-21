@@ -44,7 +44,7 @@ sync-version:
     #!/usr/bin/env bash
     set -euo pipefail
     VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
-    printf '// Synced from Cargo.toml\nMARKETING_VERSION = %s\nCURRENT_PROJECT_VERSION = 1\n' "$VERSION" > macos-app/Version.xcconfig
+    printf '// Synced from Cargo.toml\nMARKETING_VERSION = %s\nCURRENT_PROJECT_VERSION = %s\n' "$VERSION" "$VERSION" > macos-app/Version.xcconfig
     echo "Updated: macos-app/Version.xcconfig ($VERSION)"
 
 # ---------------------------------------------------------------- macOS app

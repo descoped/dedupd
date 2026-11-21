@@ -68,6 +68,11 @@ final class AppEnvironment {
     let loginItem: LoginItemStore
     let notifier: Notifier
     let windows: WindowControl
+    let updates: UpdateStore
+    /// This copy may replace the installed daemon by itself when it carries
+    /// a newer one: the app as installed in /Applications, not a trial, a
+    /// canned daemon or a build run from Xcode.
+    let followsDaemon: Bool
 
     init(options: LaunchOptions) {
         self.options = options
@@ -114,6 +119,13 @@ final class AppEnvironment {
         let isReal = options.fixture == nil && !options.isHostingUnitTests
         loginItem = LoginItemStore(item: isReal ? SystemLoginItem() : FixtureLoginItem())
         notifier = Notifier(isLive: options.fixture == nil && !options.isHostingUnitTests)
+        updates = UpdateStore(
+            isAllowed: isReal,
+            publicKey: Bundle.main.infoDictionary?["SUPublicEDKey"] as? String,
+            feedOverride: options.updateFeed
+        )
+        followsDaemon = isReal && control is BundledAgent && options.agentHome == nil && options.agentLabel == nil
+            && Bundle.main.bundleURL.deletingLastPathComponent().path == "/Applications"
         daemon.onJobsChanged = { [notifier, settings] before, after in
             if settings.notifications {
                 notifier.jobsChanged(from: before, to: after)
@@ -154,5 +166,6 @@ extension View {
             .environment(environment.service)
             .environment(environment.loginItem)
             .environment(environment.windows)
+            .environment(environment.updates)
     }
 }

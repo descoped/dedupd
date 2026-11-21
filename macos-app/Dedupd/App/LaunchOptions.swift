@@ -24,6 +24,10 @@ struct LaunchOptions: Equatable {
     /// Where the daemon is, for this run only: `-daemonAddress host:port`.
     /// It is never saved to the preferences.
     var daemonAddress: String?
+    /// A release feed on this Mac, for a trial of the updater:
+    /// `-updateFeed http://127.0.0.1:<port>/appcast.xml`. Any other address
+    /// is ignored.
+    var updateFeed: String?
     /// The options that were named with no value after them.
     var malformed: [String] = []
     /// The app is hosting its unit tests and must leave the real daemon alone.
@@ -50,6 +54,7 @@ struct LaunchOptions: Equatable {
         agentHome = value(of: "-daemonHome")
         agentLabel = value(of: "-agentLabel")
         daemonAddress = value(of: "-daemonAddress")
+        updateFeed = UpdateStore.trialFeed(value(of: "-updateFeed"))
         malformed = unfinished
         isHostingUnitTests = environment["XCTestConfigurationFilePath"] != nil
     }

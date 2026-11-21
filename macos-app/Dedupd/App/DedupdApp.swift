@@ -43,6 +43,14 @@ struct MainCommands: Commands {
     let environment: AppEnvironment
 
     var body: some Commands {
+        CommandGroup(after: .appInfo) {
+            if environment.updates.isAvailable {
+                Button("Check for Updates…") {
+                    environment.updates.check()
+                }
+                .disabled(!environment.updates.canCheck)
+            }
+        }
         CommandGroup(replacing: .newItem) {}
         CommandMenu("Go") {
             ForEach(Array(Pane.allCases.enumerated()), id: \.element) { index, pane in

@@ -10,6 +10,12 @@ options:
   # recommends below; do not let Xcode edit the generated project.
   xcodeVersion: "27.2"
   defaultConfig: Debug
+packages:
+  # The updater: checks the release feed and installs a new version on the
+  # owner's yes. Pinned to one version; Renovate offers newer ones.
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.1
 settings:
   base:
     SWIFT_VERSION: "6.0"
@@ -90,13 +96,14 @@ targets:
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
     dependencies:
       - target: DedupdClient
+      - package: Sparkle
     preBuildScripts:
       - script: |
           CARGO_TOML="$SRCROOT/../Cargo.toml"
           XCCONFIG="$SRCROOT/Version.xcconfig"
           if [ -f "$CARGO_TOML" ]; then
             VERSION=$(grep '^version' "$CARGO_TOML" | head -1 | sed 's/.*"\(.*\)".*/\1/')
-            NEW=$(printf '// Synced from Cargo.toml\nMARKETING_VERSION = %s\nCURRENT_PROJECT_VERSION = 1\n' "$VERSION")
+            NEW=$(printf '// Synced from Cargo.toml\nMARKETING_VERSION = %s\nCURRENT_PROJECT_VERSION = %s\n' "$VERSION" "$VERSION")
             [ "$NEW" = "$(cat "$XCCONFIG" 2>/dev/null)" ] || printf '%s\n' "$NEW" > "$XCCONFIG"
           fi
         name: Sync Version from Cargo.toml
