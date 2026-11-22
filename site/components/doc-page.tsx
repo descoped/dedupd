@@ -3,6 +3,7 @@ import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { getCMSContent, resolveSeoContent, SeoJsonLd } from '@krantho/ui-react/server'
 import { withDownloadLink } from '../lib/download'
+import { withPictures } from '../lib/images'
 import { docHref, docLinks, site } from '../lib/krantho'
 
 /** A docs page's title, description and canonical address */
@@ -28,8 +29,9 @@ export async function DocPage({ slug }: { slug: string }): Promise<React.ReactEl
   // `# Title`; the page then shows that and not the title from the frontmatter
   const ownHeading = /^\s*# /.test(doc.body)
   // The markdown as krantho renders it (as CMSMarkdownServer would), with the
-  // download button's link set here, before Next records the page
-  const html = await withDownloadLink((await getCMSContent('docs', slug)).html)
+  // download button's link and the pictures' smaller copies set here, before
+  // Next records the page
+  const html = await withPictures(await withDownloadLink((await getCMSContent('docs', slug)).html))
   return (
     <article className="doc">
       <SeoJsonLd collection="docs" slug={slug} />
