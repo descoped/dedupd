@@ -5,9 +5,9 @@
   "type": "module",
   "packageManager": "pnpm@12.16.1",
   "scripts": {
-    "images": "node scripts/copy-images.mjs",
-    "dev": "pnpm run images && pnpm run download && next dev --port 3000",
-    "build": "pnpm run images && pnpm run download && next build",
+    "copy-images": "node scripts/copy-images.mjs",
+    "dev": "pnpm run copy-images && pnpm run download && next dev --port 3000",
+    "build": "pnpm run copy-images && pnpm run download && next build",
     "download": "node scripts/download-link.mjs"
   },
   "dependencies": {

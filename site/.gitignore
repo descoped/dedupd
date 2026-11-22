@@ -8,7 +8,7 @@ out/
 *.db
 *.db-journal
 
-# A copy of ../docs/images, made by `pnpm run images` before each build, and
+# A copy of ../docs/images, made by `pnpm run copy-images` before each build, and
 # the AVIF and WebP copies krantho's prepareImages makes of it (next.config.ts)
 /public/images/
 /public/_krantho/
