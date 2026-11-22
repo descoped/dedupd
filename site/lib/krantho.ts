@@ -7,7 +7,14 @@ import { collections } from '../krantho.collections'
 // another file of docs/ (apps.md#limitations) becomes that page's address, and
 // a picture (images/library.png) the copy in public/, both under the path the
 // site is served under, so the files read the same on GitHub and on the site.
-export const site = createStaticSite({ config, collections })
+// A picture with copies made by prepareImages (next.config.ts) renders as a
+// <picture>; `sizes` is the text column: 46rem from a 66rem window up, the
+// window less the sidebar and padding above 48rem, and less padding below.
+export const site = createStaticSite({
+  config,
+  collections,
+  images: { sizes: '(min-width: 66rem) 46rem, (min-width: 48rem) calc(100vw - 20rem), calc(100vw - 2rem)' },
+})
 initServerLoader(site.loader, site.rendering)
 
 /** A docs page as the sidebar and the pager list it */
