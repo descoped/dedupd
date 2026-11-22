@@ -60,6 +60,14 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - id: pages
         uses: actions/configure-pages@v6
+      # The pictures' AVIF and WebP copies from the last build; krantho reuses
+      # a copy whose picture has not changed. Keyed on docs/images, because the
+      # build fills public/images only later, from there.
+      - uses: actions/cache@v6
+        with:
+          path: site/public/_krantho
+          key: krantho-images-${{ hashFiles('docs/images/**') }}
+          restore-keys: krantho-images-
       # Where Pages serves the site (https://dedupd.com), which every page's
       # canonical link, the sitemap and robots.txt name. Pages reports the
       # address with http:// until HTTPS is enforced on the custom domain; the
