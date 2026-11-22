@@ -61,12 +61,14 @@ jobs:
       - id: pages
         uses: actions/configure-pages@v6
       # The pictures' AVIF and WebP copies from the last build; krantho reuses
-      # a copy whose picture has not changed. Keyed on docs/images, because the
-      # build fills public/images only later, from there.
+      # a copy whose picture and settings have not changed, and removes the
+      # ones it no longer makes. Keyed on docs/images (the build fills
+      # public/images only later, from there), the lockfile and the krantho
+      # config, so a new krantho or new settings save the remade copies.
       - uses: actions/cache@v6
         with:
           path: site/public/_krantho
-          key: krantho-images-${{ hashFiles('docs/images/**') }}
+          key: krantho-images-${{ hashFiles('docs/images/**', 'site/pnpm-lock.yaml', 'site/krantho.config.ts') }}
           restore-keys: krantho-images-
       # Where Pages serves the site (https://dedupd.com), which every page's
       # canonical link, the sitemap and robots.txt name. Pages reports the
