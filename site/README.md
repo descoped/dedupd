@@ -23,7 +23,8 @@ order: 4
 
 - `group` is the sidebar section, and `order` the place in the reading order. The home page is `README.md`.
 - Link to another page by its file, as GitHub does: `[Apps](apps.md#limitations)`.
-- Pictures go in `docs/images/` and are linked as `images/<name>.png`. The build copies them into the site.
+- Pictures go in `docs/images/` and are linked as `images/<name>.png`. The build copies them into the site, with
+  smaller AVIF and WebP copies of each PNG that the browser picks from; `docs/` keeps only the PNG.
 - Quote a frontmatter value that holds `: `.
 
 ## Building
@@ -47,7 +48,9 @@ pnpm build      # the whole site as static files in out/
 | `app/` | The layout, the pages, `sitemap.xml`, `llms.txt` and `robots.txt` |
 | `components/doc-page.tsx` | One page; it shows the file's own `# Title` |
 | `components/brand.tsx` | The header's logo and GitHub link, drawn in the text colour |
-| `app/icon.svg` | The tab icon: a copy of `docs/images/monogram.svg` |
+| `app/icon.png`, `apple-icon.png`, `favicon.ico` | The app icon, made from the installed app by `scripts/app-icons.swift` |
+| `scripts/images.mjs` | Before the build: copies `docs/images` into `public/images`, writes AVIF and WebP copies at 340, 736 and 1472 px (and a picture's own width when smaller), and lists them in `generated/images.json` |
+| `lib/images.ts` | Turns each picture of a page into a `<picture>` with those copies, the PNG as the fallback, its width and height, and lazy loading after the first |
 | `next.config.ts` | The static export, served under the path of the site's address |
 
 ## The logo

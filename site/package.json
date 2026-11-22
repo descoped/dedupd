@@ -5,7 +5,7 @@
   "type": "module",
   "packageManager": "pnpm@12.16.1",
   "scripts": {
-    "images": "rm -rf public/images && mkdir -p public && cp -R ../docs/images public/images",
+    "images": "node scripts/images.mjs",
     "dev": "pnpm run images && pnpm run download && next dev --port 3000",
     "build": "pnpm run images && pnpm run download && next build",
     "download": "node scripts/download-link.mjs"
@@ -25,6 +25,7 @@
   "devDependencies": {
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
+    "sharp": "0.35.5",
     "typescript": "^7.0.2"
   }
 }
