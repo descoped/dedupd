@@ -13,11 +13,17 @@ const mimeOf: Record<string, string> = { avif: 'image/avif', webp: 'image/webp' 
 
 let pictures: Promise<Record<string, Picture>> | undefined
 
-/** generated/images.json, or nothing when the script has not run */
+/**
+ * generated/images.json, or nothing when the script has not run (pages then
+ * show the PNGs only, until the dev server starts again)
+ */
 function readPictures(): Promise<Record<string, Picture>> {
   pictures ??= readFile(join(process.cwd(), 'generated', 'images.json'), 'utf8')
     .then((text) => JSON.parse(text) as Record<string, Picture>)
-    .catch(() => ({}))
+    .catch((error: unknown) => {
+      console.warn(`images: no smaller copies of the pictures (${String(error)}); run \`pnpm run images\``)
+      return {}
+    })
   return pictures
 }
 
@@ -44,7 +50,8 @@ export async function withPictures(html: string): Promise<string> {
   return html.replace(/<img\s[^>]*>/g, (tag) => {
     const attributes = attributesOf(tag)
     const src = attributes.get('src') ?? ''
-    const at = /^(.*\/images\/)([^/]+\.png)$/.exec(src)
+    // Absolute as krantho writes it today (/images/x.png), or relative as in docs/
+    const at = /^((?:.*\/)?images\/)([^/]+\.png)$/.exec(src)
     const picture = at ? known[at[2]] : undefined
     if (!at || !picture) return tag
     const [, folder, name] = at

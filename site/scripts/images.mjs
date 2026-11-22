@@ -4,9 +4,10 @@
 // page into a <picture> the browser picks the smallest fitting copy from.
 //
 // docs/ keeps only the PNGs, so the pages read the same on GitHub. A copy is
-// made again only when its PNG is newer, so `pnpm dev` starts quickly.
+// made again only when its PNG is newer, or when the widths or the formats'
+// settings below have changed, so `pnpm dev` starts quickly.
 
-import { copyFile, mkdir, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import sharp from 'sharp'
 
@@ -24,7 +25,17 @@ const formats = {
   webp: { quality: 82, effort: 6 },
 }
 
+// The settings the copies in public/images were made with; other settings
+// make every copy again
+const settingsFile = join(to, '.settings.json')
+const settings = JSON.stringify({ widths, formats })
+const sameSettings = await readFile(settingsFile, 'utf8').then(
+  (text) => text === settings,
+  () => false,
+)
+
 const isNewer = async (source, target) => {
+  if (!sameSettings && !target.endsWith('.png')) return true
   try {
     return (await stat(source)).mtimeMs > (await stat(target)).mtimeMs
   } catch {
@@ -36,7 +47,7 @@ await mkdir(to, { recursive: true })
 await mkdir(join(manifest, '..'), { recursive: true })
 
 const sources = (await readdir(from)).filter((name) => !name.startsWith('.'))
-const keep = new Set()
+const keep = new Set(['.settings.json'])
 const pictures = {}
 for (const name of sources) {
   const source = join(from, name)
@@ -65,5 +76,6 @@ for (const name of await readdir(to)) {
   if (!keep.has(name)) await rm(join(to, name), { recursive: true })
 }
 
+await writeFile(settingsFile, settings)
 await writeFile(manifest, `${JSON.stringify(pictures, null, 2)}\n`)
 console.log(`images: ${Object.keys(pictures).length} pictures, in ${Object.keys(formats).join(' and ')}`)
