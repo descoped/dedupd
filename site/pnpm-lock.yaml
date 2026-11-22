@@ -167,20 +167,20 @@ importers:
   .:
     dependencies:
       '@krantho/config':
-        specifier: ^1.1.2
-        version: 1.1.2
+        specifier: ^1.1.3
+        version: 1.1.3
       '@krantho/schema':
-        specifier: ^1.1.2
-        version: 1.1.2(zod@4.6.7)
+        specifier: ^1.1.3
+        version: 1.1.3(zod@4.6.7)
       '@krantho/seo':
-        specifier: ^1.1.2
-        version: 1.1.2(react@19.3.1)
+        specifier: ^1.1.3
+        version: 1.1.3(react@19.3.1)
       '@krantho/static':
-        specifier: ^1.1.2
-        version: 1.1.2(@krantho/seo@1.1.2(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)
+        specifier: ^1.1.3
+        version: 1.1.3(@krantho/seo@1.1.3(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)
       '@krantho/ui-react':
-        specifier: ^1.1.2
-        version: 1.1.2(react@19.3.1)
+        specifier: ^1.1.3
+        version: 1.1.3(react@19.3.1)
       '@plausible-analytics/tracker':
         specifier: ^0.4.7
         version: 0.4.7
@@ -374,55 +374,55 @@ packages:
     cpu: [x64]
     os: [win32]
 
-  '@krantho/ai@1.1.2':
-    resolution: {integrity: sha512-cCBzRxscSKjWo850U2ygOR8S3HQa8Al/eBOl94XE2cOqqwfhyhkgRzleLTg4k57x1BNeP02ck1CQhAP5ul0bxg==}
+  '@krantho/ai@1.1.3':
+    resolution: {integrity: sha512-3LdfigCtoNLzlHDH8a3YBKp0wownz1dvuTKgXCZDbRxjAAZLbPAe6lSECYAF7uSI0BTbwP+yCnzgKpcMIkqYkg==}
 
-  '@krantho/api@1.1.2':
-    resolution: {integrity: sha512-MqpbBiHM7yYKnkSVaGV5IZt1OqjiFIqaLZ5UxlD753I6dMd4/XseWESNsV3OtnSnGqre84Y1auKOcRbtQGnw2Q==}
+  '@krantho/api@1.1.3':
+    resolution: {integrity: sha512-v0Tphz08/D4gjD++Jf8hENLk7qf3L2B1tEz3Fk2fyUgYIXou/AxwOSy1ZAjkSMHAHY2jKFQpcBZY4oS1poCdQg==}
     peerDependencies:
-      '@krantho/seo': 1.1.2
+      '@krantho/seo': 1.1.3
       zod: ^4.0.0
     peerDependenciesMeta:
       '@krantho/seo':
         optional: true
 
-  '@krantho/config@1.1.2':
-    resolution: {integrity: sha512-nCEG/vp1c1NPC2H5pi7p7acphWSkuljZXGnQE6EyFPPyYSZGRyXzS1pR9jWEy/rMZ4rDFLtrEWRgse62qeIW0w==}
+  '@krantho/config@1.1.3':
+    resolution: {integrity: sha512-CA7Ide5EEMyUNt9NysqdJSO0J1Ya3mV3IObgAvGcR2kjHphSG33YWEt4yz67hjc9oYzaMhEAffzSFppB4FR40A==}
 
-  '@krantho/core@1.1.2':
-    resolution: {integrity: sha512-QInPgrIC20x2Lzn8z6xhIEsxIB2RWB9GPi/kYYGMxrJUs/RmjnwRKiKrKLB+58CAScmm1hn3mL7R24i+sxkSzw==}
+  '@krantho/core@1.1.3':
+    resolution: {integrity: sha512-7JLbyBkhdA0F9KVuGKiLoheI2NWIkPiY9JYgLEYxsOIvdEcktB+em+/ExO1F8fvDc3yLpgePh10gVp2SRAzT+A==}
 
-  '@krantho/persistence-fs@1.1.2':
-    resolution: {integrity: sha512-n0KLr0YenNzsFY6sX3Hk0WOzf4Ydo0NaenuGXyP1N213dfuwRwdZx8s6tFTnMczIvPCmAFtsYeXtM1e6qan+Rw==}
+  '@krantho/persistence-fs@1.1.3':
+    resolution: {integrity: sha512-PVNou2StEJygyzU84f/k36ttNOxz7gL8klNHytdSBJUx+GlyFrTuJJ6+je7LD1zEewdpbHDmk6GfF3gSTfcwnA==}
 
-  '@krantho/persistence-sqlite@1.1.2':
-    resolution: {integrity: sha512-d2ksU7SP7WJpr6AcIfT3SEgBg5sQwwwIRoEMyMnAnmrqRAbKnjfVRS0zBeVtMcXB025phPlAclnkcNtaNNMIPQ==}
+  '@krantho/persistence-sqlite@1.1.3':
+    resolution: {integrity: sha512-KQ57eQltUQ8cDfkEXhZ5wePVn3AeH1SnBTxaEPCR//EW9alsKisIMQ8CdeHrMJR08XbVbBByGT5pXhG0GDDmyg==}
 
-  '@krantho/persistence@1.1.2':
-    resolution: {integrity: sha512-nKu5V/vP9kxjiF/anm7jc/8P3DcC/nVHKCCl0EKFQHQq1dhdolmWloMvkk5uIG87Ua2iWafbJ8RrtCakCDdTfA==}
+  '@krantho/persistence@1.1.3':
+    resolution: {integrity: sha512-VIgHH/xEnax7M2d2HQiSNmf43MB3OOeRQJ+VKEMKJxxavffZGlZYptXP+s7gaUOfuB/yzGpDPBC7MDumMLSpNA==}
 
-  '@krantho/schema@1.1.2':
-    resolution: {integrity: sha512-I4oepC+xbROhO0g4oxGBAiG8ulil0tl0/LP2LsM53nUowQe9/wVE5dDPzz/GlVUPUMo5c+Di/CZ0/JeQLhHF1Q==}
+  '@krantho/schema@1.1.3':
+    resolution: {integrity: sha512-Lx9jzhTSlviP9hw0Jq3GMFuHVgHIt4xALqjgYqfYb609aKqd9IyWoIkn/zW8Qh1TL0dJzgytkjq7EqxpWzzxEQ==}
     peerDependencies:
       zod: ^4.4.3
 
-  '@krantho/seo-shared@1.1.2':
-    resolution: {integrity: sha512-JbaTk3aPiPiRMtQ5D8RaLDRy7eZ/UzhD+6rAsMDCulCLjKuFmawj0Q+xP9MH9nGYdrwcARGWVrNE4kun1slAQw==}
+  '@krantho/seo-shared@1.1.3':
+    resolution: {integrity: sha512-0BQQ47m8A5xQF23VV+UC25tO943ZIETbXBAm/GrEmNqKECa7dgmpf48nVqlJffdgumNMWBfhYwtD/+YQrp8Thg==}
 
-  '@krantho/seo@1.1.2':
-    resolution: {integrity: sha512-bDG1RRPCV02e6rJa+K+fPWZIwKsU3/oaJi9BOd+OsSCPYEr2XPeq4xDlZRu184Q69lS3MTcZGDpmB/ewo8eEfg==}
+  '@krantho/seo@1.1.3':
+    resolution: {integrity: sha512-SB3uBp4q/ZHsfqNlUk3TWnztrt+Ks66ogzzepuquX7fbvpRmNJv5HwibC0sBBziYeKXrlwk1sJfsX61X5zZSlw==}
     peerDependencies:
       react: '>=19.0.0'
 
-  '@krantho/server@1.1.2':
-    resolution: {integrity: sha512-sSA4bZoeMh3K5YQAQqz6Knr7qVXovD4+mwBL3CIfe8xV8g1apbV4SNgwjZjUBXboCMJblEKvCiMslVhNsBZ/ww==}
+  '@krantho/server@1.1.3':
+    resolution: {integrity: sha512-0FkxtkfMT6rMhaq4NNTa3bkE/Y8Ubau77r82vyVsp+9z5Ku2hTNRPV2K+ry6quPOJEqTujGxKSC2tW19/p87og==}
     peerDependencies:
       '@aws-sdk/client-cloudfront': ^3.1143.0
-      '@krantho/media-gcs': 1.1.2
-      '@krantho/media-local': 1.1.2
-      '@krantho/media-s3': 1.1.2
-      '@krantho/media-vercel-blob': 1.1.2
-      '@krantho/persistence-postgres': 1.1.2
+      '@krantho/media-gcs': 1.1.3
+      '@krantho/media-local': 1.1.3
+      '@krantho/media-s3': 1.1.3
+      '@krantho/media-vercel-blob': 1.1.3
+      '@krantho/persistence-postgres': 1.1.3
       '@vercel/functions': ^3.9.9
       postgres: ^4.1.1
     peerDependenciesMeta:
@@ -443,14 +443,14 @@ packages:
       postgres:
         optional: true
 
-  '@krantho/static@1.1.2':
-    resolution: {integrity: sha512-ZZjxwwx+x923z3PpXyb3gsYmqcb+vZbrxeENH1HvFho/WD2WaEvdnRJCuJZ/ffhgqfFwB+TdBgQ1aFytLPZf4w==}
+  '@krantho/static@1.1.3':
+    resolution: {integrity: sha512-R2dY19uUVQqajo/VIj54Rd2KyfO9v7c5j6Q+AkT0+fSP5oVgvvmqjecOX02ACs/XQTeVj+QJOO5satKnStgU8Q==}
 
-  '@krantho/studio@1.1.2':
-    resolution: {integrity: sha512-BSp9fdOE8tEHYCOD6uRWLzDxT2W5WJpmFK0Jd2YcMfu8Oaub32FXzbtQS7grVPb6qlHFkVoRF646WdtPsgH3xw==}
+  '@krantho/studio@1.1.3':
+    resolution: {integrity: sha512-UuKHV+fEhpHnngGlAOy9PKe/4BOpw9bYP+UOnGVrfj28TREzrmeuor+v5rdkYfIPVG+uGfD08LBFkFFgHDbXWw==}
 
-  '@krantho/ui-react@1.1.2':
-    resolution: {integrity: sha512-isqPY8HdfM6g6l2Kxg2GOn8edJxC3FJaBV/BQG22qVXtrlYTnOF1mx8xTc3Id67A3/obeB3IOqLkBMWLhhYsjw==}
+  '@krantho/ui-react@1.1.3':
+    resolution: {integrity: sha512-w4HSBUIi/BJ9/PORXBWQuzoCs27VbKya/dFVYXkksDr9zWqDz4FtzRaEd8ovzmF4y1ft2yI9Wp5/8gc4xmh47g==}
     peerDependencies:
       react: '>=19.0.0'
 
@@ -927,80 +927,80 @@ snapshots:
   '@img/sharp-win32-x64@0.35.5':
     optional: true
 
-  '@krantho/ai@1.1.2': {}
+  '@krantho/ai@1.1.3': {}
 
-  '@krantho/api@1.1.2(@krantho/seo@1.1.2(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)':
+  '@krantho/api@1.1.3(@krantho/seo@1.1.3(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)':
     dependencies:
-      '@krantho/ai': 1.1.2
-      '@krantho/config': 1.1.2
-      '@krantho/core': 1.1.2
-      '@krantho/persistence': 1.1.2
-      '@krantho/schema': 1.1.2(zod@4.6.7)
-      '@krantho/seo-shared': 1.1.2
+      '@krantho/ai': 1.1.3
+      '@krantho/config': 1.1.3
+      '@krantho/core': 1.1.3
+      '@krantho/persistence': 1.1.3
+      '@krantho/schema': 1.1.3(zod@4.6.7)
+      '@krantho/seo-shared': 1.1.3
       sharp: 0.35.5(@types/node@26.6.6)
       zod: 4.6.7
     optionalDependencies:
-      '@krantho/seo': 1.1.2(react@19.3.1)
+      '@krantho/seo': 1.1.3(react@19.3.1)
     transitivePeerDependencies:
       - '@types/node'
 
-  '@krantho/config@1.1.2':
+  '@krantho/config@1.1.3':
     dependencies:
       yaml: 2.9.1
       zod: 4.6.7
 
-  '@krantho/core@1.1.2':
+  '@krantho/core@1.1.3':
     dependencies:
       gray-matter: 4.0.3
       marked: 18.2.0
 
-  '@krantho/persistence-fs@1.1.2':
+  '@krantho/persistence-fs@1.1.3':
     dependencies:
-      '@krantho/core': 1.1.2
-      '@krantho/persistence': 1.1.2
+      '@krantho/core': 1.1.3
+      '@krantho/persistence': 1.1.3
       gray-matter: 4.0.3
       yaml: 2.9.1
 
-  '@krantho/persistence-sqlite@1.1.2':
+  '@krantho/persistence-sqlite@1.1.3':
     dependencies:
-      '@krantho/core': 1.1.2
-      '@krantho/persistence': 1.1.2
-      '@krantho/seo-shared': 1.1.2
+      '@krantho/core': 1.1.3
+      '@krantho/persistence': 1.1.3
+      '@krantho/seo-shared': 1.1.3
       better-sqlite3: 13.1.1
 
-  '@krantho/persistence@1.1.2':
+  '@krantho/persistence@1.1.3':
     dependencies:
-      '@krantho/core': 1.1.2
-      '@krantho/seo-shared': 1.1.2
+      '@krantho/core': 1.1.3
+      '@krantho/seo-shared': 1.1.3
       yaml: 2.9.1
 
-  '@krantho/schema@1.1.2(zod@4.6.7)':
+  '@krantho/schema@1.1.3(zod@4.6.7)':
     dependencies:
-      '@krantho/core': 1.1.2
-      '@krantho/persistence': 1.1.2
-      '@krantho/seo-shared': 1.1.2
+      '@krantho/core': 1.1.3
+      '@krantho/persistence': 1.1.3
+      '@krantho/seo-shared': 1.1.3
       gray-matter: 4.0.3
       zod: 4.6.7
 
-  '@krantho/seo-shared@1.1.2': {}
+  '@krantho/seo-shared@1.1.3': {}
 
-  '@krantho/seo@1.1.2(react@19.3.1)':
+  '@krantho/seo@1.1.3(react@19.3.1)':
     dependencies:
-      '@krantho/core': 1.1.2
-      '@krantho/seo-shared': 1.1.2
+      '@krantho/core': 1.1.3
+      '@krantho/seo-shared': 1.1.3
       react: 19.3.1
 
-  '@krantho/server@1.1.2(@krantho/seo@1.1.2(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)':
+  '@krantho/server@1.1.3(@krantho/seo@1.1.3(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)':
     dependencies:
-      '@krantho/api': 1.1.2(@krantho/seo@1.1.2(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)
-      '@krantho/config': 1.1.2
-      '@krantho/core': 1.1.2
-      '@krantho/persistence': 1.1.2
-      '@krantho/persistence-fs': 1.1.2
-      '@krantho/persistence-sqlite': 1.1.2
-      '@krantho/schema': 1.1.2(zod@4.6.7)
-      '@krantho/seo-shared': 1.1.2
-      '@krantho/studio': 1.1.2
+      '@krantho/api': 1.1.3(@krantho/seo@1.1.3(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)
+      '@krantho/config': 1.1.3
+      '@krantho/core': 1.1.3
+      '@krantho/persistence': 1.1.3
+      '@krantho/persistence-fs': 1.1.3
+      '@krantho/persistence-sqlite': 1.1.3
+      '@krantho/schema': 1.1.3(zod@4.6.7)
+      '@krantho/seo-shared': 1.1.3
+      '@krantho/studio': 1.1.3
       chokidar: 6.0.0
       gray-matter: 4.0.3
       yaml: 2.9.1
@@ -1009,13 +1009,13 @@ snapshots:
       - '@types/node'
       - zod
 
-  '@krantho/static@1.1.2(@krantho/seo@1.1.2(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)':
+  '@krantho/static@1.1.3(@krantho/seo@1.1.3(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)':
     dependencies:
-      '@krantho/api': 1.1.2(@krantho/seo@1.1.2(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)
-      '@krantho/config': 1.1.2
-      '@krantho/core': 1.1.2
-      '@krantho/schema': 1.1.2(zod@4.6.7)
-      '@krantho/server': 1.1.2(@krantho/seo@1.1.2(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)
+      '@krantho/api': 1.1.3(@krantho/seo@1.1.3(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)
+      '@krantho/config': 1.1.3
+      '@krantho/core': 1.1.3
+      '@krantho/schema': 1.1.3(zod@4.6.7)
+      '@krantho/server': 1.1.3(@krantho/seo@1.1.3(react@19.3.1))(@types/node@26.6.6)(zod@4.6.7)
       sharp: 0.35.5(@types/node@26.6.6)
     transitivePeerDependencies:
       - '@aws-sdk/client-cloudfront'
@@ -1030,12 +1030,12 @@ snapshots:
       - postgres
       - zod
 
-  '@krantho/studio@1.1.2': {}
+  '@krantho/studio@1.1.3': {}
 
-  '@krantho/ui-react@1.1.2(react@19.3.1)':
+  '@krantho/ui-react@1.1.3(react@19.3.1)':
     dependencies:
-      '@krantho/core': 1.1.2
-      '@krantho/seo-shared': 1.1.2
+      '@krantho/core': 1.1.3
+      '@krantho/seo-shared': 1.1.3
       react: 19.3.1
 
   '@next/env@16.4.6': {}

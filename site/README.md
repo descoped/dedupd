@@ -50,7 +50,7 @@ pnpm build      # the whole site as static files in out/
 | `components/brand.tsx` | The header's logo and GitHub link, drawn in the text colour |
 | `app/icon.png`, `apple-icon.png`, `favicon.ico` | The app icon, made from the installed app by `scripts/app-icons.swift` |
 | `scripts/copy-images.mjs` | Before the build: copies `docs/images` into `public/images`, where the pages link them |
-| `next.config.ts` | The static export, served under the path of the site's address; before a build or `pnpm dev` krantho's `prepareImages` writes AVIF and WebP copies of the pictures to `public/_krantho/images` (widths and quality from `media.image` in the krantho config) |
+| `next.config.ts` | The static export, served under the path of the site's address; before a build or `pnpm dev` krantho's `prepareImages` writes AVIF and WebP copies of the pictures to `public/_krantho/images` (krantho's widths for static sites, 320 to 2048 px; krantho's default quality); the Pages workflow keeps them in the Actions cache |
 
 ## The logo
 
