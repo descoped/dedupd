@@ -69,8 +69,8 @@ export default async function RootLayout({
         <footer className="site-footer">
           <div className="site-footer-inner">
             <span>
-              {name} is open source under the{' '}
-              <a href="https://github.com/descoped/dedupd/blob/main/LICENSE">MIT licence</a>
+              A <a href="https://descoped.io/">Descoped</a> product · © 2026 ·{' '}
+              <a href="https://github.com/descoped/dedupd/blob/main/LICENSE">MIT License</a>
             </span>
             <span>
               Built with <a href="https://krantho.com">Krantho</a>
